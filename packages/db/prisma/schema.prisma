@@ -1,0 +1,34 @@
+// bonds Prisma schema — フェーズ0 骨格。
+// フェーズ1 で dd_subjects / person_due_diligences / person_dd_steps を、
+// フェーズ2 で contacts 系 (暗号化) を追加する (DESIGN-HANDOVER.md §4.1)。
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// 管理者が変更するアプリ設定 (例: person_eval_model)。cares app_config を踏襲。
+model AppConfig {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_config")
+}
+
+/// DB 駆動プロンプト (key + model + 版管理)。vm/cares の prompts を踏襲。
+model Prompt {
+  id        String   @id @default(uuid())
+  key       String
+  version   Int      @default(1)
+  model     String?
+  body      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([key, version])
+  @@map("prompts")
+}

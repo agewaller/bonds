@@ -1,0 +1,63 @@
+# bonds ローカル開発用 Docker Compose (cares を踏襲)。
+# 3 サービス: bonds-db:5432 / api:8080 / web:3000
+#
+# 必要な .env (リポジトリ root、.env.example を参照):
+#   DATA_ENCRYPTION_KEY=... (openssl rand -hex 32。未設定なら下記ダミーで起動)
+services:
+  bonds-db:
+    image: postgres:16-alpine
+    container_name: bonds-db
+    environment:
+      POSTGRES_USER: bonds
+      POSTGRES_PASSWORD: bonds
+      POSTGRES_DB: bonds
+    ports:
+      - "5432:5432"
+    volumes:
+      - bonds-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bonds -d bonds"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.dev
+    container_name: bonds-api
+    ports:
+      - "8080:8080"
+    environment:
+      NODE_ENV: development
+      PORT: 8080
+      DATABASE_URL: postgresql://bonds:bonds@bonds-db:5432/bonds
+      ALLOWED_ORIGINS: http://localhost:3000
+      # DB フィールド暗号化 (AES-256-GCM) マスター鍵 (64 hex = 32 byte)。
+      # local 既定値はダミー。staging/prod は Secret Manager から注入する。
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:-4e107972818fcee63f3c91de6ed6f7143edab3f4169bcfe9abc95034c5e1996f}
+    depends_on:
+      bonds-db:
+        condition: service_healthy
+    volumes:
+      - ./apps/api/src:/app/apps/api/src
+      - ./packages:/app/packages
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile.dev
+    container_name: bonds-web
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+    depends_on:
+      - api
+    volumes:
+      - ./apps/web/app:/app/apps/web/app
+
+volumes:
+  bonds-db-data:
