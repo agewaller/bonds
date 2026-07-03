@@ -1,9 +1,26 @@
-// フェーズ0 のランディング (骨格)。フェーズ1 以降で人物DD / 連絡帳の画面を載せる。
+// ランディング。フェーズ1: 人物評価へ誘導。フェーズ2 以降で連絡帳を載せる。
+import Link from "next/link";
+
 export default function Home() {
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "48px 16px" }}>
       <h1>bonds</h1>
-      <p>人物デューデリジェンス + 関係性マネジメント。フェーズ0（骨格）稼働中。</p>
+      <p>人とのつながりを育てるための道具です。</p>
+      <p>
+        <Link
+          href="/subjects"
+          style={{
+            display: "inline-block",
+            padding: "12px 24px",
+            background: "#2563eb",
+            color: "#fff",
+            borderRadius: 8,
+            textDecoration: "none",
+          }}
+        >
+          人物評価をはじめる
+        </Link>
+      </p>
     </main>
   );
 }

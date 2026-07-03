@@ -9,10 +9,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
     "@bonds/db": "workspace:*",
     "@hono/node-server": "^1.13.0",
     "hono": "^4.6.0",
     "tsx": "^4.19.0"
-  },
-  "devDependencies": {}
+  }
 }

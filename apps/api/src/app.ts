@@ -1,13 +1,41 @@
-// bonds API (Hono) — フェーズ0 骨格。
+// bonds API (Hono) — フェーズ1: 人物DD MVP。
 // ルート定義は app.ts に集約し、index.ts はサーバ起動のみ担う
 // (テストは app.request() で app を直接叩けるようにするため)。
+// prisma / generate (AI 呼び出し) は注入可能: 結合テストは実テスト DB + 偽 generate で検証する。
 import { Hono } from "hono";
+import type { Context, Next } from "hono";
 import { cors } from "hono/cors";
+import { streamSSE } from "hono/streaming";
+import type { ExtendedPrismaClient } from "@bonds/db";
+import type { GenerateFn } from "./lib/anthropic.js";
+import { buildAnthropicGenerate } from "./lib/anthropic.js";
+import { isDdType, DD_TYPES, type DdType } from "./lib/dd-spec.js";
+import {
+  clampName,
+  slugify,
+  PERSON_DD_MONTHLY_CAP_JPY,
+  PERSON_DD_MODEL_CONFIG_KEY,
+  PERSON_DD_DEFAULT_MODEL_ID,
+} from "./lib/person-eval.js";
+import { canonicalizeModelId, isValidModelId, type ModelId } from "./lib/cost.js";
+import { runPersonDd, getMonthlyCostJpy, type DdRunEvent } from "./dd/runner.js";
+import { normalizeLocale } from "./lib/locale.js";
 
-export function createApp() {
+export type AppDeps = {
+  prisma: ExtendedPrismaClient;
+  generate?: GenerateFn | null;
+};
+
+const SUBJECT_TYPES = ["politician", "executive", "other"] as const;
+
+export function createApp(deps: AppDeps) {
+  const { prisma } = deps;
+  // generate 未注入なら env 鍵から構築 (鍵なしなら null = 実行系は 503)
+  const generate = deps.generate !== undefined ? deps.generate : buildAnthropicGenerate();
+
   const app = new Hono();
 
-  // CORS: 許可 Origin は env で制御 (cares/DESIGN-HANDOVER.md の Origin 限定方針)。
+  // CORS: 許可 Origin は env で制御。
   const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000")
     .split(",")
     .map((s) => s.trim())
@@ -17,13 +45,237 @@ export function createApp() {
     cors({
       origin: (origin) => (allowedOrigins.includes(origin) ? origin : null),
       allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      allowHeaders: ["Content-Type", "x-admin-token"],
     }),
   );
 
-  // ヘルスチェック。Cloud Run frontend が /healthz を 404 で intercept する既知挙動を
-  // 避けるため /api/healthz を正本とし、/healthz も残す (cares 運用メモに準拠)。
+  // ヘルスチェック (/api/healthz が正本。Cloud Run frontend の /healthz intercept 回避)。
   app.get("/healthz", (c) => c.json({ status: "ok" }));
   app.get("/api/healthz", (c) => c.json({ status: "ok" }));
+
+  // 管理ガード: 書き込み・実行・管理系は x-admin-token 必須 (fail closed)。
+  // フェーズ5 で cares の三段フェイルセーフ (custom claim / OWNER×password / token) に拡張する。
+  const requireAdmin = async (c: Context, next: Next) => {
+    const expected = process.env.ADMIN_BREAKGLASS_TOKEN;
+    if (!expected) {
+      return c.json({ error: "unavailable", detail: "管理トークンが未設定です" }, 503);
+    }
+    if (c.req.header("x-admin-token") !== expected) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    await next();
+  };
+  app.use("/api/admin/*", requireAdmin);
+  app.post("/api/dd/*", requireAdmin);
+  app.put("/api/dd/*", requireAdmin);
+  app.delete("/api/dd/*", requireAdmin);
+
+  // ---------------- 管理: モデル設定 (cares person-eval-config と同形) ----------------
+
+  app.get("/api/admin/person-eval-config", async (c) => {
+    const row = await prisma.appConfig.findUnique({ where: { key: PERSON_DD_MODEL_CONFIG_KEY } });
+    const model = canonicalizeModelId(row?.value) ?? PERSON_DD_DEFAULT_MODEL_ID;
+    return c.json({ model, isDefault: !row });
+  });
+
+  app.put("/api/admin/person-eval-config", async (c) => {
+    const body = await c.req.json<{ model?: string }>().catch(() => ({}) as { model?: string });
+    const model = canonicalizeModelId(body.model);
+    if (!model || !isValidModelId(model)) {
+      return c.json({ error: "invalid_model", detail: "canonical alias のみ指定できます" }, 400);
+    }
+    await prisma.appConfig.upsert({
+      where: { key: PERSON_DD_MODEL_CONFIG_KEY },
+      update: { value: model },
+      create: { key: PERSON_DD_MODEL_CONFIG_KEY, value: model },
+    });
+    return c.json({ model });
+  });
+
+  // ---------------- 評価対象 (dd_subjects) ----------------
+
+  app.get("/api/dd/subjects", async (c) => {
+    const subjects = await prisma.ddSubject.findMany({
+      where: { state: "active" },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    // 一覧には最新 completed run のスコアを添える (subject 詳細画面より軽い形)
+    const latest = await prisma.personDueDiligence.findMany({
+      where: { subjectId: { in: subjects.map((s) => s.id) }, status: "completed" },
+      orderBy: { createdAt: "desc" },
+      select: { subjectId: true, ddType: true, moduleScore: true, createdAt: true },
+    });
+    const scoreMap = new Map<string, Record<string, number | null>>();
+    for (const r of latest) {
+      const m = scoreMap.get(r.subjectId) ?? {};
+      if (!(r.ddType in m)) m[r.ddType] = r.moduleScore;
+      scoreMap.set(r.subjectId, m);
+    }
+    return c.json({
+      subjects: subjects.map((s) => ({
+        id: s.id,
+        slug: s.slug,
+        name: s.name,
+        subjectType: s.subjectType,
+        country: s.country,
+        latestScores: scoreMap.get(s.id) ?? {},
+        createdAt: s.createdAt,
+      })),
+    });
+  });
+
+  app.post("/api/dd/subjects", async (c) => {
+    const body = await c.req
+      .json<{
+        name?: string;
+        nameEn?: string;
+        nameKana?: string;
+        subjectType?: string;
+        country?: string;
+        affiliations?: unknown;
+      }>()
+      .catch(() => ({}) as Record<string, never>);
+    const name = clampName(body.name);
+    if (!name) {
+      return c.json({ error: "name_required", detail: "人物名を入力してください" }, 400);
+    }
+    const subjectType = SUBJECT_TYPES.includes(body.subjectType as never)
+      ? (body.subjectType as string)
+      : "other";
+    // slug 衝突時は -2, -3 ... と付番
+    const base = slugify(name);
+    let slug = base;
+    for (let i = 2; await prisma.ddSubject.findUnique({ where: { slug } }); i++) {
+      slug = `${base}-${i}`;
+    }
+    const subject = await prisma.ddSubject.create({
+      data: {
+        slug,
+        name,
+        nameEn: typeof body.nameEn === "string" ? body.nameEn.trim() || null : null,
+        nameKana: typeof body.nameKana === "string" ? body.nameKana.trim() || null : null,
+        subjectType,
+        country: typeof body.country === "string" ? body.country.trim() || null : null,
+        affiliations: (body.affiliations ?? undefined) as never,
+      },
+    });
+    return c.json({ subject }, 201);
+  });
+
+  app.get("/api/dd/subjects/:slug", async (c) => {
+    const subject = await prisma.ddSubject.findUnique({ where: { slug: c.req.param("slug") } });
+    if (!subject) return c.json({ error: "not_found" }, 404);
+    // ddType ごとの最新 run (状態問わず) と最新 completed
+    const runs = await prisma.personDueDiligence.findMany({
+      where: { subjectId: subject.id },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      select: {
+        id: true,
+        ddType: true,
+        status: true,
+        model: true,
+        moduleScore: true,
+        confidenceScore: true,
+        scores: true,
+        errorDetail: true,
+        durationMs: true,
+        createdAt: true,
+      },
+    });
+    const latestByType: Record<string, (typeof runs)[number]> = {};
+    for (const r of runs) {
+      const cur = latestByType[r.ddType];
+      const better =
+        !cur || (cur.status !== "completed" && r.status === "completed");
+      if (better) latestByType[r.ddType] = r;
+    }
+    return c.json({ subject, latestByType, recentRuns: runs.map(({ scores: _s, ...r }) => r) });
+  });
+
+  // ---------------- 実行 ----------------
+
+  const resolveModel = async (): Promise<ModelId> => {
+    const row = await prisma.appConfig.findUnique({ where: { key: PERSON_DD_MODEL_CONFIG_KEY } });
+    return canonicalizeModelId(row?.value) ?? PERSON_DD_DEFAULT_MODEL_ID;
+  };
+
+  // 実行前の共通チェック。NG なら {status, body} を返す。
+  const preflight = async (): Promise<{ status: 422 | 503; body: unknown } | null> => {
+    if (!generate) {
+      return {
+        status: 503,
+        body: { error: "unavailable", detail: "AI キーが未設定のため実行できません" },
+      };
+    }
+    const cost = await getMonthlyCostJpy(prisma);
+    if (cost >= PERSON_DD_MONTHLY_CAP_JPY) {
+      return {
+        status: 422,
+        body: { error: "quota_exceeded", detail: "今月の評価枠は終了しました" },
+      };
+    }
+    return null;
+  };
+
+  // POST /api/dd/subjects/:slug/run — 既定は両モジュール並列・同期 JSON。
+  // ?stream=1 なら SSE で進捗 (run_created/step_done/run_done) を流し最後に result を送る。
+  app.post("/api/dd/subjects/:slug/run", async (c) => {
+    const subject = await prisma.ddSubject.findUnique({ where: { slug: c.req.param("slug") } });
+    if (!subject) return c.json({ error: "not_found" }, 404);
+    const body = await c.req
+      .json<{ ddType?: string; locale?: string }>()
+      .catch(() => ({}) as { ddType?: string; locale?: string });
+    const ddTypes: DdType[] = isDdType(body.ddType) ? [body.ddType] : [...DD_TYPES];
+    const locale = normalizeLocale(body.locale);
+    const ng = await preflight();
+    if (ng) return c.json(ng.body as never, ng.status);
+    const model = await resolveModel();
+
+    const execute = async (onEvent?: (ev: DdRunEvent) => void) => {
+      const settled = await Promise.allSettled(
+        ddTypes.map((ddType) =>
+          runPersonDd(
+            { prisma, generate: generate!, onEvent },
+            { subjectId: subject.id, ddType, model, locale },
+          ),
+        ),
+      );
+      const results: Record<string, unknown> = {};
+      settled.forEach((s, i) => {
+        results[ddTypes[i]!] =
+          s.status === "fulfilled"
+            ? s.value
+            : { status: "failed", errorDetail: s.reason instanceof Error ? s.reason.message : String(s.reason) };
+      });
+      return results;
+    };
+
+    if (c.req.query("stream") === "1") {
+      return streamSSE(c, async (stream) => {
+        const results = await execute((ev) => {
+          void stream.writeSSE({ event: ev.type, data: JSON.stringify(ev) });
+        });
+        await stream.writeSSE({
+          event: "result",
+          data: JSON.stringify({ subject: { slug: subject.slug, name: subject.name }, model, results }),
+        });
+      });
+    }
+    const results = await execute();
+    return c.json({ subject: { slug: subject.slug, name: subject.name }, model, results });
+  });
+
+  // 実行詳細 (ステップ含む)
+  app.get("/api/dd/runs/:id", async (c) => {
+    const run = await prisma.personDueDiligence.findUnique({
+      where: { id: c.req.param("id") },
+      include: { steps: { orderBy: { createdAt: "asc" } }, subject: true },
+    });
+    if (!run) return c.json({ error: "not_found" }, 404);
+    return c.json({ run });
+  });
 
   return app;
 }

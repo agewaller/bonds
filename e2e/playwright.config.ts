@@ -19,5 +19,17 @@ export default defineConfig({
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        // 実行環境にプリインストールされた Chromium を優先する
+        // (PW_CHROMIUM_PATH で上書き可。無ければ Playwright 既定のブラウザ解決)。
+        launchOptions: process.env.PW_CHROMIUM_PATH
+          ? { executablePath: process.env.PW_CHROMIUM_PATH }
+          : {},
+      },
+    },
+  ],
 });

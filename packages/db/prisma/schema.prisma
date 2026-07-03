@@ -1,6 +1,6 @@
-// bonds Prisma schema — フェーズ0 骨格。
-// フェーズ1 で dd_subjects / person_due_diligences / person_dd_steps を、
-// フェーズ2 で contacts 系 (暗号化) を追加する (DESIGN-HANDOVER.md §4.1)。
+// bonds Prisma schema — フェーズ1 (人物DD MVP)。
+// 人物DD側は公開情報主体のため原則暗号化なし (DESIGN-HANDOVER.md §4.1)。
+// フェーズ2 で contacts 系 (暗号化) を追加する。
 generator client {
   provider = "prisma-client-js"
 }
@@ -19,7 +19,7 @@ model AppConfig {
   @@map("app_config")
 }
 
-/// DB 駆動プロンプト (key + model + 版管理)。vm/cares の prompts を踏襲。
+/// DB 駆動プロンプト (key + version、管理画面編集)。vm/cares の prompts を踏襲。
 model Prompt {
   id        String   @id @default(uuid())
   key       String
@@ -31,4 +31,92 @@ model Prompt {
 
   @@unique([key, version])
   @@map("prompts")
+}
+
+/// 人物DD の評価対象 (公人)。vm-suite companies の人物版。
+model DdSubject {
+  id           String   @id @default(uuid())
+  slug         String   @unique
+  name         String
+  nameEn       String?  @map("name_en")
+  nameKana     String?  @map("name_kana")
+  subjectType  String   @default("other") @map("subject_type") // politician / executive / other
+  affiliations Json?
+  country      String?
+  state        String   @default("active") // active / archived
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  dueDiligences PersonDueDiligence[]
+
+  @@map("dd_subjects")
+}
+
+/// 人物DD の実行 1 回 (モジュール単位)。vm-suite due_diligences の複製。
+model PersonDueDiligence {
+  id              String    @id @default(uuid())
+  subjectId       String    @map("subject_id")
+  subject         DdSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  ddType          String    @map("dd_type") // consciousness_7d / social_value_creation
+  promptKey       String?   @map("prompt_key")
+  promptVersion   Int?      @map("prompt_version")
+  model           String
+  provider        String    @default("anthropic")
+  referenceDate   DateTime? @map("reference_date")
+  inputJson       Json?     @map("input_json")
+  outputText      String?   @map("output_text")
+  outputJson      Json?     @map("output_json")
+  scores          Json?
+  moduleScore     Float?    @map("module_score")
+  confidenceScore Float?    @map("confidence_score")
+  status          String    @default("pending") // pending / running / completed / invalid_output / failed
+  errorDetail     String?   @map("error_detail")
+  inputTokens     Int       @default(0) @map("input_tokens")
+  outputTokens    Int       @default(0) @map("output_tokens")
+  durationMs      Int?      @map("duration_ms")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  steps PersonDdStep[]
+
+  @@index([subjectId, ddType, createdAt])
+  @@map("person_due_diligences")
+}
+
+/// 実行内の 1 ステップ。vm-suite due_diligence_steps の複製。
+/// フェーズ1 は search (知識ベースのため skipped) → evaluate の 2 ステップ。
+model PersonDdStep {
+  id          String             @id @default(uuid())
+  personDdId  String             @map("person_dd_id")
+  personDd    PersonDueDiligence @relation(fields: [personDdId], references: [id], onDelete: Cascade)
+  stepKey     String             @map("step_key")
+  stepType    String             @map("step_type") // search / evaluate
+  promptKey   String?            @map("prompt_key")
+  model       String?
+  inputJson   Json?              @map("input_json")
+  outputJson  Json?              @map("output_json")
+  outputText  String?            @map("output_text")
+  status      String             @default("pending") // pending / running / completed / skipped / failed
+  errorDetail String?            @map("error_detail")
+  startedAt   DateTime?          @map("started_at")
+  finishedAt  DateTime?          @map("finished_at")
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  @@index([personDdId])
+  @@map("person_dd_steps")
+}
+
+/// AI 利用記録。月次円建てキャップ (BR-20 相当) の集計元。
+model AiUsageLog {
+  id           String   @id @default(uuid())
+  provider     String
+  model        String
+  purpose      String // person_dd_consciousness_7d / person_dd_social_value_creation など
+  inputTokens  Int      @map("input_tokens")
+  outputTokens Int      @map("output_tokens")
+  costJpy      Float    @map("cost_jpy")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([purpose, createdAt])
+  @@map("ai_usage_logs")
 }
