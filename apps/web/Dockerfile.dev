@@ -1,0 +1,11 @@
+# bonds web — dev image (next dev). 本番 Dockerfile はフェーズ5 で追加。
+FROM node:22-alpine
+RUN corepack enable
+WORKDIR /app
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY apps/web/package.json apps/web/
+RUN pnpm install --frozen-lockfile
+COPY apps/web ./apps/web
+EXPOSE 3000
+WORKDIR /app/apps/web
+CMD ["pnpm", "dev"]

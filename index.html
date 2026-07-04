@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bonds - 人物評価</title>
+<meta name="description" content="政治家・経営者などの公人の名前を入力すると、意識の七次元と社会価値創造の二つの視点から評価を表示します。">
+<style>
+  :root {
+    --accent: #2563eb;
+    --accent-dark: #1e40af;
+    --bg: #f8fafc;
+    --card: #ffffff;
+    --text: #0f172a;
+    --muted: #64748b;
+    --border: #e2e8f0;
+    --error-bg: #fef2f2;
+    --error-text: #b91c1c;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.75;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  header { text-align: center; padding: 32px 0 8px; }
+  header h1 { font-size: 1.6rem; margin: 0 0 8px; letter-spacing: 0.02em; }
+  header p.lead { color: var(--muted); margin: 0; font-size: 0.95rem; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-top: 20px;
+  }
+  .input-row { display: flex; gap: 8px; }
+  input[type="text"] {
+    flex: 1;
+    font-size: 1.05rem;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    min-width: 0;
+  }
+  input[type="text"]:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  button.primary {
+    font-size: 1rem;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button.primary:hover { background: var(--accent-dark); }
+  button.primary:disabled { background: #94a3b8; cursor: wait; }
+  .hint { color: var(--muted); font-size: 0.85rem; margin: 10px 0 0; }
+  .alert {
+    background: var(--error-bg);
+    color: var(--error-text);
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-top: 16px;
+    font-size: 0.95rem;
+  }
+  .loading { text-align: center; padding: 28px 8px; color: var(--muted); }
+  .spinner {
+    display: inline-block;
+    width: 28px; height: 28px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+    margin-bottom: 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  section.result h2 {
+    font-size: 1.1rem;
+    margin: 0 0 4px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--accent);
+  }
+  section.result .subject { color: var(--muted); font-size: 0.9rem; margin: 0 0 12px; }
+  .prose {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.95rem;
+    overflow: hidden;
+  }
+  .prose.clamped { max-height: 22em; position: relative; }
+  .prose.clamped::after {
+    content: "";
+    position: absolute; left: 0; right: 0; bottom: 0; height: 4em;
+    background: linear-gradient(transparent, var(--card));
+  }
+  button.toggle {
+    margin-top: 10px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 16px;
+    font-size: 0.9rem;
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .meta { color: var(--muted); font-size: 0.8rem; margin-top: 16px; text-align: right; }
+  footer {
+    margin-top: 40px;
+    color: var(--muted);
+    font-size: 0.8rem;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>人物評価</h1>
+    <p class="lead">政治家・経営者などの公人の名前を入れると、二つの視点から評価をお返しします。</p>
+  </header>
+
+  <div class="card">
+    <form id="form">
+      <div class="input-row">
+        <input id="name" type="text" maxlength="100" placeholder="例: 渋沢栄一"
+               aria-label="評価したい人物の名前" autocomplete="off" required>
+        <button id="submit" class="primary" type="submit">評価する</button>
+      </div>
+      <p class="hint">意識の七次元と社会価値創造の二つの評価を一度に作ります。一〜二分ほどかかります。</p>
+    </form>
+    <div id="alert" class="alert" role="alert" hidden></div>
+  </div>
+
+  <div id="loading" class="card loading" hidden>
+    <div class="spinner"></div>
+    <p id="loading-text">評価を作っています。一〜二分ほどお待ちください。</p>
+  </div>
+
+  <div id="results" hidden>
+    <div class="card">
+      <section class="result">
+        <h2>意識の七次元評価</h2>
+        <p class="subject" id="subject-7d"></p>
+        <div id="out-7d" class="prose clamped"></div>
+        <button class="toggle" data-target="out-7d" hidden>続きを読む</button>
+      </section>
+    </div>
+    <div class="card">
+      <section class="result">
+        <h2>社会価値創造評価</h2>
+        <p class="subject" id="subject-svc"></p>
+        <div id="out-svc" class="prose clamped"></div>
+        <button class="toggle" data-target="out-svc" hidden>続きを読む</button>
+      </section>
+    </div>
+    <p class="meta" id="meta"></p>
+  </div>
+
+  <footer>
+    この評価は、学習済みの公開情報に基づいて自動生成される参考情報であり、人物への断定的な判断ではありません。
+    最新の出来事が反映されていない場合があります。人格・病気・私生活への言及は行わない方針で作られています。
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // cares API (サーバ側で鍵・レート制限・コスト上限を管理)。
+  // 動作確認用に ?api=... で差し替え可能 (例: staging)。
+  var params = new URLSearchParams(location.search);
+  var API_BASE = params.get("api") || "https://cares-api-xj6szhutkq-an.a.run.app";
+
+  var form = document.getElementById("form");
+  var nameInput = document.getElementById("name");
+  var submitBtn = document.getElementById("submit");
+  var alertBox = document.getElementById("alert");
+  var loading = document.getElementById("loading");
+  var loadingText = document.getElementById("loading-text");
+  var results = document.getElementById("results");
+  var meta = document.getElementById("meta");
+
+  var LOADING_MESSAGES = [
+    "評価を作っています。一〜二分ほどお待ちください。",
+    "公開情報を整理しています…",
+    "七つの次元ごとに点数をつけています…",
+    "社会に生んだ価値を推計しています…",
+    "もう少しで仕上がります…"
+  ];
+  var loadingTimer = null;
+
+  function setLoading(on) {
+    submitBtn.disabled = on;
+    submitBtn.textContent = on ? "評価中…" : "評価する";
+    loading.hidden = !on;
+    if (on) {
+      var i = 0;
+      loadingText.textContent = LOADING_MESSAGES[0];
+      loadingTimer = setInterval(function () {
+        i = (i + 1) % LOADING_MESSAGES.length;
+        loadingText.textContent = LOADING_MESSAGES[i];
+      }, 12000);
+    } else if (loadingTimer) {
+      clearInterval(loadingTimer);
+      loadingTimer = null;
+    }
+  }
+
+  function showError(msg) {
+    alertBox.textContent = msg;
+    alertBox.hidden = false;
+  }
+
+  function fillSection(outId, subjectId, text, name) {
+    var out = document.getElementById(outId);
+    var subject = document.getElementById(subjectId);
+    subject.textContent = "対象: " + name;
+    if (text) {
+      out.textContent = text; // textContent なので HTML 注入は起きない
+    } else {
+      out.textContent = "この評価は今回作成できませんでした。もう一度お試しください。";
+    }
+    // 長文はクランプし「続きを読む」を出す
+    var btn = document.querySelector('button.toggle[data-target="' + outId + '"]');
+    out.classList.add("clamped");
+    btn.hidden = out.scrollHeight <= out.clientHeight + 8;
+    btn.textContent = "続きを読む";
+  }
+
+  document.querySelectorAll("button.toggle").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var out = document.getElementById(btn.getAttribute("data-target"));
+      var clamped = out.classList.toggle("clamped");
+      btn.textContent = clamped ? "続きを読む" : "閉じる";
+      if (clamped) out.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+
+  form.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var name = nameInput.value.trim();
+    if (!name) { showError("評価したい人物の名前を入力してください。"); return; }
+
+    alertBox.hidden = true;
+    results.hidden = true;
+    setLoading(true);
+
+    var controller = new AbortController();
+    var timeout = setTimeout(function () { controller.abort(); }, 180000);
+
+    try {
+      var res = await fetch(API_BASE + "/api/trial/person-eval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name,
+          locale: (navigator.language || "ja").split("-")[0]
+        }),
+        signal: controller.signal
+      });
+      var body = null;
+      try { body = await res.json(); } catch (_) { /* 非 JSON 応答 */ }
+
+      if (!res.ok) {
+        var detail = body && body.detail ? body.detail :
+          res.status === 429 ? "本日の評価回数の上限に達しました。明日また試してください。" :
+          res.status === 422 ? "今月の評価枠は終了しました。来月またご利用ください。" :
+          res.status === 504 ? "評価に時間がかかりすぎました。もう一度お試しください。" :
+          "評価に失敗しました。しばらくしてからお試しください。";
+        showError(detail);
+        return;
+      }
+
+      // クランプ判定は高さの実測が要るため、先に表示してから流し込む
+      results.hidden = false;
+      fillSection("out-7d", "subject-7d", body.consciousness, body.name);
+      fillSection("out-svc", "subject-svc", body.socialValue, body.name);
+      meta.textContent = typeof body.remainingToday === "number"
+        ? "本日はあと " + body.remainingToday + " 回評価できます"
+        : "";
+      results.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (err) {
+      showError(err && err.name === "AbortError"
+        ? "評価に時間がかかりすぎました。もう一度お試しください。"
+        : "通信に失敗しました。ネットワークを確認してもう一度お試しください。");
+    } finally {
+      clearTimeout(timeout);
+      setLoading(false);
+    }
+  });
+})();
+</script>
+</body>
+</html>

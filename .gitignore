@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+packages/db/prisma/generated/
+test-results/
+playwright-report/
+.DS_Store
+next-env.d.ts
+node-compile-cache/

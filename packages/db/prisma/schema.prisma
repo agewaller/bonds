@@ -1,0 +1,251 @@
+// bonds Prisma schema — フェーズ1 (人物DD MVP)。
+// 人物DD側は公開情報主体のため原則暗号化なし (DESIGN-HANDOVER.md §4.1)。
+// フェーズ2 で contacts 系 (暗号化) を追加する。
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// 管理者が変更するアプリ設定 (例: person_eval_model)。cares app_config を踏襲。
+model AppConfig {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_config")
+}
+
+/// DB 駆動プロンプト (key + version、管理画面編集)。vm/cares の prompts を踏襲。
+model Prompt {
+  id        String   @id @default(uuid())
+  key       String
+  version   Int      @default(1)
+  model     String?
+  body      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([key, version])
+  @@map("prompts")
+}
+
+/// 人物DD の評価対象 (公人)。vm-suite companies の人物版。
+model DdSubject {
+  id           String   @id @default(uuid())
+  slug         String   @unique
+  name         String
+  nameEn       String?  @map("name_en")
+  nameKana     String?  @map("name_kana")
+  subjectType  String   @default("other") @map("subject_type") // politician / executive / other
+  affiliations Json?
+  country      String?
+  state        String   @default("active") // active / archived
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  dueDiligences PersonDueDiligence[]
+
+  @@map("dd_subjects")
+}
+
+/// 人物DD の実行 1 回 (モジュール単位)。vm-suite due_diligences の複製。
+model PersonDueDiligence {
+  id              String    @id @default(uuid())
+  subjectId       String    @map("subject_id")
+  subject         DdSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  ddType          String    @map("dd_type") // consciousness_7d / social_value_creation
+  promptKey       String?   @map("prompt_key")
+  promptVersion   Int?      @map("prompt_version")
+  model           String
+  provider        String    @default("anthropic")
+  referenceDate   DateTime? @map("reference_date")
+  inputJson       Json?     @map("input_json")
+  outputText      String?   @map("output_text")
+  outputJson      Json?     @map("output_json")
+  scores          Json?
+  moduleScore     Float?    @map("module_score")
+  confidenceScore Float?    @map("confidence_score")
+  status          String    @default("pending") // pending / running / completed / invalid_output / failed
+  errorDetail     String?   @map("error_detail")
+  inputTokens     Int       @default(0) @map("input_tokens")
+  outputTokens    Int       @default(0) @map("output_tokens")
+  durationMs      Int?      @map("duration_ms")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  steps PersonDdStep[]
+
+  @@index([subjectId, ddType, createdAt])
+  @@map("person_due_diligences")
+}
+
+/// 実行内の 1 ステップ。vm-suite due_diligence_steps の複製。
+/// フェーズ1 は search (知識ベースのため skipped) → evaluate の 2 ステップ。
+model PersonDdStep {
+  id          String             @id @default(uuid())
+  personDdId  String             @map("person_dd_id")
+  personDd    PersonDueDiligence @relation(fields: [personDdId], references: [id], onDelete: Cascade)
+  stepKey     String             @map("step_key")
+  stepType    String             @map("step_type") // search / evaluate
+  promptKey   String?            @map("prompt_key")
+  model       String?
+  inputJson   Json?              @map("input_json")
+  outputJson  Json?              @map("output_json")
+  outputText  String?            @map("output_text")
+  status      String             @default("pending") // pending / running / completed / skipped / failed
+  errorDetail String?            @map("error_detail")
+  startedAt   DateTime?          @map("started_at")
+  finishedAt  DateTime?          @map("finished_at")
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  @@index([personDdId])
+  @@map("person_dd_steps")
+}
+
+/// AI 利用記録。月次円建てキャップ (BR-20 相当) の集計元。
+model AiUsageLog {
+  id           String   @id @default(uuid())
+  provider     String
+  model        String
+  purpose      String // person_dd_consciousness_7d / person_dd_social_value_creation など
+  inputTokens  Int      @map("input_tokens")
+  outputTokens Int      @map("output_tokens")
+  costJpy      Float    @map("cost_jpy")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([purpose, createdAt])
+  @@map("ai_usage_logs")
+}
+
+/// 連絡先 (ユーザーの人脈)。PII の塊 = ENCRYPTED_FIELDS で項目暗号化 (DESIGN-HANDOVER.md §4.1)。
+/// distance: 1(毎日)〜5(遠い)。1〜3 が接触間隔の監視対象 (lms 移植)。
+model Contact {
+  id              String    @id @default(uuid())
+  ownerUid        String    @default("owner") @map("owner_uid") // フェーズ5 の認証導入までは単一オーナー
+  name            String
+  furigana        String?
+  distance        Int       @default(4)
+  relationship    String    @default("other") // family / friend / work / mentor / other など
+  birthday        DateTime?
+  phone           String? // 暗号化
+  email           String? // 暗号化
+  address         String? // 暗号化
+  company         String?
+  title           String?
+  sns             String? // 暗号化 (JSON 文字列)
+  personalProfile String?   @map("personal_profile") // 暗号化: 健康・家族友人・悩み・課題・夢など
+  socialPosition  String?   @map("social_position") // 暗号化: 社会的位置づけ
+  valuesProfile   String?   @map("values_profile") // 暗号化: 価値観・目標/目的
+  notes           String? // 暗号化
+  source          String    @default("manual") // manual / csv / vcard / sns / eight / nengajo
+  state           String    @default("active") // active / archived (ソフト削除)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  interactions ContactInteraction[]
+  gifts        ContactGift[]
+
+  @@index([ownerUid, state])
+  @@map("contacts")
+}
+
+/// 接触記録。距離スコアの入力であり、発信結果の還流先。
+model ContactInteraction {
+  id         String   @id @default(uuid())
+  contactId  String   @map("contact_id")
+  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type       String // meeting / call / message / letter / email / gift_sent / gift_received
+  quality    Int? // 1–5
+  occurredAt DateTime @map("occurred_at")
+  notes      String? // 暗号化
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([contactId, occurredAt])
+  @@map("contact_interactions")
+}
+
+/// 贈り物の記録 (誕生日・年賀状・慶事)。
+model ContactGift {
+  id        String   @id @default(uuid())
+  contactId String   @map("contact_id")
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  occasion  String // birthday / new_year / celebration / thanks / other
+  direction String   @default("outbound") // outbound / inbound
+  item      String
+  amount    Int?
+  notes     String? // 暗号化
+  givenAt   DateTime @map("given_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([contactId])
+  @@map("contact_gifts")
+}
+
+/// 連絡先グループ (家族・同窓・仕事チームなど)。
+model ContactGroup {
+  id        String   @id @default(uuid())
+  ownerUid  String   @default("owner") @map("owner_uid")
+  groupName String   @map("group_name")
+  type      String   @default("other")
+  members   Json? // contact id の配列
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([ownerUid])
+  @@map("contact_groups")
+}
+
+/// カレンダー連携 (busy スロットのキャッシュ)。contact_id が null なら自分の busy。
+/// フェーズ5 で Google/Outlook のライブ OAuth 同期を載せる (今は手動/API 登録)。
+model CalendarLink {
+  id        String   @id @default(uuid())
+  ownerUid  String   @default("owner") @map("owner_uid")
+  contactId String?  @map("contact_id") // "self" = 自分 (NULL は複合ユニークで重複可になるため番兵値を使う)
+  provider  String   @default("manual") // manual / google / outlook
+  busySlots Json     @map("busy_slots") // [{start, end}] ISO 文字列
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([ownerUid, contactId])
+  @@map("calendar_links")
+}
+
+/// 発信 (outreach)。既定フローは draft → approved → sent (CLAUDE.md 自律性の段階)。
+/// body / candidates は文面 (PII) のためアプリ層暗号化。
+model OutreachMessage {
+  id                String    @id @default(uuid())
+  ownerUid          String    @default("owner") @map("owner_uid")
+  contactId         String    @map("contact_id")
+  channel           String    @default("email") // email / gift / nengajo / press / offer / meeting_invite
+  direction         String    @default("outbound")
+  purpose           String    @default("keepup") // keepup / birthday / thanks / meeting / contribution / repair
+  subject           String?
+  body              String? // 暗号化 (承認された本文)
+  candidates        String? // 暗号化 (生成した文面候補の JSON 文字列)
+  status            String    @default("draft") // draft / approved / sent / failed / replied
+  errorDetail       String?   @map("error_detail")
+  providerMessageId String?   @map("provider_message_id")
+  scheduledAt       DateTime? @map("scheduled_at")
+  sentAt            DateTime? @map("sent_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@index([ownerUid, contactId, status])
+  @@map("outreach_messages")
+}
+
+/// 監査ログ (フェーズ5)。書き込み系 API の who/what/when を記録する。
+model AuditLog {
+  id        String   @id @default(uuid())
+  actor     String // 認証経路: firebase:<uid> / owner:<email> / breakglass
+  method    String
+  path      String
+  status    Int
+  detail    String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("audit_logs")
+}

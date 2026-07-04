@@ -1,0 +1,19 @@
+# bonds API — 本番イメージ (Cloud Run)。cares 方式: pnpm deploy で api だけを取り出す。
+FROM node:22-alpine AS build
+RUN corepack enable
+WORKDIR /app
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY packages ./packages
+COPY apps/api ./apps/api
+RUN pnpm install --frozen-lockfile --filter @bonds/api... \
+ && pnpm --filter @bonds/db exec prisma generate \
+ && pnpm --filter @bonds/api deploy --prod /out
+# prisma engine と生成クライアントを持ち出す
+FROM node:22-alpine
+RUN corepack enable
+WORKDIR /app
+COPY --from=build /out .
+COPY --from=build /app/packages/db/prisma ./prisma
+ENV NODE_ENV=production PORT=8080
+EXPOSE 8080
+CMD ["node_modules/.bin/tsx", "src/index.ts"]

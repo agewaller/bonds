@@ -1,0 +1,81 @@
+# bonds を GCP (Cloud Run) へデプロイする (cares deploy-prod.yml の WIF 方式を踏襲)。
+# 手動起動のみ (workflow_dispatch)。CLAUDE.md の 2 ゲート: テスト全緑 + オーナーの明示承認
+# (= このワークフローを手で起動すること) を経て実行する。
+#
+# 前提 (初回のみ、オーナーが gcloud で実施):
+#   1. cares の infra/scripts/11-setup-github-wif.sh 相当で bonds リポジトリを WIF に追加し、
+#      リポジトリ Variables に WIF_PROVIDER / DEPLOY_SA を設定
+#   2. bash infra/scripts/01-create-secrets.sh (bonds 専用シークレット作成 + 値投入)
+#   3. Cloud SQL bonds-db-prod / Artifact Registry bonds-images を作成
+# AI キーは cares と共有の Secret Manager シークレット ANTHROPIC_API_KEY を参照する。
+name: deploy-gcp
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "デプロイ対象 (all / api / web)"
+        default: "all"
+
+env:
+  PROJECT: arctic-anvil-497002-q2
+  REGION: asia-northeast1
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test-gate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: bonds
+          POSTGRES_PASSWORD: bonds
+          POSTGRES_DB: bonds
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bonds" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - name: unit + integration (実 Postgres)
+        run: pnpm test
+        env:
+          TEST_DATABASE_URL: postgresql://bonds:bonds@localhost:5432/bonds_test
+
+  deploy:
+    needs: test-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: migrate (Cloud SQL)
+        run: |
+          curl -sSLo cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.2/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy && sudo mv cloud-sql-proxy /usr/local/bin/
+          corepack enable && pnpm install --frozen-lockfile
+          bash infra/scripts/05-migrate-prod.sh
+      - name: build & push images
+        run: bash infra/scripts/06-build-push-images.sh
+      - name: deploy cloud run (api → web)
+        run: |
+          case "${{ github.event.inputs.only }}" in
+            api) bash infra/scripts/07-deploy-cloud-run.sh --only=api ;;
+            web) bash infra/scripts/07-deploy-cloud-run.sh --only=web ;;
+            *)   bash infra/scripts/07-deploy-cloud-run.sh ;;
+          esac
+      - name: health check (デプロイ後の実測 = cares の鉄則)
+        run: |
+          API_URL="$(gcloud run services describe bonds-api --project=$PROJECT --region=$REGION --format='value(status.url)')"
+          curl -fsS "$API_URL/api/healthz" | grep -q '"ok"' && echo "healthz OK: $API_URL"

@@ -1,0 +1,38 @@
+{
+  "name": "bonds",
+  "version": "0.0.0",
+  "private": true,
+  "description": "人物デューデリジェンス + 関係性マネジメント (agewaller/bonds)",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "postinstall": "pnpm --filter @bonds/db exec prisma generate",
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm run test:unit && pnpm run test:integration",
+    "test:unit": "vitest run --project unit-node",
+    "test:integration": "bash scripts/setup-test-db.sh && vitest run --project integration",
+    "test:watch": "vitest --project unit-node",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.1.7",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.7"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "esbuild",
+      "prisma"
+    ]
+  }
+}
