@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { firebaseConfigured, signInWithGoogle, watchUser } from "../../lib/firebase";
+import { t } from "../../lib/i18n";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -30,7 +31,7 @@ export default function LoginPage() {
   return (
     <main style={{ maxWidth: 480, margin: "0 auto", padding: "64px 16px", textAlign: "center" }}>
       <h1>bonds</h1>
-      <p>大切な人とのつながりを、ここから育てましょう。</p>
+      <p>{t("login_tagline")}</p>
       {configured ? (
         <button
           onClick={() => void login()}
@@ -44,7 +45,7 @@ export default function LoginPage() {
             cursor: "pointer",
           }}
         >
-          Google ではじめる
+          {t("login_google")}
         </button>
       ) : (
         <p style={{ color: "#64748b" }}>

@@ -1,11 +1,21 @@
-// ランディング。フェーズ1: 人物評価へ誘導。フェーズ2 以降で連絡帳を載せる。
+"use client";
+// ランディング。文言は辞書経由 (lib/i18n)。
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import { t, currentLocale, type Locale } from "../lib/i18n";
+import { LanguageSelector } from "../components/LanguageSelector";
 
 export default function Home() {
+  // cookie はクライアントでしか読めないため、初回描画後に反映する
+  const [locale, setLocale] = useState<Locale>("ja");
+  useEffect(() => setLocale(currentLocale()), []);
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "48px 16px" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <LanguageSelector />
+      </div>
       <h1>bonds</h1>
-      <p>人とのつながりを育てるための道具です。</p>
+      <p>{t("app_tagline", locale)}</p>
       <p style={{ display: "flex", gap: 12 }}>
         <Link
           href="/contacts"
@@ -18,7 +28,7 @@ export default function Home() {
             textDecoration: "none",
           }}
         >
-          連絡帳をひらく
+          {t("open_contacts", locale)}
         </Link>
         <Link
           href="/subjects"
@@ -31,7 +41,7 @@ export default function Home() {
             textDecoration: "none",
           }}
         >
-          人物評価をはじめる
+          {t("start_person_eval", locale)}
         </Link>
       </p>
     </main>

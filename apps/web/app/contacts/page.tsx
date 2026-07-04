@@ -4,6 +4,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../../lib/client-api";
 import { AuthBar } from "../../components/AuthBar";
+import { LanguageSelector } from "../../components/LanguageSelector";
+import { t } from "../../lib/i18n";
 import Link from "next/link";
 
 type Contact = {
@@ -120,11 +122,14 @@ export default function ContactsPage() {
 
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
-      <AuthBar />
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <LanguageSelector />
+        <AuthBar />
+      </div>
       <p>
-        <Link href="/" style={{ color: "#2563eb" }}>ホームへ戻る</Link>
+        <Link href="/" style={{ color: "#2563eb" }}>{t("back_home")}</Link>
       </p>
-      <h1 style={{ fontSize: 24 }}>連絡帳</h1>
+      <h1 style={{ fontSize: 24 }}>{t("contacts_title")}</h1>
 
       {summary && (
         <section
@@ -137,7 +142,7 @@ export default function ContactsPage() {
           }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-            <h2 style={{ fontSize: 18, margin: 0 }}>つながりスコア</h2>
+            <h2 style={{ fontSize: 18, margin: 0 }}>{t("connection_score")}</h2>
             <div style={{ fontSize: 28, color: level.color }}>
               {summary.connectionScore}
               <small style={{ fontSize: 14, color: "#64748b" }}>/100</small>
@@ -150,11 +155,11 @@ export default function ContactsPage() {
 
       {summary && summary.today.length > 0 && (
         <section style={{ margin: "16px 0" }}>
-          <h2 style={{ fontSize: 18 }}>今日、連絡してみませんか</h2>
+          <h2 style={{ fontSize: 18 }}>{t("today_suggestion")}</h2>
           <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 8 }}>
-            {summary.today.map((t) => (
+            {summary.today.map((sug) => (
               <li
-                key={t.contactId}
+                key={sug.contactId}
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
@@ -165,11 +170,11 @@ export default function ContactsPage() {
                 }}
               >
                 <span>
-                  <strong>{t.name}</strong>さん
-                  <span style={{ color: "#64748b", marginLeft: 8 }}>{t.reason}</span>
+                  <strong>{sug.name}</strong>さん
+                  <span style={{ color: "#64748b", marginLeft: 8 }}>{sug.reason}</span>
                 </span>
                 <button
-                  onClick={() => void logContact(t.contactId)}
+                  onClick={() => void logContact(sug.contactId)}
                   style={{
                     padding: "6px 12px",
                     border: "1px solid #2563eb",
@@ -179,7 +184,7 @@ export default function ContactsPage() {
                     cursor: "pointer",
                   }}
                 >
-                  連絡しました
+                  {t("contacted")}
                 </button>
               </li>
             ))}
@@ -198,13 +203,13 @@ export default function ContactsPage() {
       )}
 
       <section style={{ margin: "24px 0" }}>
-        <h2 style={{ fontSize: 18 }}>追加する</h2>
+        <h2 style={{ fontSize: 18 }}>{t("add_section")}</h2>
         <div style={{ display: "flex", gap: 8 }}>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && void add()}
-            placeholder="お名前"
+            placeholder={t("name_placeholder")}
             aria-label="お名前"
             style={{ flex: 1, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8 }}
           />
@@ -223,7 +228,7 @@ export default function ContactsPage() {
             disabled={busy || !name.trim()}
             style={{ padding: "10px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
           >
-            追加
+            {t("add_button")}
           </button>
         </div>
         <p style={{ marginTop: 8 }}>
@@ -256,7 +261,7 @@ export default function ContactsPage() {
       </section>
 
       <section>
-        <h2 style={{ fontSize: 18 }}>みなさん ({contacts.length})</h2>
+        <h2 style={{ fontSize: 18 }}>{t("everyone")} ({contacts.length})</h2>
         <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 6 }}>
           {contacts.map((c) => (
             <li key={c.id}>
