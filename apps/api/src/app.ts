@@ -35,11 +35,13 @@ import { jsonProseLanguageDirective } from "./lib/locale.js";
 import { extractJson } from "./lib/dd-spec.js";
 import { calcCostJpy } from "./lib/cost.js";
 import { PERSON_DD_MAX_TOKENS, PERSON_DD_TIMEOUT_MS } from "./lib/person-eval.js";
+import { authorizeAdmin, type VerifyIdTokenFn } from "./lib/auth.js";
 
 export type AppDeps = {
   prisma: ExtendedPrismaClient;
   generate?: GenerateFn | null;
   mailer?: MailerFn | null;
+  verifyIdToken?: VerifyIdTokenFn | null;
 };
 
 const SUBJECT_TYPES = ["politician", "executive", "other"] as const;
@@ -71,17 +73,41 @@ export function createApp(deps: AppDeps) {
   app.get("/healthz", (c) => c.json({ status: "ok" }));
   app.get("/api/healthz", (c) => c.json({ status: "ok" }));
 
-  // 管理ガード: 書き込み・実行・管理系は x-admin-token 必須 (fail closed)。
-  // フェーズ5 で cares の三段フェイルセーフ (custom claim / OWNER×password / token) に拡張する。
+  // 管理ガード: cares の三段フェイルセーフ (①Firebase custom claim admin:true
+  // ②OWNER_EMAIL×password provider ③break-glass token)。どれも無ければ fail closed。
+  // 書き込み系は監査ログ (who/what/when) を残す。
   const requireAdmin = async (c: Context, next: Next) => {
-    const expected = process.env.ADMIN_BREAKGLASS_TOKEN;
-    if (!expected) {
-      return c.json({ error: "unavailable", detail: "管理トークンが未設定です" }, 503);
-    }
-    if (c.req.header("x-admin-token") !== expected) {
-      return c.json({ error: "unauthorized" }, 401);
+    const result = await authorizeAdmin(
+      {
+        authorization: c.req.header("authorization"),
+        adminToken: c.req.header("x-admin-token"),
+      },
+      { verifyIdToken: deps.verifyIdToken ?? null },
+    );
+    if (!result.ok) {
+      return c.json({ error: result.error, detail: result.detail }, result.status);
     }
     await next();
+    if (c.req.method !== "GET") {
+      // 監査記録は応答をブロックしない (失敗はログのみ)
+      prisma.auditLog
+        .create({
+          data: {
+            actor: result.actor,
+            method: c.req.method,
+            path: c.req.path,
+            status: c.res.status,
+          },
+        })
+        .catch((err: unknown) =>
+          console.error(
+            JSON.stringify({
+              event: "audit_log_failed",
+              detail: err instanceof Error ? err.message : String(err),
+            }),
+          ),
+        );
+    }
   };
   app.use("/api/admin/*", requireAdmin);
   app.post("/api/dd/*", requireAdmin);

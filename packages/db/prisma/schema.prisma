@@ -235,3 +235,17 @@ model OutreachMessage {
   @@index([ownerUid, contactId, status])
   @@map("outreach_messages")
 }
+
+/// 監査ログ (フェーズ5)。書き込み系 API の who/what/when を記録する。
+model AuditLog {
+  id        String   @id @default(uuid())
+  actor     String // 認証経路: firebase:<uid> / owner:<email> / breakglass
+  method    String
+  path      String
+  status    Int
+  detail    String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("audit_logs")
+}

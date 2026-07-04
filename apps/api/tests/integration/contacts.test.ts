@@ -191,3 +191,37 @@ describe("つながりサマリ (lms 距離スコアの結合検証)", () => {
     expect(s.today[0]).toMatchObject({ contactId: c.id, kind: "birthday" });
   });
 });
+
+describe("監査ログ (フェーズ5)", () => {
+  it("書き込みに actor/method/path が記録され、読み取りは記録されない", async () => {
+    await prisma.$executeRawUnsafe('TRUNCATE "audit_logs"');
+    const c = await createContact();
+    await app.request("/api/contacts", { headers: H }); // GET は記録しない
+    // 監査記録は fire-and-forget なので少し待つ
+    await new Promise((r) => setTimeout(r, 200));
+    // 前テストの fire-and-forget が truncate 後に着地しうるため、内容で検証する
+    const logs = await prisma.auditLog.findMany();
+    expect(logs.filter((l) => l.method === "GET")).toHaveLength(0); // 読み取りは記録しない
+    const post = logs.find((l) => l.method === "POST" && l.path === "/api/contacts");
+    expect(post).toMatchObject({ actor: "breakglass", status: 201 });
+    void c;
+  });
+
+  it("Firebase admin claim のトークンでも書き込みでき actor が firebase:<uid> になる", async () => {
+    await prisma.$executeRawUnsafe('TRUNCATE "audit_logs"');
+    const appFb = createApp({
+      prisma,
+      generate: null,
+      verifyIdToken: async () => ({ uid: "admin-uid", admin: true }),
+    });
+    const res = await appFb.request("/api/contacts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", authorization: "Bearer fake" },
+      body: JSON.stringify({ name: "Firebase経由" }),
+    });
+    expect(res.status).toBe(201);
+    await new Promise((r) => setTimeout(r, 200));
+    const logs = await prisma.auditLog.findMany();
+    expect(logs[0]?.actor).toBe("firebase:admin-uid");
+  });
+});

@@ -1,8 +1,29 @@
-# bonds デプロイスクリプト (予定地)
+# bonds デプロイスクリプト
 
-フェーズ5 で cares の `infra/scripts/05〜08`（Prisma migrate → Cloud Run api → web →
-Identity Platform / CORS）を `bonds-*` リソース名で複製する。GCP プロジェクト・
-リージョン・サービス名は本体スタック確定後に確定する。
+cares の infra/scripts 方式を bonds-* リソース名で複製。**cares と同じ GCP プロジェクト**
+(`arctic-anvil-497002-q2` / `asia-northeast1`) に共存する。
 
-現状 (フェーズ0): 静的プロトタイプ `index.html` は `.github/workflows/pages.yml` が
-main への push で GitHub Pages に自動デプロイする。
+## AI キーの方針 (オーナー確認済み: cares の鍵を使う)
+
+- Cloud Run の bonds-api は **cares と同じ Secret Manager シークレット `ANTHROPIC_API_KEY` を参照**する
+  (07 の `--set-secrets`)。鍵の値の複製・転記は不要で、cares 側でローテーションすれば bonds も追従する。
+- 利用額は Anthropic 側で合算されるが、bonds は独自の月次キャップ (`PERSON_DD_MONTHLY_CAP_JPY`、
+  既定 ¥3,000、`ai_usage_logs` で集計) で自律的に止まる。cares のキャップとは独立。
+- 将来コストを分けたくなったら Anthropic Console で bonds 用キーを発行し、
+  `_env.sh` の `SECRET_ANTHROPIC` を差し替えるだけでよい。
+- **ローカル開発**は Secret Manager を参照できないため、`.env` の `ANTHROPIC_API_KEY=` に
+  同じ鍵の値を貼る (`gcloud secrets versions access latest --secret=ANTHROPIC_API_KEY` で取得可)。
+
+## 手順 (初回)
+
+1. `bash 01-create-secrets.sh` — bonds 専用シークレット作成 (暗号鍵・break-glass・DB パスワード)
+2. Cloud SQL `bonds-db-prod` / Artifact Registry `bonds-images` を作成 (cares 02〜04 相当は必要時に複製)
+3. `bash 05-migrate-prod.sh` → `bash 06-build-push-images.sh` → `bash 07-deploy-cloud-run.sh`
+4. デプロイ後: `/api/healthz` と CORS を必ず実測 (cares の 2026-05-29 事故の教訓)
+
+## ゲート (CLAUDE.md)
+
+デプロイ前に `pnpm test` + `pnpm test:e2e` + **AI 実機スモーク** 全緑と、ユーザーの明示承認が必須。
+
+注: これらのスクリプトは開発サンドボックス (gcloud 無し) では未実行。初回実行時は
+1 コマンドずつ確認しながら進めること。

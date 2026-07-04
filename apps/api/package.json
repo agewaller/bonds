@@ -12,6 +12,7 @@
     "@anthropic-ai/sdk": "^0.40.0",
     "@bonds/db": "workspace:*",
     "@hono/node-server": "^1.13.0",
+    "firebase-admin": "^13.0.0",
     "hono": "^4.6.0",
     "tsx": "^4.19.0"
   }

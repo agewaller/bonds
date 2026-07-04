@@ -3,9 +3,21 @@ import { serve } from "@hono/node-server";
 import { createPrismaClient } from "@bonds/db";
 import { createApp } from "./app.js";
 import { seedDdPrompts } from "./dd/seed-prompts.js";
+import { buildFirebaseVerifier } from "./lib/auth.js";
 
 const prisma = createPrismaClient();
-const app = createApp({ prisma });
+// Firebase 検証は FIREBASE_SERVICE_ACCOUNT_JSON があるときだけ有効
+// (無い環境でも break-glass トークン経路で管理操作できる = 三段フェイルセーフ)。
+const verifyIdToken = await buildFirebaseVerifier().catch((err) => {
+  console.error(
+    JSON.stringify({
+      event: "firebase_init_failed",
+      detail: err instanceof Error ? err.message : String(err),
+    }),
+  );
+  return null;
+});
+const app = createApp({ prisma, verifyIdToken });
 const port = Number(process.env.PORT ?? 8080);
 
 // DB 駆動プロンプトの冪等 seed (person_eval_7d / person_eval_svc)。

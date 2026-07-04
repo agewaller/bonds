@@ -1,0 +1,72 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { authorizeAdmin, type VerifyIdTokenFn } from "../../src/lib/auth.js";
+
+const savedEnv = { ...process.env };
+beforeEach(() => {
+  process.env.ADMIN_BREAKGLASS_TOKEN = "bg-token";
+  process.env.OWNER_EMAIL = "agewaller@gmail.com";
+});
+afterEach(() => {
+  process.env.ADMIN_BREAKGLASS_TOKEN = savedEnv.ADMIN_BREAKGLASS_TOKEN;
+  process.env.OWNER_EMAIL = savedEnv.OWNER_EMAIL;
+});
+
+const verifierFor = (t: Awaited<ReturnType<VerifyIdTokenFn>>): VerifyIdTokenFn => async () => t;
+
+describe("authorizeAdmin (三段フェイルセーフ)", () => {
+  it("経路1: custom claim admin:true で許可", async () => {
+    const r = await authorizeAdmin(
+      { authorization: "Bearer x" },
+      { verifyIdToken: verifierFor({ uid: "u1", admin: true }) },
+    );
+    expect(r).toEqual({ ok: true, actor: "firebase:u1" });
+  });
+
+  it("経路2: OWNER_EMAIL かつ password provider で許可 (大文字小文字/空白を吸収)", async () => {
+    const r = await authorizeAdmin(
+      { authorization: "Bearer x" },
+      { verifyIdToken: verifierFor({ uid: "u2", email: " Agewaller@Gmail.com ", signInProvider: "password" }) },
+    );
+    expect(r).toEqual({ ok: true, actor: "owner:agewaller@gmail.com" });
+  });
+
+  it("OWNER でも Google ログインでは拒否 (乗っ取り対策)", async () => {
+    const r = await authorizeAdmin(
+      { authorization: "Bearer x" },
+      { verifyIdToken: verifierFor({ uid: "u3", email: "agewaller@gmail.com", signInProvider: "google.com" }) },
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.status).toBe(401);
+  });
+
+  it("経路3: break-glass トークンで許可 (Firebase 不在でも管理者をロックアウトしない)", async () => {
+    const r = await authorizeAdmin({ adminToken: "bg-token" }, { verifyIdToken: null });
+    expect(r).toEqual({ ok: true, actor: "breakglass" });
+    const wrong = await authorizeAdmin({ adminToken: "wrong" }, { verifyIdToken: null });
+    expect(wrong.ok).toBe(false);
+  });
+
+  it("トークン検証の例外は 401 (500 にしない)", async () => {
+    const boom: VerifyIdTokenFn = async () => {
+      throw new Error("expired");
+    };
+    const r = await authorizeAdmin({ authorization: "Bearer x" }, { verifyIdToken: boom });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.status).toBe(401);
+  });
+
+  it("一般ユーザーの有効トークンは 401 (admin でも owner でもない)", async () => {
+    const r = await authorizeAdmin(
+      { authorization: "Bearer x" },
+      { verifyIdToken: verifierFor({ uid: "u4", email: "someone@example.com", signInProvider: "password" }) },
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("完全未設定 (breakglass 無し・verifier 無し) は fail closed 503", async () => {
+    delete process.env.ADMIN_BREAKGLASS_TOKEN;
+    const r = await authorizeAdmin({}, { verifyIdToken: null });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.status).toBe(503);
+  });
+});
