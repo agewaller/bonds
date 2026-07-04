@@ -138,4 +138,4 @@ e2e           Playwright（ユーザー目線監査 + AI 実機スモーク）
 - フェーズ2: 関係性基盤（contacts 暗号化スキーマ・距離スコア・「今日連絡してみませんか」・CSV/vCard 取込・連絡帳・エクスポート）— 完了
 - フェーズ3: カレンダー & キープアップ（空き時間計算・二者空き重なり・面談候補・Eight/年賀状取込・values_profile AI 下書き）— 完了（ライブカレンダー同期はフェーズ5）
 - フェーズ4: 発信（draft→承認→送信の強制フロー・複数文面候補生成・SendGrid mailer・接触記録への還流）— 完了（贈り物/年賀状チャネル・一括配信キューは今後）
-- フェーズ5: 認証三段フェイルセーフ・監査ログ・本番 Dockerfile・デプロイスクリプト（cares 同一プロジェクト / ANTHROPIC_API_KEY Secret 共有）— 実装済み（GCP 実機での初回デプロイ・web の Google ログイン実装済み (cares と同じ Firebase プロジェクト共用・ユーザーごと ownerUid 分離)。多言語 UI 辞書・一括配信キュー・ライブカレンダー同期は残）
+- フェーズ5: 認証三段フェイルセーフ・監査ログ・本番 Dockerfile・デプロイスクリプト（cares 同一プロジェクト / ANTHROPIC_API_KEY Secret 共有）— 実装済み（GCP 実機での初回デプロイ・web の Google ログイン実装済み (cares と同じ Firebase プロジェクト共用・ユーザーごと ownerUid 分離)。多言語 UI 辞書 (ja/en)・一括配信キュー (schedule→process-queue + Actions cron)・ICS 購読によるライブカレンダー同期まで実装済み。Google/Outlook の OAuth 双方向同期 (予定の書き込み) は今後）

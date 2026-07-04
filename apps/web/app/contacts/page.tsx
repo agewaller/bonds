@@ -46,6 +46,8 @@ export default function ContactsPage() {
   const [distance, setDistance] = useState("3");
   const [importText, setImportText] = useState("");
   const [showImport, setShowImport] = useState(false);
+  const [icsUrl, setIcsUrl] = useState("");
+  const [showCalendar, setShowCalendar] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -255,6 +257,59 @@ export default function ContactsPage() {
               style={{ padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
             >
               取り込む
+            </button>
+          </div>
+        )}
+      </section>
+
+      <section style={{ margin: "24px 0" }}>
+        <p>
+          <button
+            onClick={() => setShowCalendar(!showCalendar)}
+            style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", padding: 0 }}
+          >
+            {showCalendar ? "予定表の接続を閉じる" : "ご自身の予定表とつなぐ (面談候補の精度が上がります)"}
+          </button>
+        </p>
+        {showCalendar && (
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={icsUrl}
+              onChange={(e) => setIcsUrl(e.target.value)}
+              placeholder="カレンダーの共有アドレス (https://...ics)"
+              aria-label="予定表アドレス"
+              style={{ flex: 1, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8 }}
+            />
+            <button
+              onClick={async () => {
+                const res = await apiFetch("relationship/my-busy", {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ icsUrl }),
+                });
+                const body = await res.json().catch(() => ({}));
+                if (res.ok) {
+                  setNotice(`予定表をつなぎました (${body.saved}件の予定を取り込み)`);
+                  setIcsUrl("");
+                  setShowCalendar(false);
+                } else {
+                  setError(body.detail ?? "予定表をつなげませんでした");
+                }
+              }}
+              disabled={busy || !icsUrl.trim()}
+              style={{ padding: "10px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
+            >
+              つなぐ
+            </button>
+            <button
+              onClick={async () => {
+                const res = await apiFetch("relationship/refresh-calendars", { method: "POST", body: "{}" });
+                const body = await res.json().catch(() => ({}));
+                if (res.ok) setNotice(`予定表を最新にしました (${body.refreshed}件)`);
+              }}
+              style={{ padding: "10px 12px", border: "1px solid #2563eb", color: "#2563eb", background: "#fff", borderRadius: 8, cursor: "pointer" }}
+            >
+              最新にする
             </button>
           </div>
         )}

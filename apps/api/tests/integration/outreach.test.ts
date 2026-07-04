@@ -303,3 +303,116 @@ describe("発信 (draft → approve → send)", () => {
     expect(res.status).toBe(422);
   });
 });
+
+describe("ICS カレンダー同期 (ライブ同期)", () => {
+  const ICS = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nDTSTART:20990101T010000Z\nDTEND:20990101T020000Z\nEND:VEVENT\nEND:VCALENDAR";
+
+  it("icsUrl 登録で取得・保存され、URL は DB 上暗号化される", async () => {
+    let served = ICS;
+    const app = makeApp({ fetchText: async () => served });
+    await app.request("/api/relationship/my-busy", {
+      method: "PUT",
+      headers: H,
+      body: JSON.stringify({ icsUrl: "https://calendar.google.com/secret.ics" }),
+    }).then(async (r) => expect((await r.json()).saved).toBe(1));
+    const raw = await prisma.$queryRawUnsafe<Array<{ ics_url: string; provider: string }>>(
+      "SELECT ics_url, provider FROM calendar_links",
+    );
+    expect(raw[0]!.provider).toBe("ics");
+    expect(isEncrypted(raw[0]!.ics_url)).toBe(true); // 秘密のアドレス = トークンとして暗号化
+    expect(raw[0]!.ics_url).not.toContain("google");
+
+    // refresh で最新の中身に更新される (ライブ同期)
+    served = ICS.replace("END:VEVENT", "END:VEVENT\nBEGIN:VEVENT\nDTSTART:20990102T010000Z\nDTEND:20990102T020000Z\nEND:VEVENT");
+    const ref = await (await app.request("/api/relationship/refresh-calendars", { method: "POST", headers: H })).json();
+    expect(ref).toMatchObject({ refreshed: 1, failed: [] });
+    const link = await prisma.calendarLink.findFirstOrThrow();
+    expect(link.busySlots).toHaveLength(2);
+  });
+
+  it("ICS 貼り付けでも取り込め、http URL や非 ICS は 400", async () => {
+    const app = makeApp({ fetchText: async () => "not an ics" });
+    const paste = await app.request("/api/relationship/my-busy", {
+      method: "PUT", headers: H, body: JSON.stringify({ ics: ICS }),
+    });
+    expect((await paste.json()).saved).toBe(1);
+    expect((await app.request("/api/relationship/my-busy", {
+      method: "PUT", headers: H, body: JSON.stringify({ icsUrl: "http://insecure" }),
+    })).status).toBe(400);
+    expect((await app.request("/api/relationship/my-busy", {
+      method: "PUT", headers: H, body: JSON.stringify({ icsUrl: "https://example.com/x.ics" }),
+    })).status).toBe(400);
+  });
+});
+
+describe("一括配信キュー (schedule → process-queue)", () => {
+  async function approvedMessage(app: ReturnType<typeof makeApp>, email = "q@example.com") {
+    const c = await createContact(app, { name: `キュー ${Math.random()}`, email });
+    const d = await (await app.request("/api/outreach/draft", {
+      method: "POST", headers: H, body: JSON.stringify({ contactId: c.id }),
+    })).json();
+    await app.request(`/api/outreach/${d.id}/approve`, {
+      method: "POST", headers: H, body: JSON.stringify({ subject: "s", body: "b" }),
+    });
+    return d.id as string;
+  }
+
+  it("承認済みだけ schedule でき、期限到来分だけ process-queue が送る", async () => {
+    const app = makeApp();
+    const dueId = await approvedMessage(app);
+    const futureId = await approvedMessage(app, "future@example.com");
+    // 未承認 (draft) は schedule できない
+    const c3 = await createContact(app, { name: "未承認", email: "x@example.com" });
+    const draft3 = await (await app.request("/api/outreach/draft", {
+      method: "POST", headers: H, body: JSON.stringify({ contactId: c3.id }),
+    })).json();
+    expect((await app.request(`/api/outreach/${draft3.id}/schedule`, {
+      method: "POST", headers: H, body: JSON.stringify({}),
+    })).status).toBe(409);
+
+    await app.request(`/api/outreach/${dueId}/schedule`, {
+      method: "POST", headers: H, body: JSON.stringify({}), // いますぐ
+    });
+    await app.request(`/api/outreach/${futureId}/schedule`, {
+      method: "POST", headers: H, body: JSON.stringify({ sendAt: "2099-01-01T00:00:00Z" }),
+    });
+
+    const r = await (await app.request("/api/admin/outreach/process-queue", {
+      method: "POST", headers: H,
+    })).json();
+    expect(r).toMatchObject({ picked: 1, sent: 1, failed: 0 });
+    expect(sentMails).toHaveLength(1);
+    // 期限未到来はそのまま approved
+    const future = await prisma.outreachMessage.findFirstOrThrow({ where: { id: futureId } });
+    expect(future.status).toBe("approved");
+    // 送信済みは還流までされている
+    const sentRow = await prisma.outreachMessage.findFirstOrThrow({ where: { id: dueId } });
+    expect(sentRow.status).toBe("sent");
+    expect(await prisma.contactInteraction.count()).toBe(1);
+  });
+
+  it("1 通の失敗は failed 記録して残りを送り続ける (batch 上限つき)", async () => {
+    let call = 0;
+    const flakyMailer: MailerFn = async (args) => {
+      call++;
+      if (args.to === "boom@example.com") throw new Error("smtp down");
+      return { messageId: `m${call}` };
+    };
+    const app = makeApp({ mailer: flakyMailer });
+    const okId = await approvedMessage(app, "ok@example.com");
+    const boomId = await approvedMessage(app, "boom@example.com");
+    for (const id of [okId, boomId]) {
+      await app.request(`/api/outreach/${id}/schedule`, { method: "POST", headers: H, body: "{}" });
+    }
+    const r = await (await app.request("/api/admin/outreach/process-queue?batch=1", {
+      method: "POST", headers: H,
+    })).json();
+    expect(r.picked).toBe(1); // batch 上限
+    const r2 = await (await app.request("/api/admin/outreach/process-queue", {
+      method: "POST", headers: H,
+    })).json();
+    expect(r.sent + r2.sent).toBe(1);
+    expect(r.failed + r2.failed).toBe(1);
+    expect((await prisma.outreachMessage.findFirstOrThrow({ where: { id: boomId } })).status).toBe("failed");
+  });
+});

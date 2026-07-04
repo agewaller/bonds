@@ -204,8 +204,9 @@ model CalendarLink {
   id        String   @id @default(uuid())
   ownerUid  String   @default("owner") @map("owner_uid")
   contactId String?  @map("contact_id") // "self" = 自分 (NULL は複合ユニークで重複可になるため番兵値を使う)
-  provider  String   @default("manual") // manual / google / outlook
+  provider  String   @default("manual") // manual / ics / google / outlook
   busySlots Json     @map("busy_slots") // [{start, end}] ISO 文字列
+  icsUrl    String?  @map("ics_url") // 暗号化。ICS 購読 URL (秘密のアドレス = 実質トークン)
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([ownerUid, contactId])

@@ -47,6 +47,7 @@ export default function ContactDetailPage() {
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [form, setForm] = useState<Record<string, string>>({});
   const [slots, setSlots] = useState<Slot[] | null>(null);
+  const [theirIcsUrl, setTheirIcsUrl] = useState("");
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [draftId, setDraftId] = useState("");
   const [chosen, setChosen] = useState(0);
@@ -209,6 +210,28 @@ export default function ContactDetailPage() {
 
       <section style={{ marginTop: 32 }}>
         <h2 style={{ fontSize: 18 }}>お会いする日を探す</h2>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <input
+            style={{ ...input, flex: 1, width: "auto" }}
+            placeholder="この方の予定表アドレス (任意・https://...ics)"
+            aria-label="相手の予定表アドレス"
+            value={theirIcsUrl}
+            onChange={(e) => setTheirIcsUrl(e.target.value)}
+          />
+          <button
+            style={btn(false)}
+            disabled={!!busy || !theirIcsUrl.trim()}
+            onClick={async () => {
+              const body = await call(`contacts/${contact.id}/busy`, {
+                method: "PUT",
+                body: JSON.stringify({ icsUrl: theirIcsUrl }),
+              }, "この方の予定表をつなぎました");
+              if (body) setTheirIcsUrl("");
+            }}
+          >
+            予定表をつなぐ
+          </button>
+        </div>
         <button style={btn(false)} onClick={() => void loadSlots()} disabled={!!busy}>
           おたがいの空きから候補を出す
         </button>
