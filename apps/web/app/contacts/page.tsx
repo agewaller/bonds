@@ -256,21 +256,25 @@ export default function ContactsPage() {
         <h2 style={{ fontSize: 18 }}>みなさん ({contacts.length})</h2>
         <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 6 }}>
           {contacts.map((c) => (
-            <li
-              key={c.id}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                border: "1px solid #e2e8f0",
-                borderRadius: 10,
-                padding: "10px 14px",
-              }}
-            >
-              <span>
-                {c.name}
-                {c.company && <small style={{ color: "#64748b", marginLeft: 8 }}>{c.company}</small>}
-              </span>
-              <small style={{ color: "#64748b" }}>{DISTANCE_LABEL[c.distance] ?? ""}</small>
+            <li key={c.id}>
+              <Link
+                href={`/contacts/${c.id}`}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 10,
+                  padding: "10px 14px",
+                  textDecoration: "none",
+                  color: "inherit",
+                }}
+              >
+                <span>
+                  {c.name}
+                  {c.company && <small style={{ color: "#64748b", marginLeft: 8 }}>{c.company}</small>}
+                </span>
+                <small style={{ color: "#64748b" }}>{DISTANCE_LABEL[c.distance] ?? ""}</small>
+              </Link>
             </li>
           ))}
           {contacts.length === 0 && <li style={{ color: "#64748b" }}>まだ登録がありません。大切な方から登録してみましょう。</li>}

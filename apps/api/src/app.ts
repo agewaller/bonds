@@ -23,10 +23,23 @@ import { normalizeLocale } from "./lib/locale.js";
 import { clampScore } from "./lib/dd-spec.js";
 import { clampDistance, calculateIsolationScore, todaySuggestions } from "./lib/relationship.js";
 import { parseContacts } from "./lib/contact-parsers.js";
+import { parseIsoIntervals, meetingSlotProposals, toIso } from "./lib/timeslots.js";
+import {
+  buildSendGridMailer,
+  validateOutreachCandidates,
+  OUTREACH_JSON_INSTRUCTION,
+  type MailerFn,
+} from "./lib/mailer.js";
+import { getPromptText } from "./dd/runner.js";
+import { jsonProseLanguageDirective } from "./lib/locale.js";
+import { extractJson } from "./lib/dd-spec.js";
+import { calcCostJpy } from "./lib/cost.js";
+import { PERSON_DD_MAX_TOKENS, PERSON_DD_TIMEOUT_MS } from "./lib/person-eval.js";
 
 export type AppDeps = {
   prisma: ExtendedPrismaClient;
   generate?: GenerateFn | null;
+  mailer?: MailerFn | null;
 };
 
 const SUBJECT_TYPES = ["politician", "executive", "other"] as const;
@@ -35,6 +48,8 @@ export function createApp(deps: AppDeps) {
   const { prisma } = deps;
   // generate 未注入なら env 鍵から構築 (鍵なしなら null = 実行系は 503)
   const generate = deps.generate !== undefined ? deps.generate : buildAnthropicGenerate();
+  // mailer も同様 (SENDGRID_API_KEY / OUTREACH_FROM_EMAIL 未設定なら送信は 503)
+  const mailer = deps.mailer !== undefined ? deps.mailer : buildSendGridMailer();
 
   const app = new Hono();
 
@@ -77,6 +92,8 @@ export function createApp(deps: AppDeps) {
   app.use("/api/contacts/*", requireAdmin);
   app.use("/api/contacts", requireAdmin);
   app.use("/api/relationship/*", requireAdmin);
+  app.use("/api/outreach/*", requireAdmin);
+  app.use("/api/outreach", requireAdmin);
 
   // ---------------- 管理: モデル設定 (cares person-eval-config と同形) ----------------
 
@@ -442,6 +459,300 @@ export function createApp(deps: AppDeps) {
       today,
       connectionScore: 100 - isolation.score, // 高い方が良い表示 (lms と同じ)
     });
+  });
+
+  // ---------------- カレンダー & 面談候補 — フェーズ3 ----------------
+  // busy スロットは手動/API 登録 (フェーズ5 で Google/Outlook ライブ同期)。
+
+  // 自分のカレンダーは contact_id = "self" の番兵値で保存する
+  // (NULL は Postgres の複合ユニークで重複可になり upsert が効かないため)。
+  const SELF_CALENDAR = "self";
+
+  const saveBusy = async (contactId: string, raw: unknown) => {
+    const busy = toIso(parseIsoIntervals(raw));
+    await prisma.calendarLink.upsert({
+      where: { ownerUid_contactId: { ownerUid: OWNER, contactId } },
+      update: { busySlots: busy as never },
+      create: { ownerUid: OWNER, contactId, provider: "manual", busySlots: busy as never },
+    });
+    return busy.length;
+  };
+
+  // 自分の busy 登録
+  app.put("/api/relationship/my-busy", async (c) => {
+    const b = await c.req.json<{ busySlots?: unknown }>().catch(() => ({}) as { busySlots?: unknown });
+    const saved = await saveBusy(SELF_CALENDAR, b.busySlots);
+    return c.json({ saved });
+  });
+
+  // 相手の busy 登録
+  app.put("/api/contacts/:id/busy", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: OWNER },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<{ busySlots?: unknown }>().catch(() => ({}) as { busySlots?: unknown });
+    const saved = await saveBusy(contact.id, b.busySlots);
+    return c.json({ saved });
+  });
+
+  // 二者空き重なり → 面談候補 (busy → 各自の free → 積集合)
+  app.get("/api/contacts/:id/meeting-slots", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: OWNER },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const days = Math.min(30, Math.max(1, Number(c.req.query("days")) || 14));
+    const [mine, theirs] = await Promise.all([
+      prisma.calendarLink.findUnique({
+        where: { ownerUid_contactId: { ownerUid: OWNER, contactId: SELF_CALENDAR } },
+      }),
+      prisma.calendarLink.findUnique({
+        where: { ownerUid_contactId: { ownerUid: OWNER, contactId: contact.id } },
+      }),
+    ]);
+    const proposals = meetingSlotProposals(
+      parseIsoIntervals(mine?.busySlots),
+      parseIsoIntervals(theirs?.busySlots),
+      { from: new Date(), days, maxProposals: 5 },
+    );
+    return c.json({
+      proposals: toIso(proposals),
+      hasMyCalendar: !!mine,
+      hasTheirCalendar: !!theirs,
+    });
+  });
+
+  // AI 共通: 相手の文脈 (プロフィール + 直近のやりとり) を組み立てる
+  const buildContactContext = async (contactId: string) => {
+    const contact = await prisma.contact.findFirst({ where: { id: contactId, ownerUid: OWNER } });
+    if (!contact) return null;
+    const interactions = await prisma.contactInteraction.findMany({
+      where: { contactId: contact.id },
+      orderBy: { occurredAt: "desc" },
+      take: 10,
+    });
+    const lines = [
+      `お名前: ${contact.name}`,
+      `距離感: ${contact.distance} (1=毎日会う親しさ 〜 5=年に一度)`,
+      `関係: ${contact.relationship}`,
+      contact.company ? `所属: ${contact.company} ${contact.title ?? ""}` : "",
+      contact.personalProfile ? `近況・状況: ${contact.personalProfile}` : "",
+      contact.valuesProfile ? `価値観・大切にしていること: ${contact.valuesProfile}` : "",
+      contact.notes ? `メモ: ${contact.notes}` : "",
+      interactions.length > 0
+        ? `最近のやりとり:\n${interactions
+            .map((i) => `- ${i.occurredAt.toISOString().slice(0, 10)} ${i.type}${i.notes ? ` (${i.notes})` : ""}`)
+            .join("\n")}`
+        : "やりとりの記録はまだありません",
+    ].filter(Boolean);
+    return { contact, context: lines.join("\n") };
+  };
+
+  // AI 実行の共通ラッパ (キャップ確認 → 生成 → 使用記録)
+  const runRelationshipAi = async (
+    promptKey: string,
+    extraSystem: string,
+    userMessage: string,
+    purpose: string,
+    locale: string,
+  ): Promise<{ ok: true; text: string } | { ok: false; status: 422 | 503 | 502; body: unknown }> => {
+    if (!generate) {
+      return { ok: false, status: 503, body: { error: "unavailable", detail: "いまは文章の下書きを作れません" } };
+    }
+    const cost = await getMonthlyCostJpy(prisma);
+    if (cost >= PERSON_DD_MONTHLY_CAP_JPY) {
+      return { ok: false, status: 422, body: { error: "quota_exceeded", detail: "今月の利用枠は終了しました" } };
+    }
+    const prompt = await getPromptText(prisma, promptKey);
+    if (!prompt) {
+      return { ok: false, status: 503, body: { error: "unavailable", detail: "いまは文章の下書きを作れません" } };
+    }
+    const model = await resolveModel();
+    const system = [
+      prompt.body.replace(/\{\{RESPOND_LANGUAGE_INSTRUCTION\}\}/g, jsonProseLanguageDirective(locale)),
+      extraSystem,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    try {
+      const gen = await generate({
+        model,
+        system,
+        userMessage,
+        maxTokens: PERSON_DD_MAX_TOKENS,
+        timeoutMs: PERSON_DD_TIMEOUT_MS,
+      });
+      const canonical = canonicalizeModelId(gen.model) ?? model;
+      await prisma.aiUsageLog.create({
+        data: {
+          provider: "anthropic",
+          model: canonical,
+          purpose,
+          inputTokens: gen.inputTokens,
+          outputTokens: gen.outputTokens,
+          costJpy: calcCostJpy(canonical, gen.inputTokens, gen.outputTokens),
+        },
+      });
+      return { ok: true, text: gen.text };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error(JSON.stringify({ event: "ai_error", purpose, detail }));
+      return {
+        ok: false,
+        status: 502,
+        body: { error: "ai_failed", detail: "下書きづくりに失敗しました。しばらくしてからお試しください" },
+      };
+    }
+  };
+
+  // 価値観プロフィールの下書き (AI 下書き → ユーザーが編集して PUT で確定 = 自動保存しない)
+  app.post("/api/contacts/:id/enrich-values", async (c) => {
+    const ctx = await buildContactContext(c.req.param("id"));
+    if (!ctx) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<{ locale?: string }>().catch(() => ({}) as { locale?: string });
+    const r = await runRelationshipAi(
+      "values_profile_enrich",
+      '出力は JSON オブジェクト 1 個だけ: {"draft": "価値観プロフィールの下書き (散文)"}',
+      ctx.context,
+      "values_enrich",
+      normalizeLocale(b.locale),
+    );
+    if (!r.ok) return c.json(r.body as never, r.status);
+    const parsed = extractJson(r.text) as { draft?: unknown } | null;
+    const draft = typeof parsed?.draft === "string" ? parsed.draft.trim() : r.text.trim();
+    return c.json({ draft });
+  });
+
+  // ---------------- 発信 (outreach) — フェーズ4 ----------------
+  // 既定フロー: draft (複数候補生成) → approve (ユーザーが選択・編集して承認) → send。
+  // 承認なしで送信はできない (CLAUDE.md 自律性の段階)。
+
+  const OUTREACH_PURPOSES = ["keepup", "birthday", "thanks", "meeting", "contribution", "repair"] as const;
+
+  app.post("/api/outreach/draft", async (c) => {
+    const b = await c.req
+      .json<{ contactId?: string; purpose?: string; points?: string; locale?: string }>()
+      .catch(() => ({}) as Record<string, never>);
+    if (!b.contactId) return c.json({ error: "contact_required" }, 400);
+    const ctx = await buildContactContext(b.contactId);
+    if (!ctx) return c.json({ error: "not_found" }, 404);
+    const purpose = OUTREACH_PURPOSES.includes(b.purpose as never) ? b.purpose! : "keepup";
+    const points = typeof b.points === "string" ? b.points.trim() : "";
+    const userMessage = [
+      "相手の情報:",
+      ctx.context,
+      "",
+      `送る目的: ${purpose}`,
+      points ? `伝えたいこと: ${points}` : "伝えたいこと: 特になし (関係を温めるひとことを)",
+      `今日の日付: ${new Date().toISOString().slice(0, 10)}`,
+    ].join("\n");
+    const r = await runRelationshipAi(
+      "outreach_message_gen",
+      OUTREACH_JSON_INSTRUCTION,
+      userMessage,
+      "outreach_gen",
+      normalizeLocale(b.locale),
+    );
+    if (!r.ok) return c.json(r.body as never, r.status);
+    const validated = validateOutreachCandidates(extractJson(r.text));
+    if (!validated.ok) {
+      return c.json(
+        { error: "invalid_output", detail: "下書きづくりに失敗しました。もう一度お試しください" },
+        502,
+      );
+    }
+    const message = await prisma.outreachMessage.create({
+      data: {
+        ownerUid: OWNER,
+        contactId: ctx.contact.id,
+        channel: "email",
+        purpose,
+        status: "draft",
+        candidates: JSON.stringify(validated.candidates),
+      },
+    });
+    return c.json({ id: message.id, candidates: validated.candidates }, 201);
+  });
+
+  app.get("/api/outreach", async (c) => {
+    const contactId = c.req.query("contactId");
+    const messages = await prisma.outreachMessage.findMany({
+      where: { ownerUid: OWNER, ...(contactId ? { contactId } : {}) },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+    return c.json({
+      messages: messages.map((m) => ({
+        ...m,
+        candidates: m.candidates ? JSON.parse(m.candidates) : null,
+      })),
+    });
+  });
+
+  // 承認: 候補から選び (編集可)、件名と本文を確定する
+  app.post("/api/outreach/:id/approve", async (c) => {
+    const m = await prisma.outreachMessage.findFirst({
+      where: { id: c.req.param("id"), ownerUid: OWNER },
+    });
+    if (!m) return c.json({ error: "not_found" }, 404);
+    if (m.status !== "draft") {
+      return c.json({ error: "invalid_status", detail: `status=${m.status} は承認できません` }, 409);
+    }
+    const b = await c.req
+      .json<{ subject?: string; body?: string }>()
+      .catch(() => ({}) as { subject?: string; body?: string });
+    const subject = typeof b.subject === "string" ? b.subject.trim() : "";
+    const body = typeof b.body === "string" ? b.body.trim() : "";
+    if (!subject || !body) {
+      return c.json({ error: "subject_body_required", detail: "件名と本文を確定してください" }, 400);
+    }
+    const updated = await prisma.outreachMessage.update({
+      where: { id: m.id },
+      data: { subject, body, status: "approved" },
+    });
+    return c.json({ message: { id: updated.id, status: updated.status } });
+  });
+
+  // 送信: approved のみ。成功で sent + contact_interactions へ還流 (距離スコア更新)。
+  app.post("/api/outreach/:id/send", async (c) => {
+    const m = await prisma.outreachMessage.findFirst({
+      where: { id: c.req.param("id"), ownerUid: OWNER },
+    });
+    if (!m) return c.json({ error: "not_found" }, 404);
+    if (m.status !== "approved") {
+      return c.json(
+        { error: "not_approved", detail: "送信の前に文面の承認が必要です" },
+        409,
+      );
+    }
+    if (!mailer) {
+      return c.json({ error: "unavailable", detail: "送信の設定がまだ済んでいません" }, 503);
+    }
+    const contact = await prisma.contact.findFirst({
+      where: { id: m.contactId, ownerUid: OWNER },
+    });
+    if (!contact?.email) {
+      return c.json({ error: "no_email", detail: "この方のメールアドレスが登録されていません" }, 400);
+    }
+    try {
+      const sent = await mailer({ to: contact.email, subject: m.subject ?? "", body: m.body ?? "" });
+      const updated = await prisma.outreachMessage.update({
+        where: { id: m.id },
+        data: { status: "sent", sentAt: new Date(), providerMessageId: sent.messageId },
+      });
+      await prisma.contactInteraction.create({
+        data: { contactId: contact.id, type: "email", occurredAt: new Date(), notes: m.subject },
+      });
+      return c.json({ message: { id: updated.id, status: updated.status, sentAt: updated.sentAt } });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      await prisma.outreachMessage.update({
+        where: { id: m.id },
+        data: { status: "failed", errorDetail: detail },
+      });
+      return c.json({ error: "send_failed", detail: "送信できませんでした。しばらくしてからお試しください" }, 502);
+    }
   });
 
   // 実行詳細 (ステップ含む)

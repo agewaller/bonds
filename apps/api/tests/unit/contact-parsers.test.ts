@@ -103,3 +103,27 @@ describe("parseContacts (auto)", () => {
     expect(parseContacts(CSV_JA)[0]?.name).toBe("山田花子");
   });
 });
+
+describe("Eight / 年賀状リストの取込 (フェーズ3)", () => {
+  it("Eight エクスポート形式 (会社名/部署名/役職/氏名/e-mail/TEL) を取り込む", () => {
+    const eight = `会社名,部署名,役職,氏名,e-mail,TEL,携帯電話,住所
+株式会社エイト商事,営業部,部長,近藤五郎,goro@eight-example.co.jp,03-0000-1111,090-2222-3333,東京都港区1-2-3`;
+    const rows = parseCsvContacts(eight);
+    expect(rows[0]).toMatchObject({
+      name: "近藤五郎",
+      company: "株式会社エイト商事",
+      title: "部長",
+      email: "goro@eight-example.co.jp",
+      address: "東京都港区1-2-3",
+    });
+    // TEL と携帯電話が両方あるときは後勝ち (携帯優先の列順)
+    expect(rows[0]?.phone).toBe("090-2222-3333");
+  });
+
+  it("年賀状リスト (宛名/郵便番号/住所) を取り込む", () => {
+    const nenga = `宛名,郵便番号,住所
+田村八重子,100-0001,東京都千代田区千代田1-1`;
+    const rows = parseCsvContacts(nenga);
+    expect(rows[0]).toMatchObject({ name: "田村八重子", address: "東京都千代田区千代田1-1" });
+  });
+});

@@ -197,3 +197,41 @@ model ContactGroup {
   @@index([ownerUid])
   @@map("contact_groups")
 }
+
+/// カレンダー連携 (busy スロットのキャッシュ)。contact_id が null なら自分の busy。
+/// フェーズ5 で Google/Outlook のライブ OAuth 同期を載せる (今は手動/API 登録)。
+model CalendarLink {
+  id        String   @id @default(uuid())
+  ownerUid  String   @default("owner") @map("owner_uid")
+  contactId String?  @map("contact_id") // "self" = 自分 (NULL は複合ユニークで重複可になるため番兵値を使う)
+  provider  String   @default("manual") // manual / google / outlook
+  busySlots Json     @map("busy_slots") // [{start, end}] ISO 文字列
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([ownerUid, contactId])
+  @@map("calendar_links")
+}
+
+/// 発信 (outreach)。既定フローは draft → approved → sent (CLAUDE.md 自律性の段階)。
+/// body / candidates は文面 (PII) のためアプリ層暗号化。
+model OutreachMessage {
+  id                String    @id @default(uuid())
+  ownerUid          String    @default("owner") @map("owner_uid")
+  contactId         String    @map("contact_id")
+  channel           String    @default("email") // email / gift / nengajo / press / offer / meeting_invite
+  direction         String    @default("outbound")
+  purpose           String    @default("keepup") // keepup / birthday / thanks / meeting / contribution / repair
+  subject           String?
+  body              String? // 暗号化 (承認された本文)
+  candidates        String? // 暗号化 (生成した文面候補の JSON 文字列)
+  status            String    @default("draft") // draft / approved / sent / failed / replied
+  errorDetail       String?   @map("error_detail")
+  providerMessageId String?   @map("provider_message_id")
+  scheduledAt       DateTime? @map("scheduled_at")
+  sentAt            DateTime? @map("sent_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@index([ownerUid, contactId, status])
+  @@map("outreach_messages")
+}

@@ -78,17 +78,15 @@ export function buildSystemPrompt(template: string, ddType: DdType, locale: stri
   ].join("\n\n");
 }
 
-// 月次 (当月 1 日以降) の person_dd コスト合計 (円)。
+// 月次 (当月 1 日以降) の AI コスト合計 (円)。人物DD・発信生成・エンリッチを合算した
+// 単一のグローバルキャップとして使う (フォールバック連鎖せず 422 で止める)。
 export async function getMonthlyCostJpy(prisma: ExtendedPrismaClient): Promise<number> {
   const monthStart = new Date();
   monthStart.setUTCDate(1);
   monthStart.setUTCHours(0, 0, 0, 0);
   const agg = await prisma.aiUsageLog.aggregate({
     _sum: { costJpy: true },
-    where: {
-      purpose: { startsWith: PERSON_DD_PURPOSE_PREFIX },
-      createdAt: { gte: monthStart },
-    },
+    where: { createdAt: { gte: monthStart } },
   });
   return agg._sum.costJpy ?? 0;
 }

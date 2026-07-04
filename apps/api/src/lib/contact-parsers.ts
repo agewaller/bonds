@@ -60,6 +60,10 @@ const HEADER_MAP: Record<string, keyof ParsedContact> = {
   distance: "distance", 距離: "distance",
   relationship: "relationship", 関係: "relationship",
   notes: "notes", メモ: "notes", 備考: "notes",
+  // Eight (名刺アプリ) の CSV エクスポートヘッダ
+  "e-mail": "email", 携帯電話: "phone", 役職名: "title",
+  // 年賀状リスト系 (宛名 = 氏名。郵便番号は対応フィールドが無いため取り込まない)
+  宛名: "name",
 };
 
 export function parseCsvContacts(csv: string): ParsedContact[] {
