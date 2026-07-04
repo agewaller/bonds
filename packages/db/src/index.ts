@@ -27,6 +27,8 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
   ],
   contactInteraction: ["notes"],
   contactGift: ["notes"],
+  // ICS 購読 URL は「秘密のアドレス」= 予定表への読み取りトークンなので暗号化する
+  calendarLink: ["icsUrl"],
   // フェーズ4 発信: 承認本文と生成候補 (JSON 文字列) は文面そのもの = PII として暗号化
   outreachMessage: ["body", "candidates"],
 };

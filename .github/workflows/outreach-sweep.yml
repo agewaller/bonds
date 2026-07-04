@@ -1,0 +1,23 @@
+# 配信キューの定期処理 (cares outreach-sweep.yml 相当)。
+# 1 時間ごとに process-queue を叩き、送信予定時刻を過ぎた承認済みメッセージを送る。
+# 必要な設定: Variables BONDS_API_URL / Secrets BONDS_ADMIN_TOKEN (break-glass)。
+# 未設定ならジョブは何もせず成功する (グリーンに見せかけないよう notice を出す)。
+name: outreach-sweep
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: process queue
+        run: |
+          if [ -z "${{ vars.BONDS_API_URL }}" ] || [ -z "${{ secrets.BONDS_ADMIN_TOKEN }}" ]; then
+            echo "::notice::BONDS_API_URL / BONDS_ADMIN_TOKEN 未設定のためスキップ (本番デプロイ後に設定)"
+            exit 0
+          fi
+          curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/outreach/process-queue?batch=10" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"

@@ -24,6 +24,7 @@ import { clampScore } from "./lib/dd-spec.js";
 import { clampDistance, calculateIsolationScore, todaySuggestions } from "./lib/relationship.js";
 import { parseContacts } from "./lib/contact-parsers.js";
 import { parseIsoIntervals, meetingSlotProposals, toIso } from "./lib/timeslots.js";
+import { parseIcsBusy, looksLikeIcs } from "./lib/ics.js";
 import {
   buildSendGridMailer,
   validateOutreachCandidates,
@@ -42,6 +43,7 @@ export type AppDeps = {
   generate?: GenerateFn | null;
   mailer?: MailerFn | null;
   verifyIdToken?: VerifyIdTokenFn | null;
+  fetchText?: ((url: string) => Promise<string>) | null;
 };
 
 const SUBJECT_TYPES = ["politician", "executive", "other"] as const;
@@ -52,6 +54,15 @@ export function createApp(deps: AppDeps) {
   const generate = deps.generate !== undefined ? deps.generate : buildAnthropicGenerate();
   // mailer も同様 (SENDGRID_API_KEY / OUTREACH_FROM_EMAIL 未設定なら送信は 503)
   const mailer = deps.mailer !== undefined ? deps.mailer : buildSendGridMailer();
+  // ICS 購読 URL の取得器 (既定は素の fetch + 15 秒タイムアウト)
+  const fetchText =
+    deps.fetchText !== undefined
+      ? deps.fetchText
+      : async (url: string) => {
+          const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+          if (!res.ok) throw new Error(`ics_fetch_failed: ${res.status}`);
+          return res.text();
+        };
 
   // ownerUid: 認可済みユーザーのデータスコープ (Firebase uid / break-glass は "owner")
   const app = new Hono<{ Variables: { ownerUid: string } }>();
@@ -508,21 +519,56 @@ export function createApp(deps: AppDeps) {
   // (NULL は Postgres の複合ユニークで重複可になり upsert が効かないため)。
   const SELF_CALENDAR = "self";
 
-  const saveBusy = async (ownerUid: string, contactId: string, raw: unknown) => {
-    const busy = toIso(parseIsoIntervals(raw));
+  // busy の保存。busySlots (手動) / ics (貼り付け) / icsUrl (購読 URL = ライブ同期) の
+  // 3 経路。icsUrl は保存しておき、refresh-calendars で最新を取り直す。
+  const saveBusy = async (
+    ownerUid: string,
+    contactId: string,
+    body: { busySlots?: unknown; ics?: unknown; icsUrl?: unknown },
+  ): Promise<{ saved: number } | { error: string; detail: string }> => {
+    let busy: ReturnType<typeof toIso>;
+    let provider = "manual";
+    let icsUrl: string | null = null;
+    if (typeof body.icsUrl === "string" && body.icsUrl.trim()) {
+      const url = body.icsUrl.trim();
+      if (!/^https:\/\//.test(url)) {
+        return { error: "invalid_url", detail: "https の予定表アドレスを入力してください" };
+      }
+      if (!fetchText) return { error: "unavailable", detail: "いまは予定表を取得できません" };
+      let content: string;
+      try {
+        content = await fetchText(url);
+      } catch {
+        return { error: "ics_fetch_failed", detail: "予定表を取得できませんでした。アドレスを確かめてください" };
+      }
+      if (!looksLikeIcs(content)) {
+        return { error: "not_ics", detail: "予定表の形式を読み取れませんでした" };
+      }
+      busy = parseIcsBusy(content);
+      provider = "ics";
+      icsUrl = url;
+    } else if (typeof body.ics === "string" && looksLikeIcs(body.ics)) {
+      busy = parseIcsBusy(body.ics);
+      provider = "ics";
+    } else {
+      busy = toIso(parseIsoIntervals(body.busySlots));
+    }
     await prisma.calendarLink.upsert({
       where: { ownerUid_contactId: { ownerUid, contactId } },
-      update: { busySlots: busy as never },
-      create: { ownerUid, contactId, provider: "manual", busySlots: busy as never },
+      update: { busySlots: busy as never, provider, icsUrl },
+      create: { ownerUid, contactId, provider, icsUrl, busySlots: busy as never },
     });
-    return busy.length;
+    return { saved: busy.length };
   };
 
   // 自分の busy 登録
   app.put("/api/relationship/my-busy", async (c) => {
-    const b = await c.req.json<{ busySlots?: unknown }>().catch(() => ({}) as { busySlots?: unknown });
-    const saved = await saveBusy(c.get("ownerUid"), SELF_CALENDAR, b.busySlots);
-    return c.json({ saved });
+    const b = await c.req
+      .json<{ busySlots?: unknown; ics?: unknown; icsUrl?: unknown }>()
+      .catch(() => ({}) as Record<string, never>);
+    const r = await saveBusy(c.get("ownerUid"), SELF_CALENDAR, b);
+    if ("error" in r) return c.json(r, 400);
+    return c.json(r);
   });
 
   // 相手の busy 登録
@@ -531,9 +577,12 @@ export function createApp(deps: AppDeps) {
       where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
     });
     if (!contact) return c.json({ error: "not_found" }, 404);
-    const b = await c.req.json<{ busySlots?: unknown }>().catch(() => ({}) as { busySlots?: unknown });
-    const saved = await saveBusy(c.get("ownerUid"), contact.id, b.busySlots);
-    return c.json({ saved });
+    const b = await c.req
+      .json<{ busySlots?: unknown; ics?: unknown; icsUrl?: unknown }>()
+      .catch(() => ({}) as Record<string, never>);
+    const r = await saveBusy(c.get("ownerUid"), contact.id, b);
+    if ("error" in r) return c.json(r, 400);
+    return c.json(r);
   });
 
   // 二者空き重なり → 面談候補 (busy → 各自の free → 積集合)
@@ -769,30 +818,123 @@ export function createApp(deps: AppDeps) {
     if (!mailer) {
       return c.json({ error: "unavailable", detail: "送信の設定がまだ済んでいません" }, 503);
     }
+    const r = await deliverApproved(m);
+    if (!r.ok) {
+      if (r.detail === "no_email") {
+        return c.json({ error: "no_email", detail: "この方のメールアドレスが登録されていません" }, 400);
+      }
+      return c.json({ error: "send_failed", detail: "送信できませんでした。しばらくしてからお試しください" }, 502);
+    }
+    const updated = await prisma.outreachMessage.findFirstOrThrow({ where: { id: m.id } });
+    return c.json({ message: { id: updated.id, status: updated.status, sentAt: updated.sentAt } });
+  });
+
+  // ICS 購読 URL を登録済みのカレンダーを再取得する (ライブ同期の実体)。
+  // ユーザーのボタン操作か、外部スケジューラ (Actions cron 等) から叩く。
+  app.post("/api/relationship/refresh-calendars", async (c) => {
+    const links = await prisma.calendarLink.findMany({
+      where: { ownerUid: c.get("ownerUid"), provider: "ics", icsUrl: { not: null } },
+    });
+    let refreshed = 0;
+    const failed: string[] = [];
+    for (const link of links) {
+      try {
+        if (!fetchText || !link.icsUrl) throw new Error("no_fetcher");
+        const content = await fetchText(link.icsUrl);
+        if (!looksLikeIcs(content)) throw new Error("not_ics");
+        await prisma.calendarLink.update({
+          where: { id: link.id },
+          data: { busySlots: parseIcsBusy(content) as never },
+        });
+        refreshed++;
+      } catch {
+        failed.push(link.contactId ?? "self");
+      }
+    }
+    return c.json({ refreshed, failed });
+  });
+
+  // ---------------- 一括配信キュー (フェーズ4 残作業) ----------------
+  // 承認済みメッセージに送信予定時刻をつけてキューに載せ、ワーカー
+  // (process-queue。Actions cron / Cloud Scheduler から admin 権限で起動) が順に送る。
+  // 承認フローの強制は不変: approved 以外は schedule もキュー処理も対象外。
+
+  app.post("/api/outreach/:id/schedule", async (c) => {
+    const m = await prisma.outreachMessage.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!m) return c.json({ error: "not_found" }, 404);
+    if (m.status !== "approved") {
+      return c.json({ error: "not_approved", detail: "先に文面を承認してください" }, 409);
+    }
+    const b = await c.req.json<{ sendAt?: string }>().catch(() => ({}) as { sendAt?: string });
+    const sendAt = b.sendAt ? new Date(b.sendAt) : new Date();
+    if (Number.isNaN(sendAt.getTime())) {
+      return c.json({ error: "invalid_send_at", detail: "送信予定時刻を読み取れませんでした" }, 400);
+    }
+    await prisma.outreachMessage.update({
+      where: { id: m.id },
+      data: { scheduledAt: sendAt },
+    });
+    return c.json({ id: m.id, scheduledAt: sendAt.toISOString() });
+  });
+
+  // 承認済みメッセージ 1 通を送って還流する (単発 send とキューの共通処理)
+  const deliverApproved = async (m: {
+    id: string;
+    ownerUid: string;
+    contactId: string;
+    subject: string | null;
+    body: string | null;
+  }): Promise<{ ok: boolean; detail?: string }> => {
+    if (!mailer) return { ok: false, detail: "mailer_not_configured" };
     const contact = await prisma.contact.findFirst({
-      where: { id: m.contactId, ownerUid: c.get("ownerUid") },
+      where: { id: m.contactId, ownerUid: m.ownerUid },
     });
     if (!contact?.email) {
-      return c.json({ error: "no_email", detail: "この方のメールアドレスが登録されていません" }, 400);
+      await prisma.outreachMessage.update({
+        where: { id: m.id },
+        data: { status: "failed", errorDetail: "no_email" },
+      });
+      return { ok: false, detail: "no_email" };
     }
     try {
       const sent = await mailer({ to: contact.email, subject: m.subject ?? "", body: m.body ?? "" });
-      const updated = await prisma.outreachMessage.update({
+      await prisma.outreachMessage.update({
         where: { id: m.id },
         data: { status: "sent", sentAt: new Date(), providerMessageId: sent.messageId },
       });
       await prisma.contactInteraction.create({
         data: { contactId: contact.id, type: "email", occurredAt: new Date(), notes: m.subject },
       });
-      return c.json({ message: { id: updated.id, status: updated.status, sentAt: updated.sentAt } });
+      return { ok: true };
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       await prisma.outreachMessage.update({
         where: { id: m.id },
         data: { status: "failed", errorDetail: detail },
       });
-      return c.json({ error: "send_failed", detail: "送信できませんでした。しばらくしてからお試しください" }, 502);
+      return { ok: false, detail };
     }
+  };
+
+  // キューのワーカー (全オーナー横断のため admin 権限)。1 回の起動で最大 batch 件 =
+  // 送信レートの上限。1 通の失敗は failed として記録し、残りの処理は続ける。
+  app.post("/api/admin/outreach/process-queue", async (c) => {
+    const batch = Math.min(50, Math.max(1, Number(c.req.query("batch")) || 10));
+    const due = await prisma.outreachMessage.findMany({
+      where: { status: "approved", scheduledAt: { not: null, lte: new Date() } },
+      orderBy: { scheduledAt: "asc" },
+      take: batch,
+    });
+    let sent = 0;
+    let failed = 0;
+    for (const m of due) {
+      const r = await deliverApproved(m);
+      if (r.ok) sent++;
+      else failed++;
+    }
+    return c.json({ picked: due.length, sent, failed });
   });
 
   // 実行詳細 (ステップ含む)
