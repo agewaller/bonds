@@ -20,6 +20,9 @@ import {
 import { canonicalizeModelId, isValidModelId, type ModelId } from "./lib/cost.js";
 import { runPersonDd, getMonthlyCostJpy, type DdRunEvent } from "./dd/runner.js";
 import { normalizeLocale } from "./lib/locale.js";
+import { clampScore } from "./lib/dd-spec.js";
+import { clampDistance, calculateIsolationScore, todaySuggestions } from "./lib/relationship.js";
+import { parseContacts } from "./lib/contact-parsers.js";
 
 export type AppDeps = {
   prisma: ExtendedPrismaClient;
@@ -69,6 +72,11 @@ export function createApp(deps: AppDeps) {
   app.post("/api/dd/*", requireAdmin);
   app.put("/api/dd/*", requireAdmin);
   app.delete("/api/dd/*", requireAdmin);
+  // 連絡先は PII (復号して返す) のため読み取りも含めて全メソッドをガードする。
+  // ブラウザは BFF プロキシ経由 (トークンは web サーバ側にのみ存在)。
+  app.use("/api/contacts/*", requireAdmin);
+  app.use("/api/contacts", requireAdmin);
+  app.use("/api/relationship/*", requireAdmin);
 
   // ---------------- 管理: モデル設定 (cares person-eval-config と同形) ----------------
 
@@ -265,6 +273,175 @@ export function createApp(deps: AppDeps) {
     }
     const results = await execute();
     return c.json({ subject: { slug: subject.slug, name: subject.name }, model, results });
+  });
+
+  // ---------------- 関係性 (contacts) — フェーズ2 ----------------
+  // フェーズ5 の認証導入までは単一オーナー ("owner")。全操作は requireAdmin 済み。
+
+  const OWNER = "owner";
+
+  const parseBirthday = (v: unknown): Date | null => {
+    if (typeof v !== "string" || !v.trim()) return null;
+    const d = new Date(v.trim());
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
+  const contactData = (b: Record<string, unknown>) => ({
+    furigana: typeof b.furigana === "string" ? b.furigana.trim() || null : null,
+    distance: clampDistance(b.distance),
+    relationship: typeof b.relationship === "string" && b.relationship.trim() ? b.relationship.trim() : "other",
+    birthday: parseBirthday(b.birthday),
+    phone: typeof b.phone === "string" ? b.phone.trim() || null : null,
+    email: typeof b.email === "string" ? b.email.trim() || null : null,
+    address: typeof b.address === "string" ? b.address.trim() || null : null,
+    company: typeof b.company === "string" ? b.company.trim() || null : null,
+    title: typeof b.title === "string" ? b.title.trim() || null : null,
+    sns: typeof b.sns === "string" ? b.sns.trim() || null : null,
+    personalProfile: typeof b.personalProfile === "string" ? b.personalProfile.trim() || null : null,
+    socialPosition: typeof b.socialPosition === "string" ? b.socialPosition.trim() || null : null,
+    valuesProfile: typeof b.valuesProfile === "string" ? b.valuesProfile.trim() || null : null,
+    notes: typeof b.notes === "string" ? b.notes.trim() || null : null,
+  });
+
+  app.get("/api/contacts", async (c) => {
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid: OWNER, state: "active" },
+      orderBy: [{ distance: "asc" }, { name: "asc" }],
+      take: 500,
+    });
+    return c.json({ contacts });
+  });
+
+  app.post("/api/contacts", async (c) => {
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const name = clampName(b.name);
+    if (!name) return c.json({ error: "name_required", detail: "お名前を入力してください" }, 400);
+    const created = await prisma.contact.create({
+      data: { ownerUid: OWNER, name, source: "manual", ...contactData(b) },
+    });
+    return c.json({ contact: created }, 201);
+  });
+
+  app.get("/api/contacts/export", async (c) => {
+    // データ主権: 全件エクスポート (復号済み JSON)。ロックインしない。
+    const [contacts, interactions, gifts] = await Promise.all([
+      prisma.contact.findMany({ where: { ownerUid: OWNER } }),
+      prisma.contactInteraction.findMany(),
+      prisma.contactGift.findMany(),
+    ]);
+    c.header("Content-Disposition", "attachment; filename=bonds-contacts-export.json");
+    return c.json({ exportedAt: new Date().toISOString(), contacts, interactions, gifts });
+  });
+
+  app.get("/api/contacts/:id", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: OWNER },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    // 暗号化列は親 include で復号フックが漏れるケースがあるため直接クエリで読む (cares の教訓)
+    const [interactions, gifts] = await Promise.all([
+      prisma.contactInteraction.findMany({
+        where: { contactId: contact.id },
+        orderBy: { occurredAt: "desc" },
+        take: 50,
+      }),
+      prisma.contactGift.findMany({
+        where: { contactId: contact.id },
+        orderBy: { givenAt: "desc" },
+        take: 50,
+      }),
+    ]);
+    return c.json({ contact, interactions, gifts });
+  });
+
+  app.put("/api/contacts/:id", async (c) => {
+    const exists = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: OWNER },
+    });
+    if (!exists) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const name = clampName(b.name) || exists.name;
+    const updated = await prisma.contact.update({
+      where: { id: exists.id },
+      data: { name, ...contactData(b) },
+    });
+    return c.json({ contact: updated });
+  });
+
+  app.delete("/api/contacts/:id", async (c) => {
+    // ソフト削除 (state=archived)。1 件単位の削除導線 = データ主権原則
+    const exists = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: OWNER },
+    });
+    if (!exists) return c.json({ error: "not_found" }, 404);
+    await prisma.contact.update({ where: { id: exists.id }, data: { state: "archived" } });
+    return c.json({ ok: true });
+  });
+
+  // 取込 (CSV / vCard / auto)。取り込み件数とスキップ件数を返す。
+  app.post("/api/contacts/import", async (c) => {
+    const b = await c.req
+      .json<{ content?: string; format?: string }>()
+      .catch(() => ({}) as { content?: string; format?: string });
+    if (typeof b.content !== "string" || !b.content.trim()) {
+      return c.json({ error: "content_required", detail: "取り込む内容がありません" }, 400);
+    }
+    const format = b.format === "csv" || b.format === "vcard" ? b.format : "auto";
+    const rows = parseContacts(b.content, format);
+    let imported = 0;
+    for (const r of rows) {
+      await prisma.contact.create({
+        data: {
+          ownerUid: OWNER,
+          name: clampName(r.name),
+          source: format === "auto" ? "import" : format,
+          ...contactData(r as Record<string, unknown>),
+        },
+      });
+      imported++;
+    }
+    return c.json({ imported, skipped: 0, parsed: rows.length });
+  });
+
+  // 接触記録 (連絡済み)。距離スコアの検証還流。
+  app.post("/api/contacts/:id/interactions", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: OWNER },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const type = typeof b.type === "string" && b.type.trim() ? b.type.trim() : "message";
+    const quality = clampScore(b.quality, 1, 5);
+    const occurredAt = parseBirthday(b.occurredAt) ?? new Date();
+    const created = await prisma.contactInteraction.create({
+      data: {
+        contactId: contact.id,
+        type,
+        quality: quality === null ? null : Math.round(quality),
+        occurredAt,
+        notes: typeof b.notes === "string" ? b.notes.trim() || null : null,
+      },
+    });
+    return c.json({ interaction: created }, 201);
+  });
+
+  // つながりサマリ: 孤立スコア + 今日連絡してみませんか (lms 移植ロジック)
+  app.get("/api/relationship/summary", async (c) => {
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid: OWNER, state: "active" },
+      select: { id: true, name: true, distance: true, birthday: true },
+    });
+    const interactions = await prisma.contactInteraction.findMany({
+      where: { contactId: { in: contacts.map((x) => x.id) } },
+      select: { contactId: true, occurredAt: true, type: true },
+    });
+    const isolation = calculateIsolationScore(contacts, interactions);
+    const today = todaySuggestions(contacts, interactions);
+    return c.json({
+      isolation,
+      today,
+      connectionScore: 100 - isolation.score, // 高い方が良い表示 (lms と同じ)
+    });
   });
 
   // 実行詳細 (ステップ含む)

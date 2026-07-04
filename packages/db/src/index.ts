@@ -12,15 +12,22 @@ export {
   isEncrypted,
 } from "./encryption.js";
 
-// 暗号化対象: Prisma モデル名 → カラム名[]。
-// フェーズ0 では PII テーブル (contacts 系) がまだ無いため空。フェーズ2 で contacts が
-// landing したら DESIGN-HANDOVER.md §4.1 の対象列をここに追記する:
-//   contact:            ["email","phone","address","personalProfile",
-//                        "socialPosition","valuesProfile","notes","sns"]
-//   contactInteraction: ["notes"]
-//   contactGift:        ["notes"]
-//   outreachMessage:    ["body"]
-const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {};
+// 暗号化対象: Prisma モデル名 → カラム名[] (DESIGN-HANDOVER.md §4.1)。
+// フェーズ4 で outreachMessage.body を追加する。
+const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
+  contact: [
+    "email",
+    "phone",
+    "address",
+    "sns",
+    "personalProfile",
+    "socialPosition",
+    "valuesProfile",
+    "notes",
+  ],
+  contactInteraction: ["notes"],
+  contactGift: ["notes"],
+};
 
 // data ({ field: value } / { field: { set: value } } / 配列) を in-place で暗号化。
 function encryptData(data: unknown, fields: readonly string[]): void {
