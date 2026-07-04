@@ -35,7 +35,7 @@ import { jsonProseLanguageDirective } from "./lib/locale.js";
 import { extractJson } from "./lib/dd-spec.js";
 import { calcCostJpy } from "./lib/cost.js";
 import { PERSON_DD_MAX_TOKENS, PERSON_DD_TIMEOUT_MS } from "./lib/person-eval.js";
-import { authorizeAdmin, type VerifyIdTokenFn } from "./lib/auth.js";
+import { authorizeAdmin, authorizeUser, type VerifyIdTokenFn } from "./lib/auth.js";
 
 export type AppDeps = {
   prisma: ExtendedPrismaClient;
@@ -53,7 +53,8 @@ export function createApp(deps: AppDeps) {
   // mailer も同様 (SENDGRID_API_KEY / OUTREACH_FROM_EMAIL 未設定なら送信は 503)
   const mailer = deps.mailer !== undefined ? deps.mailer : buildSendGridMailer();
 
-  const app = new Hono();
+  // ownerUid: 認可済みユーザーのデータスコープ (Firebase uid / break-glass は "owner")
+  const app = new Hono<{ Variables: { ownerUid: string } }>();
 
   // CORS: 許可 Origin は env で制御。
   const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000")
@@ -88,38 +89,53 @@ export function createApp(deps: AppDeps) {
       return c.json({ error: result.error, detail: result.detail }, result.status);
     }
     await next();
-    if (c.req.method !== "GET") {
-      // 監査記録は応答をブロックしない (失敗はログのみ)
-      prisma.auditLog
-        .create({
-          data: {
-            actor: result.actor,
-            method: c.req.method,
-            path: c.req.path,
-            status: c.res.status,
-          },
-        })
-        .catch((err: unknown) =>
-          console.error(
-            JSON.stringify({
-              event: "audit_log_failed",
-              detail: err instanceof Error ? err.message : String(err),
-            }),
-          ),
-        );
-    }
+    auditWrite(c, result.actor); // 監査記録は応答をブロックしない (失敗はログのみ)
   };
+  const auditWrite = (c: Context, actor: string) => {
+    if (c.req.method === "GET") return;
+    prisma.auditLog
+      .create({
+        data: { actor, method: c.req.method, path: c.req.path, status: c.res.status },
+      })
+      .catch((err: unknown) =>
+        console.error(
+          JSON.stringify({
+            event: "audit_log_failed",
+            detail: err instanceof Error ? err.message : String(err),
+          }),
+        ),
+      );
+  };
+
+  // 一般ユーザーガード (関係性系): Firebase ログインユーザーは自分の uid スコープ、
+  // break-glass は "owner" スコープ。データは ownerUid で完全分離する。
+  const requireUser = async (c: Context, next: Next) => {
+    const result = await authorizeUser(
+      {
+        authorization: c.req.header("authorization"),
+        adminToken: c.req.header("x-admin-token"),
+      },
+      { verifyIdToken: deps.verifyIdToken ?? null },
+    );
+    if (!result.ok) {
+      return c.json({ error: result.error, detail: result.detail }, result.status);
+    }
+    c.set("ownerUid", result.ownerUid);
+    await next();
+    auditWrite(c, result.actor);
+  };
+
   app.use("/api/admin/*", requireAdmin);
   app.post("/api/dd/*", requireAdmin);
   app.put("/api/dd/*", requireAdmin);
   app.delete("/api/dd/*", requireAdmin);
   // 連絡先は PII (復号して返す) のため読み取りも含めて全メソッドをガードする。
   // ブラウザは BFF プロキシ経由 (トークンは web サーバ側にのみ存在)。
-  app.use("/api/contacts/*", requireAdmin);
-  app.use("/api/contacts", requireAdmin);
-  app.use("/api/relationship/*", requireAdmin);
-  app.use("/api/outreach/*", requireAdmin);
-  app.use("/api/outreach", requireAdmin);
+  app.use("/api/contacts/*", requireUser);
+  app.use("/api/contacts", requireUser);
+  app.use("/api/relationship/*", requireUser);
+  app.use("/api/outreach/*", requireUser);
+  app.use("/api/outreach", requireUser);
 
   // ---------------- 管理: モデル設定 (cares person-eval-config と同形) ----------------
 
@@ -321,8 +337,6 @@ export function createApp(deps: AppDeps) {
   // ---------------- 関係性 (contacts) — フェーズ2 ----------------
   // フェーズ5 の認証導入までは単一オーナー ("owner")。全操作は requireAdmin 済み。
 
-  const OWNER = "owner";
-
   const parseBirthday = (v: unknown): Date | null => {
     if (typeof v !== "string" || !v.trim()) return null;
     const d = new Date(v.trim());
@@ -348,7 +362,7 @@ export function createApp(deps: AppDeps) {
 
   app.get("/api/contacts", async (c) => {
     const contacts = await prisma.contact.findMany({
-      where: { ownerUid: OWNER, state: "active" },
+      where: { ownerUid: c.get("ownerUid"), state: "active" },
       orderBy: [{ distance: "asc" }, { name: "asc" }],
       take: 500,
     });
@@ -360,7 +374,7 @@ export function createApp(deps: AppDeps) {
     const name = clampName(b.name);
     if (!name) return c.json({ error: "name_required", detail: "お名前を入力してください" }, 400);
     const created = await prisma.contact.create({
-      data: { ownerUid: OWNER, name, source: "manual", ...contactData(b) },
+      data: { ownerUid: c.get("ownerUid"), name, source: "manual", ...contactData(b) },
     });
     return c.json({ contact: created }, 201);
   });
@@ -368,7 +382,7 @@ export function createApp(deps: AppDeps) {
   app.get("/api/contacts/export", async (c) => {
     // データ主権: 全件エクスポート (復号済み JSON)。ロックインしない。
     const [contacts, interactions, gifts] = await Promise.all([
-      prisma.contact.findMany({ where: { ownerUid: OWNER } }),
+      prisma.contact.findMany({ where: { ownerUid: c.get("ownerUid") } }),
       prisma.contactInteraction.findMany(),
       prisma.contactGift.findMany(),
     ]);
@@ -378,7 +392,7 @@ export function createApp(deps: AppDeps) {
 
   app.get("/api/contacts/:id", async (c) => {
     const contact = await prisma.contact.findFirst({
-      where: { id: c.req.param("id"), ownerUid: OWNER },
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
     });
     if (!contact) return c.json({ error: "not_found" }, 404);
     // 暗号化列は親 include で復号フックが漏れるケースがあるため直接クエリで読む (cares の教訓)
@@ -399,7 +413,7 @@ export function createApp(deps: AppDeps) {
 
   app.put("/api/contacts/:id", async (c) => {
     const exists = await prisma.contact.findFirst({
-      where: { id: c.req.param("id"), ownerUid: OWNER },
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
     });
     if (!exists) return c.json({ error: "not_found" }, 404);
     const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
@@ -414,7 +428,7 @@ export function createApp(deps: AppDeps) {
   app.delete("/api/contacts/:id", async (c) => {
     // ソフト削除 (state=archived)。1 件単位の削除導線 = データ主権原則
     const exists = await prisma.contact.findFirst({
-      where: { id: c.req.param("id"), ownerUid: OWNER },
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
     });
     if (!exists) return c.json({ error: "not_found" }, 404);
     await prisma.contact.update({ where: { id: exists.id }, data: { state: "archived" } });
@@ -435,7 +449,7 @@ export function createApp(deps: AppDeps) {
     for (const r of rows) {
       await prisma.contact.create({
         data: {
-          ownerUid: OWNER,
+          ownerUid: c.get("ownerUid"),
           name: clampName(r.name),
           source: format === "auto" ? "import" : format,
           ...contactData(r as Record<string, unknown>),
@@ -449,7 +463,7 @@ export function createApp(deps: AppDeps) {
   // 接触記録 (連絡済み)。距離スコアの検証還流。
   app.post("/api/contacts/:id/interactions", async (c) => {
     const contact = await prisma.contact.findFirst({
-      where: { id: c.req.param("id"), ownerUid: OWNER },
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
     });
     if (!contact) return c.json({ error: "not_found" }, 404);
     const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
@@ -471,7 +485,7 @@ export function createApp(deps: AppDeps) {
   // つながりサマリ: 孤立スコア + 今日連絡してみませんか (lms 移植ロジック)
   app.get("/api/relationship/summary", async (c) => {
     const contacts = await prisma.contact.findMany({
-      where: { ownerUid: OWNER, state: "active" },
+      where: { ownerUid: c.get("ownerUid"), state: "active" },
       select: { id: true, name: true, distance: true, birthday: true },
     });
     const interactions = await prisma.contactInteraction.findMany({
@@ -494,12 +508,12 @@ export function createApp(deps: AppDeps) {
   // (NULL は Postgres の複合ユニークで重複可になり upsert が効かないため)。
   const SELF_CALENDAR = "self";
 
-  const saveBusy = async (contactId: string, raw: unknown) => {
+  const saveBusy = async (ownerUid: string, contactId: string, raw: unknown) => {
     const busy = toIso(parseIsoIntervals(raw));
     await prisma.calendarLink.upsert({
-      where: { ownerUid_contactId: { ownerUid: OWNER, contactId } },
+      where: { ownerUid_contactId: { ownerUid, contactId } },
       update: { busySlots: busy as never },
-      create: { ownerUid: OWNER, contactId, provider: "manual", busySlots: busy as never },
+      create: { ownerUid, contactId, provider: "manual", busySlots: busy as never },
     });
     return busy.length;
   };
@@ -507,34 +521,34 @@ export function createApp(deps: AppDeps) {
   // 自分の busy 登録
   app.put("/api/relationship/my-busy", async (c) => {
     const b = await c.req.json<{ busySlots?: unknown }>().catch(() => ({}) as { busySlots?: unknown });
-    const saved = await saveBusy(SELF_CALENDAR, b.busySlots);
+    const saved = await saveBusy(c.get("ownerUid"), SELF_CALENDAR, b.busySlots);
     return c.json({ saved });
   });
 
   // 相手の busy 登録
   app.put("/api/contacts/:id/busy", async (c) => {
     const contact = await prisma.contact.findFirst({
-      where: { id: c.req.param("id"), ownerUid: OWNER },
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
     });
     if (!contact) return c.json({ error: "not_found" }, 404);
     const b = await c.req.json<{ busySlots?: unknown }>().catch(() => ({}) as { busySlots?: unknown });
-    const saved = await saveBusy(contact.id, b.busySlots);
+    const saved = await saveBusy(c.get("ownerUid"), contact.id, b.busySlots);
     return c.json({ saved });
   });
 
   // 二者空き重なり → 面談候補 (busy → 各自の free → 積集合)
   app.get("/api/contacts/:id/meeting-slots", async (c) => {
     const contact = await prisma.contact.findFirst({
-      where: { id: c.req.param("id"), ownerUid: OWNER },
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
     });
     if (!contact) return c.json({ error: "not_found" }, 404);
     const days = Math.min(30, Math.max(1, Number(c.req.query("days")) || 14));
     const [mine, theirs] = await Promise.all([
       prisma.calendarLink.findUnique({
-        where: { ownerUid_contactId: { ownerUid: OWNER, contactId: SELF_CALENDAR } },
+        where: { ownerUid_contactId: { ownerUid: c.get("ownerUid"), contactId: SELF_CALENDAR } },
       }),
       prisma.calendarLink.findUnique({
-        where: { ownerUid_contactId: { ownerUid: OWNER, contactId: contact.id } },
+        where: { ownerUid_contactId: { ownerUid: c.get("ownerUid"), contactId: contact.id } },
       }),
     ]);
     const proposals = meetingSlotProposals(
@@ -550,8 +564,8 @@ export function createApp(deps: AppDeps) {
   });
 
   // AI 共通: 相手の文脈 (プロフィール + 直近のやりとり) を組み立てる
-  const buildContactContext = async (contactId: string) => {
-    const contact = await prisma.contact.findFirst({ where: { id: contactId, ownerUid: OWNER } });
+  const buildContactContext = async (ownerUid: string, contactId: string) => {
+    const contact = await prisma.contact.findFirst({ where: { id: contactId, ownerUid } });
     if (!contact) return null;
     const interactions = await prisma.contactInteraction.findMany({
       where: { contactId: contact.id },
@@ -634,7 +648,7 @@ export function createApp(deps: AppDeps) {
 
   // 価値観プロフィールの下書き (AI 下書き → ユーザーが編集して PUT で確定 = 自動保存しない)
   app.post("/api/contacts/:id/enrich-values", async (c) => {
-    const ctx = await buildContactContext(c.req.param("id"));
+    const ctx = await buildContactContext(c.get("ownerUid"), c.req.param("id"));
     if (!ctx) return c.json({ error: "not_found" }, 404);
     const b = await c.req.json<{ locale?: string }>().catch(() => ({}) as { locale?: string });
     const r = await runRelationshipAi(
@@ -661,7 +675,7 @@ export function createApp(deps: AppDeps) {
       .json<{ contactId?: string; purpose?: string; points?: string; locale?: string }>()
       .catch(() => ({}) as Record<string, never>);
     if (!b.contactId) return c.json({ error: "contact_required" }, 400);
-    const ctx = await buildContactContext(b.contactId);
+    const ctx = await buildContactContext(c.get("ownerUid"), b.contactId);
     if (!ctx) return c.json({ error: "not_found" }, 404);
     const purpose = OUTREACH_PURPOSES.includes(b.purpose as never) ? b.purpose! : "keepup";
     const points = typeof b.points === "string" ? b.points.trim() : "";
@@ -690,7 +704,7 @@ export function createApp(deps: AppDeps) {
     }
     const message = await prisma.outreachMessage.create({
       data: {
-        ownerUid: OWNER,
+        ownerUid: c.get("ownerUid"),
         contactId: ctx.contact.id,
         channel: "email",
         purpose,
@@ -704,7 +718,7 @@ export function createApp(deps: AppDeps) {
   app.get("/api/outreach", async (c) => {
     const contactId = c.req.query("contactId");
     const messages = await prisma.outreachMessage.findMany({
-      where: { ownerUid: OWNER, ...(contactId ? { contactId } : {}) },
+      where: { ownerUid: c.get("ownerUid"), ...(contactId ? { contactId } : {}) },
       orderBy: { createdAt: "desc" },
       take: 50,
     });
@@ -719,7 +733,7 @@ export function createApp(deps: AppDeps) {
   // 承認: 候補から選び (編集可)、件名と本文を確定する
   app.post("/api/outreach/:id/approve", async (c) => {
     const m = await prisma.outreachMessage.findFirst({
-      where: { id: c.req.param("id"), ownerUid: OWNER },
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
     });
     if (!m) return c.json({ error: "not_found" }, 404);
     if (m.status !== "draft") {
@@ -743,7 +757,7 @@ export function createApp(deps: AppDeps) {
   // 送信: approved のみ。成功で sent + contact_interactions へ還流 (距離スコア更新)。
   app.post("/api/outreach/:id/send", async (c) => {
     const m = await prisma.outreachMessage.findFirst({
-      where: { id: c.req.param("id"), ownerUid: OWNER },
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
     });
     if (!m) return c.json({ error: "not_found" }, 404);
     if (m.status !== "approved") {
@@ -756,7 +770,7 @@ export function createApp(deps: AppDeps) {
       return c.json({ error: "unavailable", detail: "送信の設定がまだ済んでいません" }, 503);
     }
     const contact = await prisma.contact.findFirst({
-      where: { id: m.contactId, ownerUid: OWNER },
+      where: { id: m.contactId, ownerUid: c.get("ownerUid") },
     });
     if (!contact?.email) {
       return c.json({ error: "no_email", detail: "この方のメールアドレスが登録されていません" }, 400);

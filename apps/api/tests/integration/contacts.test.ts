@@ -225,3 +225,47 @@ describe("監査ログ (フェーズ5)", () => {
     expect(logs[0]?.actor).toBe("firebase:admin-uid");
   });
 });
+
+describe("Google ログインユーザーのデータ分離 (ダッシュボード基盤)", () => {
+  it("Firebase ユーザーごとに ownerUid で完全分離され、他人のデータは見えない", async () => {
+    const appFor = (uid: string) =>
+      createApp({
+        prisma,
+        generate: null,
+        verifyIdToken: async () => ({ uid }),
+      });
+    const bearer = { "Content-Type": "application/json", authorization: "Bearer t" };
+    const alice = appFor("alice-uid");
+    const bob = appFor("bob-uid");
+
+    const res = await alice.request("/api/contacts", {
+      method: "POST",
+      headers: bearer,
+      body: JSON.stringify({ name: "アリスの友人", distance: 2, email: "friend@example.com" }),
+    });
+    expect(res.status).toBe(201);
+
+    // アリスには見える
+    const aliceList = await (await alice.request("/api/contacts", { headers: bearer })).json();
+    expect(aliceList.contacts).toHaveLength(1);
+    // ボブには見えない (一覧・詳細・サマリすべて)
+    const bobList = await (await bob.request("/api/contacts", { headers: bearer })).json();
+    expect(bobList.contacts).toHaveLength(0);
+    const contactId = aliceList.contacts[0].id;
+    expect((await bob.request(`/api/contacts/${contactId}`, { headers: bearer })).status).toBe(404);
+    const bobSummary = await (await bob.request("/api/relationship/summary", { headers: bearer })).json();
+    expect(bobSummary.isolation.total).toBe(0);
+    // break-glass ("owner" スコープ) にも見えない
+    const ownerList = await (await app.request("/api/contacts", { headers: H })).json();
+    expect(ownerList.contacts).toHaveLength(0);
+    // DB には ownerUid = alice-uid で格納
+    const row = await prisma.contact.findFirstOrThrow();
+    expect(row.ownerUid).toBe("alice-uid");
+  });
+
+  it("トークン無しは 401 (サインインが必要)", async () => {
+    const appFb = createApp({ prisma, generate: null, verifyIdToken: async () => ({ uid: "x" }) });
+    const res = await appFb.request("/api/contacts");
+    expect(res.status).toBe(401);
+  });
+});

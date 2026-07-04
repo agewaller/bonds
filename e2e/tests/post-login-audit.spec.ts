@@ -104,3 +104,14 @@ test("連絡先詳細: プロフィール保存・面談候補・お便り導線
   await expect(page.getByRole("alert").or(page.getByLabel("件名"))).toBeVisible({ timeout: 15000 });
   expect(errors, errors.join("\n")).toHaveLength(0);
 });
+
+test("サインインページが開く (Firebase 未設定時は開発向け案内)", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/login");
+  await expect(page.getByRole("heading", { name: "bonds" })).toBeVisible();
+  // 設定済みなら Google ボタン、未設定なら案内と連絡帳への導線
+  await expect(
+    page.getByRole("button", { name: "Google ではじめる" }).or(page.getByText("サインインの準備")),
+  ).toBeVisible();
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});

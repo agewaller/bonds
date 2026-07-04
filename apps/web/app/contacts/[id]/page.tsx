@@ -3,6 +3,7 @@
 // 実行 (承認 → 送信) / 検証 (やりとりの記録) を一画面に。
 // 外に出る行動は必ず「下書き → 承認 → 送信」(CLAUDE.md 自律性の段階)。
 import { useCallback, useEffect, useState } from "react";
+import { apiFetch } from "../../../lib/client-api";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
@@ -59,7 +60,7 @@ export default function ContactDetailPage() {
   const [notice, setNotice] = useState("");
 
   const load = useCallback(async () => {
-    const res = await fetch(`/api/bff/contacts/${id}`);
+    const res = await apiFetch(`contacts/${id}`);
     if (!res.ok) return;
     const body = await res.json();
     setContact(body.contact);
@@ -80,7 +81,7 @@ export default function ContactDetailPage() {
     setBusy(path);
     setError("");
     try {
-      const res = await fetch(`/api/bff/${path}`, {
+      const res = await apiFetch(`${path}`, {
         headers: { "Content-Type": "application/json" },
         ...init,
       });

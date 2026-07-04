@@ -61,6 +61,10 @@ services:
       # BFF プロキシが叩く API (コンテナ内) と、その際に付ける管理トークン (サーバ側のみ)
       INTERNAL_API_URL: http://api:8080
       ADMIN_TOKEN: ${ADMIN_BREAKGLASS_TOKEN:-dev-admin-token}
+      # Google ログイン (cares と同じ Firebase プロジェクトを共用。未設定なら開発フォールバック)
+      NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY:-}
+      NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-}
+      NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-}
     depends_on:
       - api
     volumes:

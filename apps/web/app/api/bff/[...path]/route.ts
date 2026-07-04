@@ -11,8 +11,15 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   const headers: Record<string, string> = {
     "Content-Type": req.headers.get("content-type") ?? "application/json",
   };
-  const adminToken = process.env.ADMIN_TOKEN;
-  if (adminToken) headers["x-admin-token"] = adminToken;
+  // サインイン済みユーザーの ID トークンはそのまま API へ転送する (uid スコープ)。
+  // トークンが無いときだけ開発用フォールバック (break-glass = "owner" スコープ) を付ける。
+  const authorization = req.headers.get("authorization");
+  if (authorization) {
+    headers["authorization"] = authorization;
+  } else {
+    const adminToken = process.env.ADMIN_TOKEN;
+    if (adminToken) headers["x-admin-token"] = adminToken;
+  }
   const res = await fetch(url, {
     method: req.method,
     headers,

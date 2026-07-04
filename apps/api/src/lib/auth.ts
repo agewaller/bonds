@@ -65,6 +65,41 @@ export async function authorizeAdmin(
   return { ok: false, status: 401, error: "unauthorized" };
 }
 
+export type UserAuthResult =
+  | { ok: true; ownerUid: string; actor: string }
+  | { ok: false; status: 401 | 503; error: string; detail?: string };
+
+/**
+ * 一般ユーザーの認可 (関係性ダッシュボード用)。
+ * - Firebase ID トークンが有効なら、その uid を ownerUid としてデータを分離する
+ * - break-glass トークンは単一オーナー時代の "owner" スコープに入る (互換・非常口)
+ * 管理系 (人物DD 書き込み・admin) は authorizeAdmin を使い続ける。
+ */
+export async function authorizeUser(
+  headers: { authorization?: string; adminToken?: string },
+  deps: AuthDeps,
+): Promise<UserAuthResult> {
+  const breakglass = process.env.ADMIN_BREAKGLASS_TOKEN;
+  const verify = deps.verifyIdToken ?? null;
+
+  if (breakglass && headers.adminToken === breakglass) {
+    return { ok: true, ownerUid: "owner", actor: "breakglass" };
+  }
+  const bearer = headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+  if (bearer && verify) {
+    try {
+      const t = await verify(bearer);
+      return { ok: true, ownerUid: t.uid, actor: `firebase:${t.uid}` };
+    } catch {
+      return { ok: false, status: 401, error: "unauthorized", detail: "サインインし直してください" };
+    }
+  }
+  if (!breakglass && !verify) {
+    return { ok: false, status: 503, error: "unavailable", detail: "認証が未設定です" };
+  }
+  return { ok: false, status: 401, error: "unauthorized", detail: "サインインが必要です" };
+}
+
 /** firebase-admin による実 verifier。FIREBASE_SERVICE_ACCOUNT_JSON 未設定なら null。 */
 export async function buildFirebaseVerifier(): Promise<VerifyIdTokenFn | null> {
   const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;

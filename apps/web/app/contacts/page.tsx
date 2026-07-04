@@ -2,6 +2,8 @@
 // 連絡帳 + つながりスコア + 「今日、連絡してみませんか」(lms の関係性ダッシュボードを移植)。
 // 文言は寄り添い基調・技術語なし・記号装飾なし (CLAUDE.md 共通プロダクト原則)。
 import { useCallback, useEffect, useState } from "react";
+import { apiFetch } from "../../lib/client-api";
+import { AuthBar } from "../../components/AuthBar";
 import Link from "next/link";
 
 type Contact = {
@@ -48,8 +50,8 @@ export default function ContactsPage() {
 
   const load = useCallback(async () => {
     const [cRes, sRes] = await Promise.all([
-      fetch("/api/bff/contacts"),
-      fetch("/api/bff/relationship/summary"),
+      apiFetch("contacts"),
+      apiFetch("relationship/summary"),
     ]);
     if (cRes.ok) setContacts((await cRes.json()).contacts);
     if (sRes.ok) setSummary(await sRes.json());
@@ -64,7 +66,7 @@ export default function ContactsPage() {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch("/api/bff/contacts", {
+      const res = await apiFetch("contacts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name.trim(), distance: Number(distance) }),
@@ -85,7 +87,7 @@ export default function ContactsPage() {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch("/api/bff/contacts/import", {
+      const res = await apiFetch("contacts/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: importText }),
@@ -105,7 +107,7 @@ export default function ContactsPage() {
   };
 
   const logContact = async (contactId: string) => {
-    await fetch(`/api/bff/contacts/${contactId}/interactions`, {
+    await apiFetch(`contacts/${contactId}/interactions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "message" }),
@@ -118,6 +120,7 @@ export default function ContactsPage() {
 
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
+      <AuthBar />
       <p>
         <Link href="/" style={{ color: "#2563eb" }}>ホームへ戻る</Link>
       </p>
