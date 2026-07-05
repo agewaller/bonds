@@ -6,6 +6,8 @@
 // - 「根拠が弱ければ確信度を下げる」→ confidence A–D を型で強制し、数値化して集計
 // - エビデンスは certainty (fact / estimate / unconfirmed) を型で強制する
 
+import { sanitizeProse } from "./plain-text.js";
+
 export const DD_TYPES = ["consciousness_7d", "social_value_creation"] as const;
 export type DdType = (typeof DD_TYPES)[number];
 
@@ -120,12 +122,16 @@ function normalizeCertainty(v: unknown): Certainty {
 }
 
 function asString(v: unknown): string {
-  return typeof v === "string" ? v.trim() : "";
+  // 散文フィールドの共通入口。記号装飾はここで落とす (CLAUDE.md 文体規約の最終防衛線)
+  return typeof v === "string" ? sanitizeProse(v) : "";
 }
 
 function asStringArray(v: unknown, max = 10): string[] {
   if (!Array.isArray(v)) return [];
-  return v.filter((x) => typeof x === "string" && x.trim()).map((x) => (x as string).trim()).slice(0, max);
+  return v
+    .filter((x) => typeof x === "string" && x.trim())
+    .map((x) => sanitizeProse(x as string))
+    .slice(0, max);
 }
 
 function parseEvidence(v: unknown, max = 5): Evidence[] {
@@ -133,7 +139,7 @@ function parseEvidence(v: unknown, max = 5): Evidence[] {
   const out: Evidence[] = [];
   for (const e of v.slice(0, max)) {
     if (typeof e === "string" && e.trim()) {
-      out.push({ summary: e.trim(), certainty: "unconfirmed" });
+      out.push({ summary: sanitizeProse(e), certainty: "unconfirmed" });
     } else if (e && typeof e === "object") {
       const summary = asString((e as Record<string, unknown>).summary);
       if (summary) out.push({ summary, certainty: normalizeCertainty((e as Record<string, unknown>).certainty) });
@@ -421,6 +427,7 @@ export function confidenceScoreOf(
 
 const COMMON_JSON_RULES = [
   "出力は JSON オブジェクト 1 個だけにしてください (前後の説明文・コードフェンス不要)。",
+  "散文フィールド (summary / reason / 所見 / 推計などの値) の中では、アスタリスクやシャープ、※、箇条書き記号、表などの記号装飾・Markdown を一切使わず、ふつうの文章で書いてください。強調は記号でなく言葉で行います。",
   '対象を公人として特定できない場合・私人と思われる場合は {"identified": false, "reason": "...", "needed_info": "..."} だけを返してください。',
   "スコアは必ず数値で出してください。根拠が弱い場合はスコアを空にせず、confidence (A=確実〜D=推測) を下げて表現してください。",
   'key_evidence の各要素は {"summary": "...", "certainty": "fact|estimate|unconfirmed"} で、事実か推計か未確認かを必ず区別してください。',
