@@ -17,7 +17,21 @@ RUN_SA="${RUN_SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
 POOL="github-pool"
 PROVIDER="github"
 PROJECT_NUMBER=$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')
+ACTIVE_ACCOUNT=$(gcloud config get-value account 2>/dev/null)
 echo "PROJECT=${PROJECT} (#${PROJECT_NUMBER}) / REPO=${REPO}"
+echo "実行アカウント: ${ACTIVE_ACCOUNT}"
+
+# 事前チェック: IAM を書き換えられるアカウントか (権限不足なら分かりやすく案内して止まる)
+if ! gcloud projects get-iam-policy "${PROJECT}" --format='value(etag)' >/dev/null 2>&1; then
+  cat >&2 <<'MSG'
+! このアカウントにはプロジェクトの IAM を操作する権限がありません。
+  cares の管理アカウント (yano@bresson.biz) でコンソールにログインし直して
+  Cloud Shell から再実行するか、管理アカウントで次を一度だけ実行してから
+  このアカウントで再実行してください:
+    gcloud projects add-iam-policy-binding <PROJECT>       --member="user:<このアカウント>" --role="roles/owner"
+MSG
+  exit 1
+fi
 
 echo "=== 1) WIF: ${REPO} からのデプロイを許可 (cares のプール/SA を再利用) ==="
 if ! gcloud iam service-accounts describe "${DEPLOYER_SA}" --project="${PROJECT}" &>/dev/null; then
