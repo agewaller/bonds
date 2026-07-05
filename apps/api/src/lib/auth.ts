@@ -100,14 +100,23 @@ export async function authorizeUser(
   return { ok: false, status: 401, error: "unauthorized", detail: "サインインが必要です" };
 }
 
-/** firebase-admin による実 verifier。FIREBASE_SERVICE_ACCOUNT_JSON 未設定なら null。 */
+/**
+ * firebase-admin による実 verifier。
+ * - FIREBASE_SERVICE_ACCOUNT_JSON があれば SA JSON で初期化 (ローカル/どこでも)
+ * - 無くても FIREBASE_PROJECT_ID があれば ADC で初期化 (Cloud Run では JSON 不要)
+ * - どちらも無ければ null (break-glass 経路のみで運用)
+ */
 export async function buildFirebaseVerifier(): Promise<VerifyIdTokenFn | null> {
   const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  if (!json) return null;
-  const { initializeApp, cert, getApps } = await import("firebase-admin/app");
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  if (!json && !projectId) return null;
+  const { initializeApp, cert, applicationDefault, getApps } = await import("firebase-admin/app");
   const { getAuth } = await import("firebase-admin/auth");
   const app =
-    getApps()[0] ?? initializeApp({ credential: cert(JSON.parse(json)) });
+    getApps()[0] ??
+    (json
+      ? initializeApp({ credential: cert(JSON.parse(json)) })
+      : initializeApp({ credential: applicationDefault(), projectId }));
   const auth = getAuth(app);
   return async (idToken: string) => {
     const d = await auth.verifyIdToken(idToken);

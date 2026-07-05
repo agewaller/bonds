@@ -35,6 +35,8 @@ export function buildSendGridMailer(): MailerFn | null {
 // 発信文面候補の検証 (AI 出力の DdResultSpec 流の型強制)
 // ------------------------------------------------------------
 
+import { sanitizeProse } from "./plain-text.js";
+
 export type OutreachCandidate = { subject: string; body: string; tone: string; aim: string };
 
 export function validateOutreachCandidates(raw: unknown):
@@ -62,8 +64,8 @@ export function validateOutreachCandidates(raw: unknown):
       return;
     }
     out.push({
-      subject,
-      body,
+      subject: sanitizeProse(subject),
+      body: sanitizeProse(body),
       tone: typeof rec.tone === "string" ? rec.tone.trim() : "",
       aim: typeof rec.aim === "string" ? rec.aim.trim() : "",
     });

@@ -4,6 +4,13 @@ import { createPrismaClient } from "@bonds/db";
 import { createApp } from "./app.js";
 import { seedDdPrompts } from "./dd/seed-prompts.js";
 import { buildFirebaseVerifier } from "./lib/auth.js";
+import { buildDatabaseUrl } from "./lib/db-url.js";
+
+// Cloud Run では SQL_CONN + DB_PASSWORD (Secret) から DATABASE_URL を組み立てる
+if (!process.env.DATABASE_URL) {
+  const url = buildDatabaseUrl(process.env);
+  if (url) process.env.DATABASE_URL = url;
+}
 
 const prisma = createPrismaClient();
 // Firebase 検証は FIREBASE_SERVICE_ACCOUNT_JSON があるときだけ有効

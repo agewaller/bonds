@@ -67,6 +67,10 @@ jobs:
           corepack enable && pnpm install --frozen-lockfile
           bash infra/scripts/05-migrate-prod.sh
       - name: build & push images
+        env:
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
         run: bash infra/scripts/06-build-push-images.sh
       - name: deploy cloud run (api → web)
         run: |

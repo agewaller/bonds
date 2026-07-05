@@ -187,6 +187,23 @@
   var results = document.getElementById("results");
   var meta = document.getElementById("meta");
 
+    // 記号装飾を落として、ふつうの文章として表示する (bonds/cares 共通の文体規約)。
+  // 一次対策はサーバ側プロンプトだが、モデルの取りこぼしに備えた表示直前の最終防衛線。
+  function toPlainProse(input) {
+    var s = String(input || "");
+    s = s.replace(/```[a-zA-Z]*\n?/g, "");
+    s = s.replace(/^[ \t]*#{1,6}[ \t]+/gm, "");
+    s = s.replace(/^[ \t]*[-*+][ \t]+/gm, "");
+    s = s.replace(/\*\*([^*]+)\*\*/g, "$1");
+    s = s.replace(/__([^_]+)__/g, "$1");
+    s = s.replace(/\*([^*\n]+)\*/g, "$1");
+    s = s.replace(/\*\*/g, "");
+    s = s.replace(/^[ \t]*[※●▼◆■★◎►]+[ \t]*/gm, "");
+    s = s.replace(/[※●▼◆■★◎►]/g, "");
+    s = s.replace(/\n{3,}/g, "\n\n");
+    return s.trim();
+  }
+
   var LOADING_MESSAGES = [
     "評価を作っています。一〜二分ほどお待ちください。",
     "公開情報を整理しています…",
@@ -223,7 +240,7 @@
     var subject = document.getElementById(subjectId);
     subject.textContent = "対象: " + name;
     if (text) {
-      out.textContent = text; // textContent なので HTML 注入は起きない
+      out.textContent = toPlainProse(text); // textContent なので HTML 注入は起きない
     } else {
       out.textContent = "この評価は今回作成できませんでした。もう一度お試しください。";
     }
