@@ -250,3 +250,16 @@ model AuditLog {
   @@index([createdAt])
   @@map("audit_logs")
 }
+
+/// 公人 (dd_subjects) と人脈 (contacts) の任意リンク (DESIGN-HANDOVER §2 の将来項目)。
+model PersonLink {
+  id        String   @id @default(uuid())
+  ownerUid  String   @default("owner") @map("owner_uid")
+  contactId String   @map("contact_id")
+  subjectId String   @map("subject_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([ownerUid, contactId, subjectId])
+  @@index([ownerUid, contactId])
+  @@map("person_links")
+}

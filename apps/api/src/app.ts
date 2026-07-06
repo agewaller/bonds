@@ -22,9 +22,10 @@ import { runPersonDd, getMonthlyCostJpy, type DdRunEvent } from "./dd/runner.js"
 import { normalizeLocale } from "./lib/locale.js";
 import { clampScore } from "./lib/dd-spec.js";
 import { clampDistance, calculateIsolationScore, todaySuggestions } from "./lib/relationship.js";
+import { computeProgress } from "./lib/progress.js";
 import { parseContacts } from "./lib/contact-parsers.js";
 import { parseIsoIntervals, meetingSlotProposals, toIso } from "./lib/timeslots.js";
-import { parseIcsBusy, looksLikeIcs } from "./lib/ics.js";
+import { parseIcsBusy, looksLikeIcs, buildMeetingInviteIcs } from "./lib/ics.js";
 import {
   buildSendGridMailer,
   validateOutreachCandidates,
@@ -37,6 +38,7 @@ import { extractJson } from "./lib/dd-spec.js";
 import { calcCostJpy } from "./lib/cost.js";
 import { PERSON_DD_MAX_TOKENS, PERSON_DD_TIMEOUT_MS } from "./lib/person-eval.js";
 import { authorizeAdmin, authorizeUser, type VerifyIdTokenFn } from "./lib/auth.js";
+import { buildTavilySearch, type SearchFn } from "./lib/tavily.js";
 
 export type AppDeps = {
   prisma: ExtendedPrismaClient;
@@ -44,6 +46,7 @@ export type AppDeps = {
   mailer?: MailerFn | null;
   verifyIdToken?: VerifyIdTokenFn | null;
   fetchText?: ((url: string) => Promise<string>) | null;
+  search?: SearchFn | null;
 };
 
 const SUBJECT_TYPES = ["politician", "executive", "other"] as const;
@@ -54,6 +57,8 @@ export function createApp(deps: AppDeps) {
   const generate = deps.generate !== undefined ? deps.generate : buildAnthropicGenerate();
   // mailer も同様 (SENDGRID_API_KEY / OUTREACH_FROM_EMAIL 未設定なら送信は 503)
   const mailer = deps.mailer !== undefined ? deps.mailer : buildSendGridMailer();
+  // 人物DD の検索器 (TAVILY_API_KEY 無しなら null = 知識ベースモード)
+  const ddSearch = deps.search !== undefined ? deps.search : buildTavilySearch();
   // ICS 購読 URL の取得器 (既定は素の fetch + 15 秒タイムアウト)
   const fetchText =
     deps.fetchText !== undefined
@@ -168,6 +173,37 @@ export function createApp(deps: AppDeps) {
       create: { key: PERSON_DD_MODEL_CONFIG_KEY, value: model },
     });
     return c.json({ model });
+  });
+
+  // ---------------- 管理: プロンプト版管理 (DB 駆動プロンプトの編集 UI 用) ----------------
+
+  app.get("/api/admin/prompts", async (c) => {
+    const prompts = await prisma.prompt.findMany({
+      orderBy: [{ key: "asc" }, { version: "desc" }],
+    });
+    // key ごとに最新版 + 履歴数
+    const byKey = new Map<string, { key: string; version: number; body: string; active: boolean; versions: number }>();
+    for (const p of prompts) {
+      const cur = byKey.get(p.key);
+      if (!cur) byKey.set(p.key, { key: p.key, version: p.version, body: p.body, active: p.active, versions: 1 });
+      else cur.versions++;
+    }
+    return c.json({ prompts: [...byKey.values()] });
+  });
+
+  // 編集 = 新しい版を積む (既存版は書き換えない = 版管理)
+  app.post("/api/admin/prompts/:key", async (c) => {
+    const key = c.req.param("key");
+    const b = await c.req.json<{ body?: string }>().catch(() => ({}) as { body?: string });
+    if (typeof b.body !== "string" || !b.body.trim()) {
+      return c.json({ error: "body_required", detail: "プロンプト本文を入力してください" }, 400);
+    }
+    const latest = await prisma.prompt.findFirst({ where: { key }, orderBy: { version: "desc" } });
+    const version = (latest?.version ?? 0) + 1;
+    const created = await prisma.prompt.create({
+      data: { key, version, body: b.body, active: true },
+    });
+    return c.json({ prompt: { key: created.key, version: created.version } }, 201);
   });
 
   // ---------------- 評価対象 (dd_subjects) ----------------
@@ -315,7 +351,7 @@ export function createApp(deps: AppDeps) {
       const settled = await Promise.allSettled(
         ddTypes.map((ddType) =>
           runPersonDd(
-            { prisma, generate: generate!, onEvent },
+            { prisma, generate: generate!, search: ddSearch, onEvent },
             { subjectId: subject.id, ddType, model, locale },
           ),
         ),
@@ -407,7 +443,7 @@ export function createApp(deps: AppDeps) {
     });
     if (!contact) return c.json({ error: "not_found" }, 404);
     // 暗号化列は親 include で復号フックが漏れるケースがあるため直接クエリで読む (cares の教訓)
-    const [interactions, gifts] = await Promise.all([
+    const [interactions, gifts, links] = await Promise.all([
       prisma.contactInteraction.findMany({
         where: { contactId: contact.id },
         orderBy: { occurredAt: "desc" },
@@ -418,8 +454,16 @@ export function createApp(deps: AppDeps) {
         orderBy: { givenAt: "desc" },
         take: 50,
       }),
+      prisma.personLink.findMany({ where: { contactId: contact.id, ownerUid: c.get("ownerUid") } }),
     ]);
-    return c.json({ contact, interactions, gifts });
+    const subjects = links.length
+      ? await prisma.ddSubject.findMany({ where: { id: { in: links.map((l) => l.subjectId) } } })
+      : [];
+    const linkedSubjects = links.map((l) => {
+      const sub = subjects.find((x) => x.id === l.subjectId);
+      return { linkId: l.id, slug: sub?.slug ?? "", name: sub?.name ?? "" };
+    });
+    return c.json({ contact, interactions, gifts, linkedSubjects });
   });
 
   app.put("/api/contacts/:id", async (c) => {
@@ -462,7 +506,7 @@ export function createApp(deps: AppDeps) {
         data: {
           ownerUid: c.get("ownerUid"),
           name: clampName(r.name),
-          source: format === "auto" ? "import" : format,
+          source: r.source ?? (format === "auto" ? "import" : format),
           ...contactData(r as Record<string, unknown>),
         },
       });
@@ -491,6 +535,113 @@ export function createApp(deps: AppDeps) {
       },
     });
     return c.json({ interaction: created }, 201);
+  });
+
+  // 公人プロフィール (人物DD) とのリンク。相手が公人でもあるとき、評価を関係づくりの参考にする。
+  app.post("/api/contacts/:id/links", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<{ slug?: string }>().catch(() => ({}) as { slug?: string });
+    const subject = b.slug
+      ? await prisma.ddSubject.findUnique({ where: { slug: b.slug.trim() } })
+      : null;
+    if (!subject) return c.json({ error: "subject_not_found", detail: "その評価対象が見つかりません" }, 404);
+    const link = await prisma.personLink.upsert({
+      where: {
+        ownerUid_contactId_subjectId: {
+          ownerUid: c.get("ownerUid"),
+          contactId: contact.id,
+          subjectId: subject.id,
+        },
+      },
+      update: {},
+      create: { ownerUid: c.get("ownerUid"), contactId: contact.id, subjectId: subject.id },
+    });
+    return c.json({ link: { id: link.id, subject: { slug: subject.slug, name: subject.name } } }, 201);
+  });
+
+  app.delete("/api/contacts/:id/links/:linkId", async (c) => {
+    const link = await prisma.personLink.findFirst({
+      where: { id: c.req.param("linkId"), ownerUid: c.get("ownerUid"), contactId: c.req.param("id") },
+    });
+    if (!link) return c.json({ error: "not_found" }, 404);
+    await prisma.personLink.delete({ where: { id: link.id } });
+    return c.json({ ok: true });
+  });
+
+  // 贈り物の記録 (誕生日・年賀状・慶事)。記録と同時に接触としても還流する。
+  app.post("/api/contacts/:id/gifts", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const item = typeof b.item === "string" ? b.item.trim() : "";
+    if (!item) return c.json({ error: "item_required", detail: "何を贈ったか (いただいたか) を入力してください" }, 400);
+    const occasions = ["birthday", "new_year", "celebration", "thanks", "other"];
+    const occasion = occasions.includes(b.occasion as string) ? (b.occasion as string) : "other";
+    const direction = b.direction === "inbound" ? "inbound" : "outbound";
+    const amount = clampScore(b.amount, 0, 100_000_000);
+    const givenAt = typeof b.givenAt === "string" && !Number.isNaN(new Date(b.givenAt).getTime())
+      ? new Date(b.givenAt)
+      : new Date();
+    const gift = await prisma.contactGift.create({
+      data: {
+        contactId: contact.id,
+        occasion,
+        direction,
+        item,
+        amount: amount === null ? null : Math.round(amount),
+        notes: typeof b.notes === "string" ? b.notes.trim() || null : null,
+        givenAt,
+      },
+    });
+    await prisma.contactInteraction.create({
+      data: {
+        contactId: contact.id,
+        type: direction === "outbound" ? "gift_sent" : "gift_received",
+        occurredAt: givenAt,
+        notes: item,
+      },
+    });
+    return c.json({ gift }, 201);
+  });
+
+  app.delete("/api/contacts/:id/gifts/:giftId", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const gift = await prisma.contactGift.findFirst({
+      where: { id: c.req.param("giftId"), contactId: contact.id },
+    });
+    if (!gift) return c.json({ error: "not_found" }, 404);
+    await prisma.contactGift.delete({ where: { id: gift.id } });
+    return c.json({ ok: true });
+  });
+
+  // 面談招待 (.ics)。二者空き重なりの候補をそのままカレンダー取込用ファイルにする。
+  app.get("/api/contacts/:id/meeting-invite", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const start = new Date(c.req.query("start") ?? "");
+    const end = new Date(c.req.query("end") ?? "");
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+      return c.json({ error: "invalid_range", detail: "候補の時間を読み取れませんでした" }, 400);
+    }
+    const ics = buildMeetingInviteIcs({
+      title: `${contact.name}様と面談`,
+      start,
+      end,
+      description: "bonds の面談候補から作成",
+    });
+    c.header("Content-Type", "text/calendar; charset=utf-8");
+    c.header("Content-Disposition", 'attachment; filename="meeting.ics"');
+    return c.body(ics);
   });
 
   // つながりサマリ: 孤立スコア + 今日連絡してみませんか (lms 移植ロジック)
@@ -718,24 +869,33 @@ export function createApp(deps: AppDeps) {
   // 承認なしで送信はできない (CLAUDE.md 自律性の段階)。
 
   const OUTREACH_PURPOSES = ["keepup", "birthday", "thanks", "meeting", "contribution", "repair"] as const;
+  const OUTREACH_CHANNELS = ["email", "gift", "nengajo", "meeting_invite"] as const;
+  const CHANNEL_HINTS: Record<string, string> = {
+    email: "",
+    gift: "この文面は贈り物に添える手紙 (添え状) です。品物への言及を自然に入れ、押しつけがましくならないようにしてください。",
+    nengajo: "この文面は年賀状 (または季節のご挨拶状) です。季節の挨拶を主役に、短く品よくまとめてください。",
+    meeting_invite: "この文面はお会いする日程の打診です。相手の都合を最優先する姿勢で、候補日の提示を自然に含めてください。",
+  };
 
   app.post("/api/outreach/draft", async (c) => {
     const b = await c.req
-      .json<{ contactId?: string; purpose?: string; points?: string; locale?: string }>()
+      .json<{ contactId?: string; purpose?: string; points?: string; locale?: string; channel?: string }>()
       .catch(() => ({}) as Record<string, never>);
     if (!b.contactId) return c.json({ error: "contact_required" }, 400);
     const ctx = await buildContactContext(c.get("ownerUid"), b.contactId);
     if (!ctx) return c.json({ error: "not_found" }, 404);
     const purpose = OUTREACH_PURPOSES.includes(b.purpose as never) ? b.purpose! : "keepup";
+    const channel = OUTREACH_CHANNELS.includes(b.channel as never) ? b.channel! : "email";
     const points = typeof b.points === "string" ? b.points.trim() : "";
     const userMessage = [
       "相手の情報:",
       ctx.context,
       "",
       `送る目的: ${purpose}`,
+      CHANNEL_HINTS[channel] ?? "",
       points ? `伝えたいこと: ${points}` : "伝えたいこと: 特になし (関係を温めるひとことを)",
       `今日の日付: ${new Date().toISOString().slice(0, 10)}`,
-    ].join("\n");
+    ].filter(Boolean).join("\n");
     const r = await runRelationshipAi(
       "outreach_message_gen",
       OUTREACH_JSON_INSTRUCTION,
@@ -755,13 +915,13 @@ export function createApp(deps: AppDeps) {
       data: {
         ownerUid: c.get("ownerUid"),
         contactId: ctx.contact.id,
-        channel: "email",
+        channel,
         purpose,
         status: "draft",
         candidates: JSON.stringify(validated.candidates),
       },
     });
-    return c.json({ id: message.id, candidates: validated.candidates }, 201);
+    return c.json({ id: message.id, channel, candidates: validated.candidates }, 201);
   });
 
   app.get("/api/outreach", async (c) => {
@@ -827,6 +987,25 @@ export function createApp(deps: AppDeps) {
     }
     const updated = await prisma.outreachMessage.findFirstOrThrow({ where: { id: m.id } });
     return c.json({ message: { id: updated.id, status: updated.status, sentAt: updated.sentAt } });
+  });
+
+  // 前進の記録 (ゲーミフィケーション): 連続記録・バッジ・次の節目
+  app.get("/api/relationship/progress", async (c) => {
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid: c.get("ownerUid"), state: "active" },
+      select: { id: true },
+    });
+    const ids = contacts.map((x) => x.id);
+    const interactions = await prisma.contactInteraction.findMany({
+      where: { contactId: { in: ids } },
+      select: { contactId: true, occurredAt: true },
+    });
+    const progress = computeProgress({
+      interactionDates: interactions.map((i) => i.occurredAt),
+      distinctContacts: new Set(interactions.map((i) => i.contactId)).size,
+      contactsTotal: ids.length,
+    });
+    return c.json(progress);
   });
 
   // ICS 購読 URL を登録済みのカレンダーを再取得する (ライブ同期の実体)。
@@ -917,6 +1096,43 @@ export function createApp(deps: AppDeps) {
       return { ok: false, detail };
     }
   };
+
+  // メール以外のチャネル (贈り物・年賀状・面談打診を別手段で送った) の完了記録。
+  // 承認済みのみ。接触へ還流し、gift チャネルは贈り物記録も残す。
+  app.post("/api/outreach/:id/mark-sent", async (c) => {
+    const m = await prisma.outreachMessage.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!m) return c.json({ error: "not_found" }, 404);
+    if (m.status !== "approved") {
+      return c.json({ error: "not_approved", detail: "先に文面の承認が必要です" }, 409);
+    }
+    const b = await c.req.json<{ item?: string }>().catch(() => ({}) as { item?: string });
+    const updated = await prisma.outreachMessage.update({
+      where: { id: m.id },
+      data: { status: "sent", sentAt: new Date() },
+    });
+    await prisma.contactInteraction.create({
+      data: {
+        contactId: m.contactId,
+        type: m.channel === "gift" ? "gift_sent" : m.channel === "nengajo" ? "letter" : "message",
+        occurredAt: new Date(),
+        notes: m.subject,
+      },
+    });
+    if (m.channel === "gift" && typeof b.item === "string" && b.item.trim()) {
+      await prisma.contactGift.create({
+        data: {
+          contactId: m.contactId,
+          occasion: m.purpose === "birthday" ? "birthday" : "other",
+          direction: "outbound",
+          item: b.item.trim(),
+          givenAt: new Date(),
+        },
+      });
+    }
+    return c.json({ message: { id: updated.id, status: updated.status } });
+  });
 
   // キューのワーカー (全オーナー横断のため admin 権限)。1 回の起動で最大 batch 件 =
   // 送信レートの上限。1 通の失敗は failed として記録し、残りの処理は続ける。

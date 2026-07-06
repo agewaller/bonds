@@ -21,6 +21,8 @@ type Contact = {
   notes: string | null;
 };
 type Interaction = { id: string; type: string; occurredAt: string; notes: string | null };
+type Gift = { id: string; occasion: string; direction: string; item: string; givenAt: string };
+type LinkedSubject = { linkId: string; slug: string; name: string };
 type Candidate = { subject: string; body: string; tone: string; aim: string };
 type Slot = { start: string; end: string };
 
@@ -45,6 +47,14 @@ export default function ContactDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [contact, setContact] = useState<Contact | null>(null);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
+  const [gifts, setGifts] = useState<Gift[]>([]);
+  const [linkedSubjects, setLinkedSubjects] = useState<LinkedSubject[]>([]);
+  const [notFound, setNotFound] = useState(false);
+  const [giftItem, setGiftItem] = useState("");
+  const [giftOccasion, setGiftOccasion] = useState("other");
+  const [channel, setChannel] = useState("email");
+  const [sendAt, setSendAt] = useState("");
+  const [linkSlug, setLinkSlug] = useState("");
   const [form, setForm] = useState<Record<string, string>>({});
   const [slots, setSlots] = useState<Slot[] | null>(null);
   const [theirIcsUrl, setTheirIcsUrl] = useState("");
@@ -62,10 +72,15 @@ export default function ContactDetailPage() {
 
   const load = useCallback(async () => {
     const res = await apiFetch(`contacts/${id}`);
-    if (!res.ok) return;
+    if (!res.ok) {
+      if (res.status === 404) setNotFound(true);
+      return;
+    }
     const body = await res.json();
     setContact(body.contact);
     setInteractions(body.interactions);
+    setGifts(body.gifts ?? []);
+    setLinkedSubjects(body.linkedSubjects ?? []);
     setForm({
       personalProfile: body.contact.personalProfile ?? "",
       valuesProfile: body.contact.valuesProfile ?? "",
@@ -130,7 +145,7 @@ export default function ContactDetailPage() {
     if (!contact) return;
     const body = await call(
       "outreach/draft",
-      { method: "POST", body: JSON.stringify({ contactId: contact.id, purpose, points }) },
+      { method: "POST", body: JSON.stringify({ contactId: contact.id, purpose, points, channel }) },
       "文面の候補を作りました",
     );
     if (body?.candidates) {
@@ -150,6 +165,32 @@ export default function ContactDetailPage() {
       body: JSON.stringify({ subject: editSubject, body: editBody }),
     });
     if (!approved) return;
+    if (channel !== "email") {
+      // メール以外は別手段で届けるため「手配済み」として記録する
+      const done = await call(`outreach/${draftId}/mark-sent`, {
+        method: "POST",
+        body: JSON.stringify({ item: channel === "gift" ? points || editSubject : undefined }),
+      });
+      if (done) {
+        setSentInfo("お手元で届けたら完了です。やりとりの記録に残しました");
+        setCandidates(null);
+        setDraftId("");
+        await load();
+      }
+      return;
+    }
+    if (sendAt) {
+      const scheduled = await call(`outreach/${draftId}/schedule`, {
+        method: "POST",
+        body: JSON.stringify({ sendAt: new Date(sendAt).toISOString() }),
+      });
+      if (scheduled) {
+        setSentInfo("予約しました。時間になったら自動でお送りします");
+        setCandidates(null);
+        setDraftId("");
+      }
+      return;
+    }
     const sent = await call(`outreach/${draftId}/send`, { method: "POST", body: "{}" });
     if (sent) {
       setSentInfo("お送りしました。やりとりの記録にも残しています");
@@ -159,6 +200,14 @@ export default function ContactDetailPage() {
     }
   };
 
+  if (notFound) {
+    return (
+      <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
+        <p>この方のページが見つかりませんでした。</p>
+        <p><Link href="/contacts" style={{ color: "#2563eb" }}>連絡帳へ戻る</Link></p>
+      </main>
+    );
+  }
   if (!contact) {
     return (
       <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
@@ -238,7 +287,15 @@ export default function ContactDetailPage() {
         {slots && (
           <ul>
             {slots.map((s, i) => (
-              <li key={i}>{fmtSlot(s)}</li>
+              <li key={i}>
+                {fmtSlot(s)}{" "}
+                <a
+                  href={`/api/bff/contacts/${contact.id}/meeting-invite?start=${encodeURIComponent(s.start)}&end=${encodeURIComponent(s.end)}`}
+                  style={{ color: "#2563eb", marginLeft: 8 }}
+                >
+                  カレンダーに入れる
+                </a>
+              </li>
             ))}
             {slots.length === 0 && <li>この 2 週間では重なる空きが見つかりませんでした</li>}
           </ul>
@@ -248,6 +305,12 @@ export default function ContactDetailPage() {
       <section style={{ marginTop: 32 }}>
         <h2 style={{ fontSize: 18 }}>お便りを送る</h2>
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <select value={channel} onChange={(e) => setChannel(e.target.value)} aria-label="届け方" style={{ ...input, width: "auto" }}>
+            <option value="email">メール</option>
+            <option value="gift">贈り物に添える</option>
+            <option value="nengajo">年賀状・挨拶状</option>
+            <option value="meeting_invite">面談の打診</option>
+          </select>
           <select value={purpose} onChange={(e) => setPurpose(e.target.value)} aria-label="目的" style={{ ...input, width: "auto" }}>
             <option value="keepup">近況伺い</option>
             <option value="birthday">お誕生日</option>
@@ -293,8 +356,20 @@ export default function ContactDetailPage() {
               本文 (自由に直してください)
               <textarea style={input} rows={8} value={editBody} onChange={(e) => setEditBody(e.target.value)} aria-label="本文" />
             </label>
+            {channel === "email" && (
+              <label style={{ display: "block", margin: "8px 0", color: "#64748b", fontSize: 14 }}>
+                送る時間を予約する (空欄ならすぐに送ります)
+                <input
+                  type="datetime-local"
+                  value={sendAt}
+                  onChange={(e) => setSendAt(e.target.value)}
+                  aria-label="送信予約"
+                  style={{ ...input, width: "auto", marginLeft: 8 }}
+                />
+              </label>
+            )}
             <button style={btn()} onClick={() => void approveAndSend()} disabled={!!busy}>
-              この内容で承認して送る
+              {channel === "email" ? (sendAt ? "この内容で承認して予約する" : "この内容で承認して送る") : "この内容で承認する (お手元で届ける)"}
             </button>
             <p style={{ color: "#64748b", fontSize: 13 }}>
               承認いただくまで送信されません。送った記録はやりとりに残ります。
@@ -302,6 +377,89 @@ export default function ContactDetailPage() {
           </div>
         )}
         {sentInfo && <p style={{ color: "#166534" }}>{sentInfo}</p>}
+      </section>
+
+      <section style={{ marginTop: 32 }}>
+        <h2 style={{ fontSize: 18 }}>贈り物の記録</h2>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <select value={giftOccasion} onChange={(e) => setGiftOccasion(e.target.value)} aria-label="機会" style={{ ...input, width: "auto" }}>
+            <option value="birthday">お誕生日</option>
+            <option value="new_year">お年賀</option>
+            <option value="celebration">お祝い</option>
+            <option value="thanks">お礼</option>
+            <option value="other">その他</option>
+          </select>
+          <input
+            style={{ ...input, flex: 1 }}
+            placeholder="何を贈りましたか (例: 季節の花)"
+            aria-label="贈り物"
+            value={giftItem}
+            onChange={(e) => setGiftItem(e.target.value)}
+          />
+          <button
+            style={btn(false)}
+            disabled={!!busy || !giftItem.trim()}
+            onClick={async () => {
+              const body = await call(`contacts/${contact.id}/gifts`, {
+                method: "POST",
+                body: JSON.stringify({ occasion: giftOccasion, item: giftItem }),
+              }, "贈り物を記録しました");
+              if (body) {
+                setGiftItem("");
+                await load();
+              }
+            }}
+          >
+            記録する
+          </button>
+        </div>
+        <ul>
+          {gifts.map((g) => (
+            <li key={g.id}>
+              {new Date(g.givenAt).toLocaleDateString("ja-JP")} {g.direction === "outbound" ? "贈った" : "いただいた"}: {g.item}
+            </li>
+          ))}
+          {gifts.length === 0 && <li style={{ color: "#64748b" }}>まだ記録がありません</li>}
+        </ul>
+      </section>
+
+      <section style={{ marginTop: 32 }}>
+        <h2 style={{ fontSize: 18 }}>公人プロフィール</h2>
+        {linkedSubjects.length > 0 ? (
+          <ul>
+            {linkedSubjects.map((l) => (
+              <li key={l.linkId}>
+                <Link href={`/subjects/${l.slug}`} style={{ color: "#2563eb" }}>{l.name} の評価を見る</Link>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              style={{ ...input, flex: 1 }}
+              placeholder="評価対象の ID (人物評価ページの URL 末尾)"
+              aria-label="評価対象ID"
+              value={linkSlug}
+              onChange={(e) => setLinkSlug(e.target.value)}
+            />
+            <button
+              style={btn(false)}
+              disabled={!!busy || !linkSlug.trim()}
+              onClick={async () => {
+                const body = await call(`contacts/${contact.id}/links`, {
+                  method: "POST",
+                  body: JSON.stringify({ slug: linkSlug.trim() }),
+                }, "結びつけました");
+                if (body) {
+                  setLinkSlug("");
+                  await load();
+                }
+              }}
+            >
+              結びつける
+            </button>
+          </div>
+        )}
       </section>
 
       <section style={{ marginTop: 32 }}>

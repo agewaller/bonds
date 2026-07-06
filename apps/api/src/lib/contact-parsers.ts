@@ -14,6 +14,8 @@ export type ParsedContact = {
   distance?: number;
   relationship?: string;
   notes?: string;
+  sns?: string; // SNS アカウント/URL (JSON 文字列または単一 URL)
+  source?: string; // 取込元 (csv/vcard/linkedin/facebook/instagram/twitter)
 };
 
 // CSV の 1 行をフィールドに分解する (ダブルクォート・埋め込みカンマ対応)。
@@ -122,9 +124,102 @@ export function parseVCardContacts(vcf: string): ParsedContact[] {
   return out;
 }
 
-// 拡張子/内容からパーサを選ぶ。
-export function parseContacts(content: string, format: "csv" | "vcard" | "auto" = "auto"): ParsedContact[] {
+// ------------------------------------------------------------
+// SNS アーカイブの取込 (lms js/sns-integrations.js を TS 移植)
+// ------------------------------------------------------------
+
+// Facebook: ダウンロードアーカイブの friends.json (friends_v2)
+export function parseFacebookFriends(jsonText: string): ParsedContact[] {
+  try {
+    const data = JSON.parse(jsonText) as Record<string, unknown>;
+    const friends = (data.friends_v2 ?? data.friends ?? []) as Array<{ name?: string }>;
+    return friends
+      .filter((f) => typeof f?.name === "string" && f.name.trim())
+      .map((f) => ({ name: f.name!.trim(), source: "facebook", distance: 4 }));
+  } catch {
+    return [];
+  }
+}
+
+// Instagram: アーカイブの following.json (relationships_following)
+export function parseInstagramFollowing(jsonText: string): ParsedContact[] {
+  try {
+    const data = JSON.parse(jsonText) as Record<string, unknown>;
+    const list = (data.relationships_following ?? data.following ?? []) as Array<{
+      string_list_data?: Array<{ value?: string; href?: string }>;
+    }>;
+    return list
+      .map((item) => item.string_list_data?.[0])
+      .filter((e): e is { value: string; href?: string } => typeof e?.value === "string" && !!e.value.trim())
+      .map((e) => ({ name: e.value.trim(), sns: e.href ?? e.value, source: "instagram", distance: 5 }));
+  } catch {
+    return [];
+  }
+}
+
+// X (Twitter): アーカイブの following.js — window.YTD.following.part0 = [ ... ]
+export function parseTwitterFollowing(text: string): ParsedContact[] {
+  try {
+    const cleaned = text.replace(/^window\.YTD\.[^=]+=\s*/, "");
+    const data = JSON.parse(cleaned) as Array<{ following?: { accountId?: string; userLink?: string } }>;
+    return data
+      .map((item) => item.following)
+      .filter((f): f is { accountId: string; userLink?: string } => typeof f?.accountId === "string" && !!f.accountId)
+      .map((f) => ({ name: f.accountId, sns: f.userLink ?? "", source: "twitter", distance: 5 }));
+  } catch {
+    return [];
+  }
+}
+
+// LinkedIn: Connections.csv (先頭に注記行が入ることがあるためヘッダ行を探す)
+export function parseLinkedInConnections(csvText: string): ParsedContact[] {
+  const lines = csvText.split(/\r?\n/).filter((l) => l.trim());
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(lines.length, 8); i++) {
+    if (lines[i]!.toLowerCase().includes("first name")) {
+      headerIdx = i;
+      break;
+    }
+  }
+  if (headerIdx < 0 || lines.length <= headerIdx + 1) return [];
+  const headers = splitCsvLine(lines[headerIdx]!).map((h) => h.toLowerCase());
+  const idx = (name: string) => headers.indexOf(name);
+  const out: ParsedContact[] = [];
+  for (const line of lines.slice(headerIdx + 1)) {
+    const v = splitCsvLine(line);
+    const name = [v[idx("first name")], v[idx("last name")]].filter(Boolean).join(" ").trim();
+    if (!name) continue;
+    out.push({
+      name,
+      email: v[idx("email address")] || undefined,
+      company: v[idx("company")] || undefined,
+      title: v[idx("position")] || undefined,
+      sns: idx("url") >= 0 ? v[idx("url")] || undefined : undefined,
+      source: "linkedin",
+      distance: 4,
+    });
+  }
+  return out;
+}
+
+// 拡張子/内容からパーサを選ぶ (SNS アーカイブも自動判別)。
+export function parseContacts(
+  content: string,
+  format: "csv" | "vcard" | "auto" = "auto",
+): ParsedContact[] {
   if (format === "csv") return parseCsvContacts(content);
   if (format === "vcard") return parseVCardContacts(content);
-  return /BEGIN:VCARD/i.test(content) ? parseVCardContacts(content) : parseCsvContacts(content);
+  const head = content.slice(0, 2000);
+  if (/BEGIN:VCARD/i.test(head)) return parseVCardContacts(content);
+  if (/^window\.YTD\./.test(content.trimStart())) return parseTwitterFollowing(content);
+  if (/"friends_v2"|"friends"\s*:/.test(head)) {
+    const r = parseFacebookFriends(content);
+    if (r.length > 0) return r;
+  }
+  if (/"relationships_following"|"string_list_data"/.test(head)) {
+    const r = parseInstagramFollowing(content);
+    if (r.length > 0) return r;
+  }
+  if (/first name/i.test(head) && /last name/i.test(head)) return parseLinkedInConnections(content);
+  return parseCsvContacts(content);
 }

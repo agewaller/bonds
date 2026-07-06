@@ -56,3 +56,41 @@ export function parseIcsBusy(ics: string): IsoInterval[] {
 export function looksLikeIcs(content: string): boolean {
   return /BEGIN:VCALENDAR/i.test(content);
 }
+
+// ------------------------------------------------------------
+// 面談招待 (.ics) の生成 — 二者空き重なりで見つけた枠を、Google/Outlook/Apple の
+// どのカレンダーでも取り込める招待ファイルにする (OAuth 書き込みなしの双方向の実用解)。
+// ------------------------------------------------------------
+
+function icsEscape(v: string): string {
+  return v.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+}
+
+function icsUtc(d: Date): string {
+  return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+export function buildMeetingInviteIcs(args: {
+  title: string;
+  start: Date;
+  end: Date;
+  description?: string;
+  uid?: string;
+}): string {
+  const uid = args.uid ?? `${icsUtc(args.start)}-${Math.abs(args.title.length * 2654435761 % 1e9)}@bonds`;
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//bonds//meeting-invite//JA",
+    "METHOD:PUBLISH",
+    "BEGIN:VEVENT",
+    `UID:${uid}`,
+    `DTSTAMP:${icsUtc(new Date())}`,
+    `DTSTART:${icsUtc(args.start)}`,
+    `DTEND:${icsUtc(args.end)}`,
+    `SUMMARY:${icsEscape(args.title)}`,
+    ...(args.description ? [`DESCRIPTION:${icsEscape(args.description)}`] : []),
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+}

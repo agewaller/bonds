@@ -164,6 +164,7 @@ function SectionSvc({ run }: { run: RunSummary }) {
 export default function SubjectDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const [detail, setDetail] = useState<Detail | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [running, setRunning] = useState(false);
   const [waitMsg, setWaitMsg] = useState(WAIT_MESSAGES[0]);
   const [error, setError] = useState("");
@@ -172,6 +173,7 @@ export default function SubjectDetailPage() {
   const load = useCallback(async () => {
     const res = await fetch(`/api/bff/dd/subjects/${slug}`);
     if (res.ok) setDetail(await res.json());
+    else if (res.status === 404) setNotFound(true);
   }, [slug]);
 
   useEffect(() => {
@@ -210,6 +212,14 @@ export default function SubjectDetailPage() {
     }
   };
 
+  if (notFound) {
+    return (
+      <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
+        <p>この人物のページが見つかりませんでした。</p>
+        <p><Link href="/subjects" style={{ color: "#2563eb" }}>一覧へ戻る</Link></p>
+      </main>
+    );
+  }
   if (!detail) {
     return (
       <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>

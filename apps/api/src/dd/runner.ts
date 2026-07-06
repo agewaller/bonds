@@ -6,6 +6,7 @@
 // generate (AI 呼び出し) と onEvent は注入可能にし、テストでは実 AI を呼ばずに検証する。
 import type { ExtendedPrismaClient } from "@bonds/db";
 import type { GenerateFn } from "../lib/anthropic.js";
+import { personSearchQueries, buildSearchDigest, type SearchFn } from "../lib/tavily.js";
 import {
   type DdType,
   extractJson,
@@ -41,6 +42,7 @@ export type DdRunEvent =
 export type RunPersonDdDeps = {
   prisma: ExtendedPrismaClient;
   generate: GenerateFn;
+  search?: SearchFn | null; // 無ければ知識ベースモード (search ステップは skipped)
   onEvent?: (ev: DdRunEvent) => void;
 };
 
@@ -131,20 +133,63 @@ export async function runPersonDd(
   });
   emit({ type: "run_created", runId: run.id, ddType });
 
-  // search ステップ: フェーズ1 は知識ベースモードのため skipped で記録 (スキーマは将来の
-  // Tavily/一次情報クロールに対応済み)。
-  await prisma.personDdStep.create({
-    data: {
-      personDdId: run.id,
-      stepKey: "search",
-      stepType: "search",
-      status: "skipped",
-      outputText: "knowledge_base mode (フェーズ1: Web 検索なし)",
-      startedAt: new Date(),
-      finishedAt: new Date(),
-    },
-  });
-  emit({ type: "step_done", runId: run.id, stepKey: "search", status: "skipped" });
+  // search ステップ: Tavily 等の検索器が注入されていれば一次/実績/批判のクエリで収集し、
+  // evaluate へ参考情報として渡す。無ければ知識ベースモード (skipped)。
+  // 検索失敗は評価を止めない (failed 記録のうえ知識ベースで続行)。
+  let searchDigest = "";
+  if (deps.search) {
+    const searchStep = await prisma.personDdStep.create({
+      data: {
+        personDdId: run.id,
+        stepKey: "search",
+        stepType: "search",
+        status: "running",
+        startedAt: new Date(),
+      },
+    });
+    emit({ type: "step_started", runId: run.id, stepKey: "search" });
+    try {
+      const queries = personSearchQueries(subject.name);
+      const results = [] as Array<{ query: string; items: Awaited<ReturnType<SearchFn>> }>;
+      for (const q of queries) {
+        results.push({ query: q, items: await deps.search(q) });
+      }
+      searchDigest = buildSearchDigest(results);
+      await prisma.personDdStep.update({
+        where: { id: searchStep.id },
+        data: {
+          status: "completed",
+          outputJson: results as never,
+          outputText: searchDigest || "検索結果なし",
+          finishedAt: new Date(),
+        },
+      });
+      emit({ type: "step_done", runId: run.id, stepKey: "search", status: "completed" });
+    } catch (err) {
+      await prisma.personDdStep.update({
+        where: { id: searchStep.id },
+        data: {
+          status: "failed",
+          errorDetail: err instanceof Error ? err.message : String(err),
+          finishedAt: new Date(),
+        },
+      });
+      emit({ type: "step_done", runId: run.id, stepKey: "search", status: "failed" });
+    }
+  } else {
+    await prisma.personDdStep.create({
+      data: {
+        personDdId: run.id,
+        stepKey: "search",
+        stepType: "search",
+        status: "skipped",
+        outputText: "knowledge_base mode (検索キー未設定)",
+        startedAt: new Date(),
+        finishedAt: new Date(),
+      },
+    });
+    emit({ type: "step_done", runId: run.id, stepKey: "search", status: "skipped" });
+  }
 
   const evalStep = await prisma.personDdStep.create({
     data: {
@@ -160,7 +205,9 @@ export async function runPersonDd(
   emit({ type: "step_started", runId: run.id, stepKey: "evaluate" });
 
   const system = buildSystemPrompt(prompt.body, ddType, locale);
-  const userMessage = buildPersonEvalUserMessage(subject.name);
+  const userMessage = searchDigest
+    ? `${buildPersonEvalUserMessage(subject.name)}\n\n${searchDigest}`
+    : buildPersonEvalUserMessage(subject.name);
 
   let text: string;
   try {
