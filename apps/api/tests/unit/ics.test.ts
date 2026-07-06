@@ -55,3 +55,21 @@ describe("parseIcsBusy", () => {
     expect(looksLikeIcs("氏名,電話")).toBe(false);
   });
 });
+
+describe("buildMeetingInviteIcs (面談招待)", () => {
+  it("開始/終了/題名の入った有効な VCALENDAR を生成し、round-trip で読める", async () => {
+    const { buildMeetingInviteIcs } = await import("../../src/lib/ics.js");
+    const ics = buildMeetingInviteIcs({
+      title: "山田様と面談; 打合せ",
+      start: new Date("2026-08-01T05:00:00Z"),
+      end: new Date("2026-08-01T06:00:00Z"),
+      description: "bonds の面談候補から",
+    });
+    expect(ics).toContain("BEGIN:VEVENT");
+    expect(ics).toContain("DTSTART:20260801T050000Z");
+    expect(ics).toContain("SUMMARY:山田様と面談\\; 打合せ"); // セミコロンは RFC5545 エスケープ
+    // 自前パーサで読み戻せる
+    const busy = parseIcsBusy(ics);
+    expect(busy).toHaveLength(1);
+  });
+});

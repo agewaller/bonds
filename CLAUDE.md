@@ -152,4 +152,6 @@ e2e           Playwright（ユーザー目線監査 + AI 実機スモーク）
 - フェーズ2: 関係性基盤（contacts 暗号化スキーマ・距離スコア・「今日連絡してみませんか」・CSV/vCard 取込・連絡帳・エクスポート）— 完了
 - フェーズ3: カレンダー & キープアップ（空き時間計算・二者空き重なり・面談候補・Eight/年賀状取込・values_profile AI 下書き）— 完了（ライブカレンダー同期はフェーズ5）
 - フェーズ4: 発信（draft→承認→送信の強制フロー・複数文面候補生成・SendGrid mailer・接触記録への還流）— 完了（贈り物/年賀状チャネル・一括配信キューは今後）
-- フェーズ5: 認証三段フェイルセーフ・監査ログ・本番 Dockerfile・デプロイスクリプト（cares 同一プロジェクト / ANTHROPIC_API_KEY Secret 共有）— 実装済み（GCP 実機での初回デプロイ・web の Google ログイン実装済み (cares と同じ Firebase プロジェクト共用・ユーザーごと ownerUid 分離)。多言語 UI 辞書 (ja/en)・一括配信キュー (schedule→process-queue + Actions cron)・ICS 購読によるライブカレンダー同期まで実装済み。Google/Outlook の OAuth 双方向同期 (予定の書き込み) は今後）
+- フェーズ5: 認証三段フェイルセーフ・監査ログ・本番 Dockerfile・デプロイスクリプト（cares 同一プロジェクト / ANTHROPIC_API_KEY Secret 共有）— 実装済み。web の Google ログイン（Firebase 共用・ownerUid 分離）・多言語 UI 辞書 (ja/en)・一括配信キュー・ICS 購読ライブ同期も実装済み
+- 機能の積み残し掃討（2026-07-06）— 実装済み: 贈り物/年賀状チャネル + 手配済み記録・予約送信 UI・面談招待 .ics 生成・ゲーミフィケーション（連続記録/バッジ/次の節目）・SNS 取込（LinkedIn/Facebook/Instagram/X アーカイブ）・人物DD 検索ステップ（Tavily、キー無しは知識ベースに縮退）・管理画面（プロンプト版管理/モデル設定）・person_links（公人⇔連絡先）・404 画面
+- 残（外部設定が前提のもの）: Google/Outlook OAuth 双方向同期（予定の書き込み。ICS 招待で代替中）・Gmail ライブ取込（OAuth クライアント ID 要）・多言語辞書の詳細ページ展開・staging 環境・GCP 初回デプロイの実施

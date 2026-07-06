@@ -41,10 +41,9 @@ test("人物を追加 → 詳細が開き、評価ボタンとフッタ注記が
   expect(errors, errors.join("\n")).toHaveLength(0);
 });
 
-test("存在しない人物ページはアプリのエラー画面で落ちない", async ({ page }) => {
+test("存在しない人物ページはやさしい 404 になる", async ({ page }) => {
   await page.goto("/subjects/no-such-person");
-  // クラッシュせず「読み込んでいます…」表示に留まる (404 ハンドリングはフェーズ2 で改善予定)
-  await expect(page.getByText("読み込んでいます")).toBeVisible();
+  await expect(page.getByText("見つかりませんでした")).toBeVisible();
 });
 
 test("連絡帳: 追加 → つながりスコア → 今日のおすすめ → 連絡記録の一周", async ({ page }) => {
@@ -114,4 +113,42 @@ test("サインインページが開く (Firebase 未設定時は開発向け案
     page.getByRole("button", { name: "Google ではじめる" }).or(page.getByText("サインインの準備")),
   ).toBeVisible();
   expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
+test("連絡先詳細: 贈り物・公人プロフィール・届け方の選択が表示される", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/contacts");
+  const name = `監査全部 高橋 ${Date.now() % 100000}`;
+  await page.getByLabel("お名前").fill(name);
+  await page.getByRole("button", { name: "追加" }).click();
+  await page.getByRole("link", { name: new RegExp(name) }).click();
+  await expect(page.getByRole("heading", { name: "贈り物の記録" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "公人プロフィール" })).toBeVisible();
+  await expect(page.getByLabel("届け方")).toBeVisible();
+  // 贈り物を記録 → 一覧とやりとりに反映
+  await page.getByLabel("贈り物").fill("季節の花");
+  await page.getByRole("button", { name: "記録する" }).click();
+  await expect(page.getByText("贈り物を記録しました")).toBeVisible();
+  await expect(page.getByText(/贈った: 季節の花/)).toBeVisible();
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
+test("存在しない連絡先はやさしい 404 になる", async ({ page }) => {
+  await page.goto("/contacts/00000000-0000-0000-0000-000000000000");
+  await expect(page.getByText("見つかりませんでした")).toBeVisible();
+});
+
+test("管理ページが開く (開発フォールバックでは編集一覧が出る)", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/admin");
+  await expect(
+    page.getByRole("heading", { name: "管理", exact: true }).or(page.getByText("管理者だけが使えます")),
+  ).toBeVisible();
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
+test("連絡帳に前進の記録 (これまでの歩み) が出る", async ({ page }) => {
+  await page.goto("/contacts");
+  // 直前のテストで接触記録があるため表示されるはず
+  await expect(page.getByRole("heading", { name: "これまでの歩み" })).toBeVisible();
 });

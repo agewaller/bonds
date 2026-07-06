@@ -4,6 +4,10 @@ import {
   parseCsvContacts,
   parseVCardContacts,
   parseContacts,
+  parseLinkedInConnections,
+  parseFacebookFriends,
+  parseInstagramFollowing,
+  parseTwitterFollowing,
 } from "../../src/lib/contact-parsers.js";
 
 // 取込サンプルの固定資産 (回帰テスト用 = DESIGN-HANDOVER.md §7)
@@ -125,5 +129,53 @@ describe("Eight / 年賀状リストの取込 (フェーズ3)", () => {
 田村八重子,100-0001,東京都千代田区千代田1-1`;
     const rows = parseCsvContacts(nenga);
     expect(rows[0]).toMatchObject({ name: "田村八重子", address: "東京都千代田区千代田1-1" });
+  });
+});
+
+describe("SNS アーカイブ取込 (lms 移植)", () => {
+  it("LinkedIn Connections.csv (注記行つき) を取り込む", () => {
+    const csv = `Notes:\n"When exporting your connection data..."\n\nFirst Name,Last Name,URL,Email Address,Company,Position,Connected On\n太郎,山本,https://www.linkedin.com/in/taro,taro@example.com,リンク株式会社,部長,06 Jan 2020`;
+    const rows = parseLinkedInConnections(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      name: "太郎 山本",
+      email: "taro@example.com",
+      company: "リンク株式会社",
+      title: "部長",
+      source: "linkedin",
+    });
+  });
+
+  it("Facebook friends.json を取り込む", () => {
+    const json = JSON.stringify({ friends_v2: [{ name: "友達 一号", timestamp: 1500000000 }, { name: "" }] });
+    const rows = parseFacebookFriends(json);
+    expect(rows).toEqual([{ name: "友達 一号", source: "facebook", distance: 4 }]);
+  });
+
+  it("Instagram following.json を取り込む", () => {
+    const json = JSON.stringify({
+      relationships_following: [
+        { string_list_data: [{ value: "insta_user", href: "https://instagram.com/insta_user" }] },
+      ],
+    });
+    const rows = parseInstagramFollowing(json);
+    expect(rows[0]).toMatchObject({ name: "insta_user", sns: "https://instagram.com/insta_user", source: "instagram" });
+  });
+
+  it("X (Twitter) following.js の window.YTD 形式を取り込む", () => {
+    const js = 'window.YTD.following.part0 = [ {"following": {"accountId": "12345", "userLink": "https://twitter.com/intent/user?user_id=12345"}} ]';
+    const rows = parseTwitterFollowing(js);
+    expect(rows[0]).toMatchObject({ name: "12345", source: "twitter" });
+  });
+
+  it("parseContacts の自動判別で SNS 形式を見分ける", () => {
+    expect(parseContacts('window.YTD.following.part0 = [{"following":{"accountId":"1"}}]')[0]?.source).toBe("twitter");
+    expect(parseContacts(JSON.stringify({ friends_v2: [{ name: "F" }] }))[0]?.source).toBe("facebook");
+    expect(parseContacts("First Name,Last Name\nA,B")[0]?.name).toBe("A B");
+  });
+
+  it("壊れた JSON は空配列 (取り込みを壊さない)", () => {
+    expect(parseFacebookFriends("{broken")).toEqual([]);
+    expect(parseTwitterFollowing("window.YTD.x = {bad")).toEqual([]);
   });
 });

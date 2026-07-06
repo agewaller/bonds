@@ -17,6 +17,12 @@ type Contact = {
   company: string | null;
   birthday: string | null;
 };
+type Progress = {
+  streakDays: number;
+  totalInteractions: number;
+  badges: { key: string; label: string; achieved: boolean }[];
+  nextMilestone: { label: string; current: number; target: number } | null;
+};
 type Summary = {
   connectionScore: number;
   isolation: { level: string; overdueCount: number; total: number };
@@ -42,6 +48,7 @@ const DISTANCE_LABEL: Record<number, string> = {
 export default function ContactsPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [progress, setProgress] = useState<Progress | null>(null);
   const [name, setName] = useState("");
   const [distance, setDistance] = useState("3");
   const [importText, setImportText] = useState("");
@@ -53,12 +60,14 @@ export default function ContactsPage() {
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const [cRes, sRes] = await Promise.all([
+    const [cRes, sRes, pRes] = await Promise.all([
       apiFetch("contacts"),
       apiFetch("relationship/summary"),
+      apiFetch("relationship/progress"),
     ]);
     if (cRes.ok) setContacts((await cRes.json()).contacts);
     if (sRes.ok) setSummary(await sRes.json());
+    if (pRes.ok) setProgress(await pRes.json());
   }, []);
 
   useEffect(() => {
@@ -152,6 +161,37 @@ export default function ContactsPage() {
           </div>
           <p style={{ margin: "4px 0", color: level.color }}>{level.label}</p>
           <p style={{ margin: 0, color: "#334155" }}>{level.message}</p>
+        </section>
+      )}
+
+      {progress && progress.totalInteractions > 0 && (
+        <section style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px", margin: "16px 0" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+            <h2 style={{ fontSize: 18, margin: 0 }}>これまでの歩み</h2>
+            <span style={{ color: "#334155" }}>
+              {progress.streakDays > 0 ? `${progress.streakDays}日続いています` : ""}
+            </span>
+          </div>
+          <p style={{ margin: "6px 0", color: "#64748b" }}>
+            {progress.badges.filter((b) => b.achieved).map((b) => b.label).join(" / ") || "最初のひとつを目指しましょう"}
+          </p>
+          {progress.nextMilestone && (
+            <div>
+              <p style={{ margin: "4px 0", color: "#334155", fontSize: 14 }}>
+                次の節目: {progress.nextMilestone.label} まであと {progress.nextMilestone.target - progress.nextMilestone.current}
+              </p>
+              <div style={{ background: "#e2e8f0", borderRadius: 6, height: 8 }}>
+                <div
+                  style={{
+                    width: `${Math.min(100, Math.round((progress.nextMilestone.current / progress.nextMilestone.target) * 100))}%`,
+                    background: "#2563eb",
+                    height: 8,
+                    borderRadius: 6,
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </section>
       )}
 
