@@ -77,6 +77,56 @@ function Collapsible({ title, text }: { title: string; text?: string }) {
   );
 }
 
+const RANK_COLOR: Record<string, string> = {
+  S: "#7c3aed", A: "#2563eb", B: "#0891b2", C: "#d97706", D: "#64748b",
+};
+const CONF_LABEL: Record<string, string> = { A: "確か", B: "概ね確か", C: "推計含む", D: "情報少" };
+
+function ScoreHero({ value, max, chip, chipColor, caption }: {
+  value: number; max: number; chip: string; chipColor: string; caption: string;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 16, margin: "12px 0 16px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+        <span style={{ fontSize: 44, fontWeight: 700, color: "#0f172a", fontVariantNumeric: "tabular-nums" }}>
+          {value}
+        </span>
+        <span style={{ color: "#64748b" }}>/{max}</span>
+      </div>
+      <span
+        style={{
+          background: chipColor, color: "#fff", borderRadius: 999,
+          padding: "4px 14px", fontWeight: 700,
+        }}
+      >
+        {chip}
+      </span>
+      <span style={{ color: "#64748b", fontSize: 13 }}>{caption}</span>
+    </div>
+  );
+}
+
+function Meter({ label, score, max, right, hint }: {
+  label: string; score: number; max: number; right?: string; hint?: string;
+}) {
+  const pct = Math.min(100, Math.round((score / max) * 100));
+  return (
+    <div style={{ margin: "10px 0" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginBottom: 3 }}>
+        <span>{label}{hint ? <span style={{ color: "#94a3b8", marginLeft: 8, fontSize: 12 }}>{hint}</span> : null}</span>
+        <span style={{ color: "#334155", fontVariantNumeric: "tabular-nums" }}>
+          {score}
+          <span style={{ color: "#94a3b8" }}>/{max}</span>
+          {right ? <span style={{ color: "#64748b", marginLeft: 8 }}>{right}</span> : null}
+        </span>
+      </div>
+      <div style={{ background: "#e2e8f0", borderRadius: 6, height: 10 }}>
+        <div style={{ width: `${pct}%`, background: "linear-gradient(90deg,#60a5fa,#2563eb)", height: 10, borderRadius: 6 }} />
+      </div>
+    </div>
+  );
+}
+
 function Section7d({ run }: { run: RunSummary }) {
   const s = run.scores as Scores7d | null;
   if (!s) return null;
@@ -86,28 +136,25 @@ function Section7d({ run }: { run: RunSummary }) {
   return (
     <div>
       {s.subjectNote && <p style={{ color: "#64748b" }}>{s.subjectNote}</p>}
-      <p style={{ fontSize: 20 }}>
-        公的社会価値創造スコア {s.publicValueScore} 点 (ランク {s.rank})
-      </p>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr>
-            {["次元", "点数", "確からしさ", "意識配分"].map((h) => (
-              <th key={h} style={{ textAlign: "left", padding: 6, borderBottom: "1px solid #e2e8f0" }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {Object.entries(s.dimensions ?? {}).map(([k, d]) => (
-            <tr key={k}>
-              <td style={{ padding: 6 }}>{DIM_LABEL[k] ?? k}</td>
-              <td style={{ padding: 6 }}>{d.score}</td>
-              <td style={{ padding: 6 }}>{d.confidence}</td>
-              <td style={{ padding: 6 }}>{s.allocation?.[k] != null ? `${s.allocation[k]}%` : ""}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <ScoreHero
+        value={s.publicValueScore ?? 0}
+        max={100}
+        chip={`ランク ${s.rank}`}
+        chipColor={RANK_COLOR[s.rank ?? "D"] ?? "#64748b"}
+        caption="公的社会価値創造スコア"
+      />
+      <div style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px" }}>
+        {Object.entries(s.dimensions ?? {}).map(([k, d]) => (
+          <Meter
+            key={k}
+            label={DIM_LABEL[k] ?? k}
+            hint={CONF_LABEL[d.confidence] ?? d.confidence}
+            score={d.score}
+            max={10}
+            right={s.allocation?.[k] != null ? `意識 ${s.allocation[k]}%` : undefined}
+          />
+        ))}
+      </div>
       <Collapsible title="総括" text={s.summary} />
       <Collapsible title="生み出した価値の見立て" text={s.createdValueEstimate} />
       <Collapsible title="社会的なコストや課題" text={s.socialCosts} />
@@ -126,33 +173,31 @@ function SectionSvc({ run }: { run: RunSummary }) {
   return (
     <div>
       {s.subjectNote && <p style={{ color: "#64748b" }}>{s.subjectNote}</p>}
-      <p style={{ fontSize: 20 }}>
-        総合 {s.total100} 点 (10 段階で {s.grade})
-        {s.counterfactualContributionPct != null && ` ・ 本人ならではの貢献 ${s.counterfactualContributionPct}%`}
-      </p>
+      <ScoreHero
+        value={s.total100 ?? 0}
+        max={100}
+        chip={`10段階で ${s.grade}`}
+        chipColor="#0891b2"
+        caption={s.counterfactualContributionPct != null ? `本人ならではの貢献 ${s.counterfactualContributionPct}%` : "社会価値創造"}
+      />
       {s.createdValue && (
-        <p>
-          生み出した価値の推計: 年間 {s.createdValue.annualJpy || "推計困難"} / 累積 {s.createdValue.cumulativeJpy || "推計困難"}
-          (確からしさ {s.createdValue.confidence})
-        </p>
+        <div
+          style={{
+            background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 12,
+            padding: "10px 16px", margin: "8px 0",
+          }}
+        >
+          <div style={{ color: "#0369a1", fontSize: 13 }}>生み出した価値の推計 (確からしさ {CONF_LABEL[s.createdValue.confidence] ?? s.createdValue.confidence})</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "#0c4a6e" }}>
+            年間 {s.createdValue.annualJpy || "推計困難"} ・ 累積 {s.createdValue.cumulativeJpy || "推計困難"}
+          </div>
+        </div>
       )}
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr>
-            {["項目", "点数"].map((h) => (
-              <th key={h} style={{ textAlign: "left", padding: 6, borderBottom: "1px solid #e2e8f0" }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {(s.items ?? []).map((it) => (
-            <tr key={it.key}>
-              <td style={{ padding: 6 }}>{it.key}</td>
-              <td style={{ padding: 6 }}>{it.score}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px" }}>
+        {(s.items ?? []).map((it) => (
+          <Meter key={it.key} label={it.key} score={it.score} max={10} />
+        ))}
+      </div>
       <Collapsible title="総括" text={s.summary} />
       <Collapsible title="総合判断" text={s.verdict} />
       <Collapsible title="新しい視点" text={s.somethingNew} />
