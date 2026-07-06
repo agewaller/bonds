@@ -23,7 +23,8 @@ import { normalizeLocale } from "./lib/locale.js";
 import { clampScore } from "./lib/dd-spec.js";
 import { clampDistance, calculateIsolationScore, todaySuggestions } from "./lib/relationship.js";
 import { computeProgress } from "./lib/progress.js";
-import { parseContacts } from "./lib/contact-parsers.js";
+import { parseContacts, parseImportText, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
+import { parseImportFile, MAX_IMPORT_FILE_BYTES } from "./lib/import-file.js";
 import { parseIsoIntervals, meetingSlotProposals, toIso } from "./lib/timeslots.js";
 import { parseIcsBusy, looksLikeIcs, buildMeetingInviteIcs } from "./lib/ics.js";
 import {
@@ -39,6 +40,7 @@ import { calcCostJpy } from "./lib/cost.js";
 import { PERSON_DD_MAX_TOKENS, PERSON_DD_TIMEOUT_MS } from "./lib/person-eval.js";
 import { authorizeAdmin, authorizeUser, type VerifyIdTokenFn } from "./lib/auth.js";
 import { buildTavilySearch, type SearchFn } from "./lib/tavily.js";
+import { sanitizeProse } from "./lib/plain-text.js";
 
 export type AppDeps = {
   prisma: ExtendedPrismaClient;
@@ -491,28 +493,101 @@ export function createApp(deps: AppDeps) {
   });
 
   // 取込 (CSV / vCard / auto)。取り込み件数とスキップ件数を返す。
+  // 取込結果を DB に反映する共通処理。同名の既存連絡先はスキップ (再取込で二重登録しない)、
+  // トーク履歴由来の接触記録は同じ相手・同じ日の重複を登録しない (冪等)。
+  const applyImport = async (
+    ownerUid: string,
+    parsed: { contacts: ParsedContact[]; interactions: ParsedInteraction[] },
+  ) => {
+    const existing = await prisma.contact.findMany({
+      where: { ownerUid, state: "active" },
+      select: { id: true, name: true },
+    });
+    const byName = new Map(existing.map((e) => [e.name, e.id]));
+    let imported = 0;
+    let skipped = 0;
+    for (const r of parsed.contacts) {
+      const name = clampName(r.name);
+      if (!name || byName.has(name)) {
+        skipped++;
+        continue;
+      }
+      const created = await prisma.contact.create({
+        data: { ownerUid, name, source: r.source ?? "import", ...contactData(r as Record<string, unknown>) },
+      });
+      byName.set(name, created.id);
+      imported++;
+    }
+    let interactionsAdded = 0;
+    const daysByContact = new Map<string, Set<string>>();
+    for (const it of parsed.interactions) {
+      const contactId = byName.get(clampName(it.name));
+      if (!contactId) continue;
+      if (!daysByContact.has(contactId)) {
+        const rows = await prisma.contactInteraction.findMany({
+          where: { contactId },
+          select: { occurredAt: true },
+        });
+        daysByContact.set(contactId, new Set(rows.map((r) => r.occurredAt.toISOString().slice(0, 10))));
+      }
+      const seen = daysByContact.get(contactId)!;
+      if (seen.has(it.occurredAt)) continue;
+      await prisma.contactInteraction.create({
+        data: { contactId, type: it.type, occurredAt: new Date(`${it.occurredAt}T12:00:00Z`) },
+      });
+      seen.add(it.occurredAt);
+      interactionsAdded++;
+    }
+    return { imported, skipped, parsed: parsed.contacts.length, interactionsAdded };
+  };
+
   app.post("/api/contacts/import", async (c) => {
     const b = await c.req
-      .json<{ content?: string; format?: string }>()
-      .catch(() => ({}) as { content?: string; format?: string });
+      .json<{ content?: string; format?: string; filename?: string }>()
+      .catch(() => ({}) as { content?: string; format?: string; filename?: string });
     if (typeof b.content !== "string" || !b.content.trim()) {
       return c.json({ error: "content_required", detail: "取り込む内容がありません" }, 400);
     }
     const format = b.format === "csv" || b.format === "vcard" ? b.format : "auto";
-    const rows = parseContacts(b.content, format);
-    let imported = 0;
-    for (const r of rows) {
-      await prisma.contact.create({
-        data: {
-          ownerUid: c.get("ownerUid"),
-          name: clampName(r.name),
-          source: r.source ?? (format === "auto" ? "import" : format),
-          ...contactData(r as Record<string, unknown>),
-        },
-      });
-      imported++;
+    const parsed =
+      format === "auto"
+        ? parseImportText(b.content, typeof b.filename === "string" ? b.filename : undefined)
+        : { contacts: parseContacts(b.content, format), interactions: [] as ParsedInteraction[] };
+    const result = await applyImport(c.get("ownerUid"), parsed);
+    return c.json(result);
+  });
+
+  // ファイル/ZIP まるごと取込。SNS の「データをダウンロード」の ZIP をそのまま受け、
+  // 中の友だち/つながりファイルを自動発見する (ユーザーに中身を探させない)。
+  app.post("/api/contacts/import-file", async (c) => {
+    const buf = await c.req.arrayBuffer();
+    if (buf.byteLength === 0) {
+      return c.json({ error: "content_required", detail: "ファイルが空です" }, 400);
     }
-    return c.json({ imported, skipped: 0, parsed: rows.length });
+    if (buf.byteLength > MAX_IMPORT_FILE_BYTES) {
+      return c.json(
+        {
+          error: "file_too_large",
+          detail:
+            "ファイルが大きすぎます (30MBまで)。エクスポートするとき、対象を友達やつながりの情報だけに絞ると小さくなります",
+        },
+        413,
+      );
+    }
+    const filename = c.req.query("filename") ?? c.req.header("x-filename") ?? undefined;
+    const parsed = parseImportFile(new Uint8Array(buf), filename);
+    if (parsed.contacts.length === 0) {
+      return c.json(
+        {
+          error: "no_contacts_found",
+          detail:
+            "このファイルからは連絡先を見つけられませんでした。対応しているのは LinkedIn・Facebook・Instagram・X のダウンロードデータ (ZIPのまま可)、Google 連絡先、LINE のトーク履歴、CSV や vCard です",
+        },
+        422,
+      );
+    }
+    const result = await applyImport(c.get("ownerUid"), parsed);
+    return c.json({ ...result, foundIn: parsed.foundIn });
   });
 
   // 接触記録 (連絡済み)。距離スコアの検証還流。
@@ -862,6 +937,47 @@ export function createApp(deps: AppDeps) {
     const parsed = extractJson(r.text) as { draft?: unknown } | null;
     const draft = typeof parsed?.draft === "string" ? parsed.draft.trim() : r.text.trim();
     return c.json({ draft });
+  });
+
+  // 会話メモ・音声の文字起こし (Plaud / ZenTrack など) から登場人物と近況を抽出して「提案」する。
+  // 自動反映はしない — ユーザーが選んで反映する (自律性の段階: 外へ出ない情報整理でも提案どまり)。
+  app.post("/api/contacts/extract-from-conversation", async (c) => {
+    const b = await c.req
+      .json<{ text?: string; locale?: string }>()
+      .catch(() => ({}) as { text?: string; locale?: string });
+    const text = typeof b.text === "string" ? b.text.trim() : "";
+    if (!text) return c.json({ error: "text_required", detail: "会話の内容がありません" }, 400);
+    const instruction =
+      '出力は JSON オブジェクト 1 個だけ: {"people": [{"name": "人物名", "note": "近況の短い散文 (無ければ空文字)", "date": "会った/話した日 YYYY-MM-DD (分からなければ空文字)"}]}';
+    const r = await runRelationshipAi(
+      "conversation_extract",
+      instruction,
+      `会話の記録:\n${text.slice(0, 20000)}`,
+      "conversation_extract",
+      normalizeLocale(b.locale),
+    );
+    if (!r.ok) return c.json(r.body as never, r.status);
+    const parsed = extractJson(r.text) as { people?: unknown } | null;
+    const rawPeople = Array.isArray(parsed?.people) ? (parsed.people as Array<Record<string, unknown>>) : [];
+    const existing = await prisma.contact.findMany({
+      where: { ownerUid: c.get("ownerUid"), state: "active" },
+      select: { id: true, name: true },
+    });
+    const byName = new Map(existing.map((e) => [e.name, e.id]));
+    const proposals: Array<{ name: string; note: string; date: string | null; contactId: string | null }> = [];
+    for (const p of rawPeople.slice(0, 20)) {
+      const name = clampName(p?.name);
+      if (!name) continue;
+      const note = sanitizeProse(typeof p.note === "string" ? p.note : "").trim();
+      const dateRaw = typeof p.date === "string" ? p.date.trim() : "";
+      proposals.push({
+        name,
+        note,
+        date: /^\d{4}-\d{2}-\d{2}$/.test(dateRaw) ? dateRaw : null,
+        contactId: byName.get(name) ?? null, // 既存の連絡先なら反映先として返す
+      });
+    }
+    return c.json({ proposals });
   });
 
   // ---------------- 発信 (outreach) — フェーズ4 ----------------

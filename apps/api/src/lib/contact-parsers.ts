@@ -202,6 +202,231 @@ export function parseLinkedInConnections(csvText: string): ParsedContact[] {
   return out;
 }
 
+// ------------------------------------------------------------
+// トーク履歴 (LINE / WhatsApp) — 相手の連絡先だけでなく、日ごとの接触履歴も復元する。
+// LINE には友だちリストの公式エクスポートが存在しないため、トーク履歴の
+// 「1トーク=1ファイル送信」機能が現実的な唯一の取込経路 (lms parseLINEChat を発展)。
+// ------------------------------------------------------------
+
+export type ParsedInteraction = {
+  name: string; // 接触相手 (contacts.name に一致させる)
+  occurredAt: string; // YYYY-MM-DD
+  type: string; // message など
+};
+
+export type ParsedImport = {
+  contacts: ParsedContact[];
+  interactions: ParsedInteraction[];
+};
+
+const MAX_TALK_DAYS = 365; // 接触履歴として残す日数の上限 (直近から数える)
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+// LINE 公式のトーク履歴テキスト。1 行目: 「[LINE] ○○とのトーク履歴」/ "[LINE] Chat history with ○○"
+// 日付行: 「2026/06/01(月)」、メッセージ行: 「10:23\t○○\t本文」
+export function parseLineTalk(text: string, filenameHint?: string): ParsedImport {
+  const lines = text.split(/\r?\n/);
+  const header = lines[0] ?? "";
+  const m = header.match(/\[LINE\]\s*(.+?)とのトーク(?:履歴)?\s*$|\[LINE\]\s*Chat history with\s*(.+?)\s*$/);
+  let partner = (m?.[1] ?? m?.[2] ?? "").trim();
+  if (!partner && filenameHint) {
+    const fm = filenameHint.match(/(.+?)とのトーク|Chat history with\s*(.+?)(?:\.txt)?$/i);
+    partner = (fm?.[1] ?? fm?.[2] ?? "").trim();
+  }
+  const senderTally = new Map<string, number>();
+  const days = new Set<string>();
+  let currentDay: string | null = null;
+  let dayHasMessage = false;
+  const commitDay = () => {
+    if (currentDay && dayHasMessage) days.add(currentDay);
+  };
+  for (const line of lines.slice(1)) {
+    const d =
+      line.match(/^(\d{4})[/.](\d{1,2})[/.](\d{1,2})(?:\([^)]*\))?\s*$/) ??
+      line.match(/^[A-Z][a-z]{2},\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/);
+    if (d) {
+      commitDay();
+      const [y, mo, da] =
+        d[0].match(/^\d{4}/) != null
+          ? [d[1]!, d[2]!, d[3]!]
+          : [d[3]!, d[1]!, d[2]!]; // en 形式は M/D/YYYY
+      currentDay = `${y}-${pad2(parseInt(mo, 10))}-${pad2(parseInt(da, 10))}`;
+      dayHasMessage = false;
+      continue;
+    }
+    const msg = line.match(/^\d{1,2}:\d{2}\t([^\t]+)\t/);
+    if (msg) {
+      dayHasMessage = true;
+      const sender = msg[1]!.trim();
+      if (sender) senderTally.set(sender, (senderTally.get(sender) ?? 0) + 1);
+    }
+  }
+  commitDay();
+  if (!partner) {
+    // ヘッダもファイル名も無い場合は最頻の送信者を相手とみなす (自分の名前は分からない前提の妥協)
+    partner = [...senderTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  }
+  if (!partner) return { contacts: [], interactions: [] };
+  const contacts: ParsedContact[] = [{ name: partner, source: "line", distance: 3 }];
+  // グループトークの他の参加者 (3 通以上) も連絡先候補にする (lms と同じ扱い)
+  for (const [name, count] of senderTally) {
+    if (name !== partner && count >= 3) contacts.push({ name, source: "line", distance: 4 });
+  }
+  const interactions = [...days]
+    .sort()
+    .slice(-MAX_TALK_DAYS)
+    .map((occurredAt) => ({ name: partner, occurredAt, type: "message" }));
+  return { contacts, interactions };
+}
+
+// WhatsApp のチャットエクスポート (.txt)。iOS: 「[2026/07/01 12:34:56] ○○: 本文」、
+// Android: 「01/07/2026, 12:34 - ○○: 本文」。相手名はファイル名 (Chat with ○○) を優先する。
+export function parseWhatsAppChat(text: string, filenameHint?: string): ParsedImport {
+  const senderTally = new Map<string, number>();
+  const daysBySender = new Map<string, Set<string>>();
+  for (const line of text.split(/\r?\n/)) {
+    const m =
+      line.match(/^\[(\d{4})[/.](\d{1,2})[/.](\d{1,2})[^\]]*\]\s*([^:]+):\s/) ??
+      line.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4}),?\s+\d{1,2}:\d{2}\s*-\s*([^:]+):\s/);
+    if (!m) continue;
+    const iso = m[0].startsWith("[")
+      ? `${m[1]}-${pad2(parseInt(m[2]!, 10))}-${pad2(parseInt(m[3]!, 10))}`
+      : (() => {
+          const y = m[3]!.length === 2 ? `20${m[3]}` : m[3]!;
+          // 地域により D/M か M/D かが揺れるため、12 を超える方を日とみなす
+          const a = parseInt(m[1]!, 10);
+          const b = parseInt(m[2]!, 10);
+          const [mo, da] = a > 12 ? [b, a] : [a, b];
+          return `${y}-${pad2(mo)}-${pad2(da)}`;
+        })();
+    const sender = m[4]!.trim();
+    if (!sender) continue;
+    senderTally.set(sender, (senderTally.get(sender) ?? 0) + 1);
+    if (!daysBySender.has(sender)) daysBySender.set(sender, new Set());
+    daysBySender.get(sender)!.add(iso);
+  }
+  let partner = "";
+  const fm = filenameHint?.match(/Chat with\s*(.+?)(?:\.txt)?$/i) ?? filenameHint?.match(/(.+?)とのWhatsApp/i);
+  if (fm) partner = fm[1]!.trim();
+  if (!partner) partner = [...senderTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  if (!partner) return { contacts: [], interactions: [] };
+  const contacts: ParsedContact[] = [{ name: partner, source: "whatsapp", distance: 3 }];
+  for (const [name, count] of senderTally) {
+    if (name !== partner && count >= 3) contacts.push({ name, source: "whatsapp", distance: 4 });
+  }
+  const partnerDays = daysBySender.get(partner) ?? new Set<string>();
+  const interactions = [...partnerDays]
+    .sort()
+    .slice(-MAX_TALK_DAYS)
+    .map((occurredAt) => ({ name: partner, occurredAt, type: "message" }));
+  return { contacts, interactions };
+}
+
+// ------------------------------------------------------------
+// Google 連絡先 CSV (contacts.google.com → エクスポート)。
+// 姓・名が別カラムのため専用に組み立てる (CJK は姓→名の順で結合)。
+// ------------------------------------------------------------
+
+function hasCjk(s: string): boolean {
+  return /[぀-ヿ㐀-鿿]/.test(s);
+}
+
+export function looksLikeGoogleContactsCsv(head: string): boolean {
+  return /e-mail 1 - value/i.test(head) && /first name/i.test(head);
+}
+
+export function parseGoogleContactsCsv(csvText: string): ParsedContact[] {
+  const lines = csvText.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) return [];
+  const headers = splitCsvLine(lines[0]!).map((h) => h.toLowerCase());
+  const idx = (name: string) => headers.indexOf(name);
+  const pick = (v: string[], name: string) => (idx(name) >= 0 ? v[idx(name)] || "" : "");
+  const out: ParsedContact[] = [];
+  for (const line of lines.slice(1)) {
+    const v = splitCsvLine(line);
+    const first = pick(v, "first name");
+    const middle = pick(v, "middle name");
+    const last = pick(v, "last name");
+    let name = pick(v, "name");
+    if (!name) {
+      name = hasCjk(last + first)
+        ? [last, first].filter(Boolean).join(" ")
+        : [first, middle, last].filter(Boolean).join(" ");
+    }
+    name = name.trim();
+    if (!name) continue;
+    const birthdayRaw = pick(v, "birthday").replace(/[^0-9]/g, "");
+    out.push({
+      name,
+      furigana: [pick(v, "phonetic last name"), pick(v, "phonetic first name")].filter(Boolean).join(" ") || undefined,
+      email: pick(v, "e-mail 1 - value") || undefined,
+      phone: pick(v, "phone 1 - value") || undefined,
+      company: pick(v, "organization name") || pick(v, "organization 1 - name") || undefined,
+      title: pick(v, "organization title") || pick(v, "organization 1 - title") || undefined,
+      birthday:
+        birthdayRaw.length === 8
+          ? `${birthdayRaw.slice(0, 4)}-${birthdayRaw.slice(4, 6)}-${birthdayRaw.slice(6, 8)}`
+          : undefined,
+      source: "google",
+    });
+  }
+  return out;
+}
+
+// ------------------------------------------------------------
+// lms (Life Management System) のエクスポート JSON。
+// 全体エクスポート { relationship_contacts: [...] } と
+// 領域エクスポート { contacts: [...], interactions: [...] } の両形式を受ける。
+// ------------------------------------------------------------
+
+export function parseLmsExport(jsonText: string): ParsedImport {
+  try {
+    const data = JSON.parse(jsonText) as Record<string, unknown>;
+    const rawContacts = (data.relationship_contacts ?? data.contacts ?? []) as Array<Record<string, unknown>>;
+    const rawInteractions = (data.relationship_interactions ?? data.interactions ?? []) as Array<
+      Record<string, unknown>
+    >;
+    const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+    const contacts: ParsedContact[] = [];
+    for (const c of rawContacts) {
+      const name = str(c.name);
+      if (!name) continue;
+      const distance = parseInt(String(c.distance ?? ""), 10);
+      contacts.push({
+        name,
+        phone: str(c.phone),
+        email: str(c.email),
+        address: str(c.address),
+        company: str(c.company),
+        title: str(c.title),
+        birthday: str(c.birthday)?.slice(0, 10),
+        distance: Number.isFinite(distance) && distance >= 1 && distance <= 5 ? distance : undefined,
+        notes: str(c.notes),
+        source: "lms",
+      });
+    }
+    const interactions: ParsedInteraction[] = [];
+    for (const it of rawInteractions) {
+      const name = str(it.person) ?? str(it.name);
+      const when = str(it.timestamp) ?? str(it.date);
+      if (!name || !when) continue;
+      const day = when.slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+      interactions.push({ name, occurredAt: day, type: str(it.type) ?? "message" });
+    }
+    return { contacts, interactions };
+  } catch {
+    return { contacts: [], interactions: [] };
+  }
+}
+
+export function looksLikeLmsExport(head: string): boolean {
+  return /"relationship_contacts"\s*:/.test(head) || (/"contacts"\s*:\s*\[/.test(head) && /"distance"/.test(head));
+}
+
 // 拡張子/内容からパーサを選ぶ (SNS アーカイブも自動判別)。
 export function parseContacts(
   content: string,
@@ -220,6 +445,31 @@ export function parseContacts(
     const r = parseInstagramFollowing(content);
     if (r.length > 0) return r;
   }
+  if (looksLikeGoogleContactsCsv(head)) return parseGoogleContactsCsv(content);
   if (/first name/i.test(head) && /last name/i.test(head)) return parseLinkedInConnections(content);
   return parseCsvContacts(content);
+}
+
+// テキスト全般の統合判別 — 連絡先だけでなく接触履歴 (トーク由来) も返す。
+// 画面の「まとめて取り込む」とファイル取込 API の両方がここを通る。
+export function parseImportText(content: string, filenameHint?: string): ParsedImport {
+  const head = content.slice(0, 2000);
+  if (/^\[LINE\]/.test(content.trimStart()) || /とのトーク履歴/.test(head)) {
+    const r = parseLineTalk(content, filenameHint);
+    if (r.contacts.length > 0) return r;
+  }
+  if (/^\[?\d{1,4}[/.]\d{1,2}[/.]\d{1,4}.*(?:\]\s*|-\s*)[^:]+:\s/m.test(head) && /whatsapp/i.test(filenameHint ?? "")) {
+    const r = parseWhatsAppChat(content, filenameHint);
+    if (r.contacts.length > 0) return r;
+  }
+  if (looksLikeLmsExport(head)) {
+    const r = parseLmsExport(content);
+    if (r.contacts.length > 0) return r;
+  }
+  // WhatsApp はファイル名が無くても本文パターンで拾う (LINE 形式より後に判定)
+  if (/^(\[\d{4}[/.]\d{1,2}[/.]\d{1,2}[^\]]*\]|\d{1,2}\/\d{1,2}\/\d{2,4},?\s+\d{1,2}:\d{2}\s*-)\s*[^:]+:\s/m.test(head)) {
+    const r = parseWhatsAppChat(content, filenameHint);
+    if (r.contacts.length > 0) return r;
+  }
+  return { contacts: parseContacts(content), interactions: [] };
 }

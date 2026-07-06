@@ -53,6 +53,12 @@ export default function ContactsPage() {
   const [distance, setDistance] = useState("3");
   const [importText, setImportText] = useState("");
   const [showImport, setShowImport] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [convText, setConvText] = useState("");
+  const [showConv, setShowConv] = useState(false);
+  const [proposals, setProposals] = useState<
+    { name: string; note: string; date: string | null; contactId: string | null; selected: boolean }[]
+  >([]);
   const [icsUrl, setIcsUrl] = useState("");
   const [showCalendar, setShowCalendar] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -113,6 +119,117 @@ export default function ContactsPage() {
       setNotice(`${body.imported}件の連絡先を取り込みました`);
       setImportText("");
       setShowImport(false);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ファイル/ZIP の取り込み — SNS の「データをダウンロード」をそのまま放り込める
+  const uploadFiles = async (files: FileList | File[]) => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    let imported = 0;
+    let interactions = 0;
+    const problems: string[] = [];
+    try {
+      for (const file of Array.from(files)) {
+        const res = await apiFetch(`contacts/import-file?filename=${encodeURIComponent(file.name)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: await file.arrayBuffer(),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          problems.push(`${file.name}: ${body.detail ?? "取り込めませんでした"}`);
+          continue;
+        }
+        imported += body.imported ?? 0;
+        interactions += body.interactionsAdded ?? 0;
+      }
+      if (imported > 0 || interactions > 0) {
+        const talk = interactions > 0 ? ` (やりとりの記録も${interactions}件)` : "";
+        setNotice(`${imported}件の連絡先を取り込みました${talk}`);
+        await load();
+      }
+      if (problems.length > 0) setError(problems.join(" / "));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 会話やメモから登場人物と近況をさがす (提案どまり。反映はユーザーが選ぶ)
+  const extractFromConversation = async () => {
+    if (!convText.trim() || busy) return;
+    setBusy(true);
+    setError("");
+    setProposals([]);
+    try {
+      const res = await apiFetch("contacts/extract-from-conversation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: convText }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.detail ?? "いまは読み取れませんでした");
+        return;
+      }
+      const list = (body.proposals ?? []) as { name: string; note: string; date: string | null; contactId: string | null }[];
+      if (list.length === 0) {
+        setNotice("この内容からはお相手を見つけられませんでした");
+        return;
+      }
+      setProposals(list.map((p) => ({ ...p, selected: true })));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyProposals = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    let applied = 0;
+    try {
+      for (const p of proposals.filter((x) => x.selected)) {
+        let contactId = p.contactId;
+        if (!contactId) {
+          const res = await apiFetch("contacts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: p.name, distance: 4, personalProfile: p.note || undefined }),
+          });
+          if (!res.ok) continue;
+          contactId = ((await res.json()).contact as { id: string }).id;
+        } else if (p.note) {
+          // 既存の方は近況をプロフィールに書き足す (他の項目は保ったまま)
+          const cur = await apiFetch(`contacts/${contactId}`);
+          if (cur.ok) {
+            const contact = (await cur.json()).contact as Record<string, unknown>;
+            const today = new Date().toISOString().slice(0, 10);
+            const merged = [contact.personalProfile, `${today} ${p.note}`].filter(Boolean).join("\n");
+            await apiFetch(`contacts/${contactId}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ...contact, personalProfile: merged }),
+            });
+          }
+        }
+        if (p.date && contactId) {
+          await apiFetch(`contacts/${contactId}/interactions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: "meeting", occurredAt: p.date }),
+          });
+        }
+        applied++;
+      }
+      setNotice(`${applied}名ぶんを記録に反映しました`);
+      setProposals([]);
+      setConvText("");
+      setShowConv(false);
       await load();
     } finally {
       setBusy(false);
@@ -278,15 +395,95 @@ export default function ContactsPage() {
             onClick={() => setShowImport(!showImport)}
             style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", padding: 0 }}
           >
-            {showImport ? "取り込みを閉じる" : "ファイルからまとめて取り込む (CSV や連絡先ファイル)"}
+            {showImport ? "取り込みを閉じる" : "ファイルからまとめて取り込む (SNSのダウンロードデータ・連絡先・トーク履歴)"}
           </button>
         </p>
         {showImport && (
           <div>
+            <label
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOver(false);
+                if (e.dataTransfer.files.length > 0) void uploadFiles(e.dataTransfer.files);
+              }}
+              style={{
+                display: "block",
+                border: `2px dashed ${dragOver ? "#2563eb" : "#cbd5e1"}`,
+                background: dragOver ? "#eff6ff" : "#f8fafc",
+                borderRadius: 12,
+                padding: "24px 16px",
+                textAlign: "center",
+                color: "#334155",
+                cursor: "pointer",
+                marginBottom: 8,
+              }}
+            >
+              ここにファイルを置くか、押して選んでください
+              <br />
+              <small style={{ color: "#64748b" }}>
+                ダウンロードした ZIP はそのままで大丈夫です。中から友達リストを自動で見つけます
+              </small>
+              <input
+                type="file"
+                multiple
+                aria-label="取り込みファイル"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) void uploadFiles(e.target.files);
+                  e.target.value = "";
+                }}
+                style={{ display: "none" }}
+              />
+            </label>
+            <details style={{ margin: "8px 0", color: "#334155" }}>
+              <summary style={{ cursor: "pointer", color: "#2563eb" }}>各サービスからの取り出し方 (かんたん手順)</summary>
+              <div style={{ padding: "8px 4px", display: "grid", gap: 10, fontSize: 14 }}>
+                <div>
+                  <strong>LINE</strong> — トーク画面の右上メニュー → 設定 → トーク履歴を送信、で作られる
+                  テキストファイルをここに置いてください。お相手の登録と、やりとりの記録が一度に入ります。
+                </div>
+                <div>
+                  <strong>LinkedIn</strong> —{" "}
+                  <a href="https://www.linkedin.com/mypreferences/d/download-my-data" target="_blank" rel="noreferrer" style={{ color: "#2563eb" }}>
+                    データのダウンロード
+                  </a>
+                  で「Connections」を選んで受け取った ZIP か CSV をそのまま。
+                </div>
+                <div>
+                  <strong>Facebook / Instagram</strong> —{" "}
+                  <a href="https://accountscenter.facebook.com/info_and_permissions/dyi" target="_blank" rel="noreferrer" style={{ color: "#2563eb" }}>
+                    アカウントセンターの「情報をダウンロード」
+                  </a>
+                  で、対象を友達 (フォロー) だけ・形式は JSON にすると小さくなります。届いた ZIP をそのまま。
+                </div>
+                <div>
+                  <strong>X</strong> —{" "}
+                  <a href="https://x.com/settings/download_your_data" target="_blank" rel="noreferrer" style={{ color: "#2563eb" }}>
+                    設定の「データのアーカイブをダウンロード」
+                  </a>
+                  で受け取った ZIP をそのまま。
+                </div>
+                <div>
+                  <strong>Google 連絡先</strong> —{" "}
+                  <a href="https://contacts.google.com" target="_blank" rel="noreferrer" style={{ color: "#2563eb" }}>
+                    contacts.google.com
+                  </a>
+                  の「エクスポート」で受け取った CSV か vCard を。スマホの連絡先アプリの書き出し (vCard) も使えます。
+                </div>
+                <div>
+                  <strong>名刺 (Eight)・年賀状リスト・ほかの管理表</strong> — CSV のままで大丈夫です。lms
+                  の「データを書き出す」で作ったファイルもそのまま取り込めます。
+                </div>
+              </div>
+            </details>
             <textarea
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
-              placeholder="CSV または vCard の内容をここに貼り付けてください"
+              placeholder="貼り付けでも取り込めます (CSV・vCard・LINE のトーク履歴など)"
               aria-label="取り込み内容"
               rows={6}
               style={{ width: "100%", padding: 10, border: "1px solid #e2e8f0", borderRadius: 8 }}
@@ -298,6 +495,74 @@ export default function ContactsPage() {
             >
               取り込む
             </button>
+          </div>
+        )}
+        <p style={{ marginTop: 8 }}>
+          <button
+            onClick={() => setShowConv(!showConv)}
+            style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", padding: 0 }}
+          >
+            {showConv ? "会話からの取り込みを閉じる" : "会話やメモから取り込む (音声の文字起こしにも対応)"}
+          </button>
+        </p>
+        {showConv && (
+          <div>
+            <p style={{ margin: "4px 0", color: "#64748b", fontSize: 14 }}>
+              打ち合わせのメモ、日記、ボイスレコーダーの文字起こしなどを貼り付けると、
+              登場したお相手と近況を読み取ってご提案します。反映するかどうかはあなたが選べます。
+            </p>
+            <textarea
+              value={convText}
+              onChange={(e) => setConvText(e.target.value)}
+              placeholder="例: 昨日は田中さんとお茶。お孫さんが生まれたばかりで嬉しそうだった。"
+              aria-label="会話の内容"
+              rows={5}
+              style={{ width: "100%", padding: 10, border: "1px solid #e2e8f0", borderRadius: 8 }}
+            />
+            <button
+              onClick={() => void extractFromConversation()}
+              disabled={busy || !convText.trim()}
+              style={{ padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
+            >
+              お相手と近況をさがす
+            </button>
+            {proposals.length > 0 && (
+              <div style={{ marginTop: 10, border: "1px solid #e2e8f0", borderRadius: 12, padding: "10px 14px" }}>
+                <p style={{ margin: "0 0 8px", color: "#334155" }}>見つかったお相手 (反映するものを選んでください)</p>
+                <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 8 }}>
+                  {proposals.map((p, i) => (
+                    <li key={`${p.name}-${i}`} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                      <input
+                        type="checkbox"
+                        checked={p.selected}
+                        aria-label={`${p.name}を反映`}
+                        onChange={(e) =>
+                          setProposals((prev) => prev.map((x, j) => (j === i ? { ...x, selected: e.target.checked } : x)))
+                        }
+                        style={{ marginTop: 4 }}
+                      />
+                      <span>
+                        <strong>{p.name}</strong>
+                        {p.contactId ? (
+                          <small style={{ color: "#64748b", marginLeft: 6 }}>登録済みの方 (近況を書き足します)</small>
+                        ) : (
+                          <small style={{ color: "#0891b2", marginLeft: 6 }}>新しく登録します</small>
+                        )}
+                        {p.date && <small style={{ color: "#64748b", marginLeft: 6 }}>{p.date} に会った記録も</small>}
+                        {p.note && <span style={{ display: "block", color: "#334155", fontSize: 14 }}>{p.note}</span>}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => void applyProposals()}
+                  disabled={busy || proposals.every((p) => !p.selected)}
+                  style={{ marginTop: 8, padding: "8px 16px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
+                >
+                  選んだ方を記録に反映する
+                </button>
+              </div>
+            )}
           </div>
         )}
       </section>
