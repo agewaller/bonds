@@ -141,6 +141,8 @@ model Contact {
   socialPosition  String?   @map("social_position") // 暗号化: 社会的位置づけ
   valuesProfile   String?   @map("values_profile") // 暗号化: 価値観・目標/目的
   notes           String? // 暗号化
+  profileDigest   String?   @map("profile_digest") // 暗号化: 記録から自動でまとまる相手ノート (見立て)
+  profileDigestAt DateTime? @map("profile_digest_at") // 見立ての最終更新 (これより新しい記録があれば再生成対象)
   source          String    @default("manual") // manual / csv / vcard / sns / eight / nengajo
   state           String    @default("active") // active / archived (ソフト削除)
   createdAt       DateTime  @default(now()) @map("created_at")

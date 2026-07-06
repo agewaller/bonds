@@ -24,6 +24,8 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
     "socialPosition",
     "valuesProfile",
     "notes",
+    // 記録から自動生成する相手ノート (見立て) も人物情報そのもの = 暗号化
+    "profileDigest",
   ],
   contactInteraction: ["notes"],
   contactGift: ["notes"],

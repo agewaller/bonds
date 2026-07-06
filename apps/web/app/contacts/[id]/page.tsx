@@ -19,6 +19,8 @@ type Contact = {
   personalProfile: string | null;
   valuesProfile: string | null;
   notes: string | null;
+  profileDigest: string | null;
+  profileDigestAt: string | null;
 };
 type Interaction = { id: string; type: string; occurredAt: string; notes: string | null };
 type Gift = { id: string; occasion: string; direction: string; item: string; givenAt: string };
@@ -121,6 +123,22 @@ export default function ContactDetailPage() {
       "保存しました",
     );
     if (body) await load();
+  };
+
+  const refreshDigest = async (includePublic: boolean) => {
+    if (!contact) return;
+    const body = await call(`contacts/${contact.id}/refresh-digest`, {
+      method: "POST",
+      body: JSON.stringify({ includePublic }),
+    });
+    if (body?.digest) {
+      setNotice(
+        includePublic && !body.searched
+          ? "記録からまとめ直しました (公開情報はいまは調べられませんでした)"
+          : "この方のまとめを最新にしました",
+      );
+      await load();
+    }
   };
 
   const enrichValues = async () => {
@@ -230,6 +248,32 @@ export default function ContactDetailPage() {
       {error && (
         <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>{error}</p>
       )}
+
+      <section
+        style={{ marginTop: 24, background: "#f8fafc", borderRadius: 12, padding: "12px 16px", borderLeft: "5px solid #0891b2" }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+          <h2 style={{ fontSize: 18, margin: 0 }}>いまのこの方 (自動でまとまるノート)</h2>
+          {contact.profileDigestAt && (
+            <small style={{ color: "#64748b" }}>{new Date(contact.profileDigestAt).toLocaleDateString("ja-JP")} 更新</small>
+          )}
+        </div>
+        {contact.profileDigest ? (
+          <p style={{ margin: "8px 0", color: "#334155", lineHeight: 1.9, whiteSpace: "pre-wrap" }}>{contact.profileDigest}</p>
+        ) : (
+          <p style={{ margin: "8px 0", color: "#64748b" }}>
+            やりとりを記録していくと、この方の近況や話すと喜ばれそうな話題が、ここに自動でまとまっていきます。
+          </p>
+        )}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button style={btn(false)} onClick={() => void refreshDigest(false)} disabled={!!busy}>
+            記録からまとめ直す
+          </button>
+          <button style={btn(false)} onClick={() => void refreshDigest(true)} disabled={!!busy}>
+            公開情報も調べてまとめ直す
+          </button>
+        </div>
+      </section>
 
       <section style={{ marginTop: 24 }}>
         <h2 style={{ fontSize: 18 }}>この方のこと</h2>

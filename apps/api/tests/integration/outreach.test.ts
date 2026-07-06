@@ -71,7 +71,7 @@ beforeEach(async () => {
 
 describe("プロンプト seed (フェーズ3+4 追加分)", () => {
   it("outreach_message_gen / values_profile_enrich が seed される", async () => {
-    expect(await prisma.prompt.count()).toBe(5);
+    expect(await prisma.prompt.count()).toBe(6);
   });
 });
 

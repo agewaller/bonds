@@ -842,11 +842,18 @@ export function createApp(deps: AppDeps) {
   const buildContactContext = async (ownerUid: string, contactId: string) => {
     const contact = await prisma.contact.findFirst({ where: { id: contactId, ownerUid } });
     if (!contact) return null;
-    const interactions = await prisma.contactInteraction.findMany({
-      where: { contactId: contact.id },
-      orderBy: { occurredAt: "desc" },
-      take: 10,
-    });
+    const [interactions, gifts] = await Promise.all([
+      prisma.contactInteraction.findMany({
+        where: { contactId: contact.id },
+        orderBy: { occurredAt: "desc" },
+        take: 20,
+      }),
+      prisma.contactGift.findMany({
+        where: { contactId: contact.id },
+        orderBy: { givenAt: "desc" },
+        take: 10,
+      }),
+    ]);
     const lines = [
       `お名前: ${contact.name}`,
       `距離感: ${contact.distance} (1=毎日会う親しさ 〜 5=年に一度)`,
@@ -860,6 +867,14 @@ export function createApp(deps: AppDeps) {
             .map((i) => `- ${i.occurredAt.toISOString().slice(0, 10)} ${i.type}${i.notes ? ` (${i.notes})` : ""}`)
             .join("\n")}`
         : "やりとりの記録はまだありません",
+      gifts.length > 0
+        ? `贈り物の記録:\n${gifts
+            .map(
+              (g) =>
+                `- ${g.givenAt.toISOString().slice(0, 10)} ${g.direction === "inbound" ? "いただいた" : "贈った"}: ${g.item}${g.notes ? ` (${g.notes})` : ""}`,
+            )
+            .join("\n")}`
+        : "",
     ].filter(Boolean);
     return { contact, context: lines.join("\n") };
   };
@@ -937,6 +952,112 @@ export function createApp(deps: AppDeps) {
     const parsed = extractJson(r.text) as { draft?: unknown } | null;
     const draft = typeof parsed?.draft === "string" ? parsed.draft.trim() : r.text.trim();
     return c.json({ draft });
+  });
+
+  // 相手ノート (見立て) の生成 — 蓄積した記録に根拠を置き、希望があれば公開情報の検索を足す。
+  // 検索はユーザーが明示的に頼んだときだけ (相手の尊厳: 自動巡回で私人を web 検索しない)。
+  const generateDigest = async (
+    contact: { id: string; name: string; company: string | null; sns: string | null },
+    context: string,
+    includePublic: boolean,
+    locale: string,
+  ): Promise<{ ok: true; digest: string; searched: boolean } | { ok: false; status: 422 | 503 | 502; body: unknown }> => {
+    let searchNote = "";
+    let searched = false;
+    if (includePublic && ddSearch && (contact.company || contact.sns)) {
+      try {
+        const results = await ddSearch([contact.name, contact.company ?? ""].filter(Boolean).join(" "));
+        if (results.length > 0) {
+          searchNote = results
+            .slice(0, 5)
+            .map((r) => `出典 ${r.url} : ${r.title} ${r.snippet.slice(0, 300)}`)
+            .join("\n");
+          searched = true;
+        }
+      } catch {
+        // 検索の失敗で全体を止めない (記録のみで続行)
+      }
+    }
+    const userMessage = [
+      "これまでの記録:",
+      context,
+      searchNote ? `\n公開情報の検索結果 (同姓同名に注意。本人と確信できるものだけ使う):\n${searchNote}` : "",
+      `今日の日付: ${new Date().toISOString().slice(0, 10)}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const r = await runRelationshipAi(
+      "profile_digest_gen",
+      '出力は JSON オブジェクト 1 個だけ: {"digest": "相手ノートの散文"}',
+      userMessage,
+      "profile_digest",
+      locale,
+    );
+    if (!r.ok) return r;
+    const parsed = extractJson(r.text) as { digest?: unknown } | null;
+    const digest = sanitizeProse(typeof parsed?.digest === "string" ? parsed.digest : r.text).trim();
+    if (!digest) {
+      return { ok: false, status: 502, body: { error: "invalid_output", detail: "まとめづくりに失敗しました" } };
+    }
+    return { ok: true, digest, searched };
+  };
+
+  // 相手ノートの更新 (個別)。includePublic を付けたときだけ公開情報も調べる。
+  app.post("/api/contacts/:id/refresh-digest", async (c) => {
+    const ctx = await buildContactContext(c.get("ownerUid"), c.req.param("id"));
+    if (!ctx) return c.json({ error: "not_found" }, 404);
+    const b = await c.req
+      .json<{ includePublic?: boolean; locale?: string }>()
+      .catch(() => ({}) as { includePublic?: boolean; locale?: string });
+    const r = await generateDigest(ctx.contact, ctx.context, b.includePublic === true, normalizeLocale(b.locale));
+    if (!r.ok) return c.json(r.body as never, r.status);
+    const updated = await prisma.contact.update({
+      where: { id: ctx.contact.id },
+      data: { profileDigest: r.digest, profileDigestAt: new Date() },
+    });
+    return c.json({ digest: updated.profileDigest, digestAt: updated.profileDigestAt, searched: r.searched });
+  });
+
+  // 相手ノートの自動更新 (バッチ)。新しい記録が積まれた人だけを対象に、1 回の実行で少数ずつ回す
+  // (毎時の sweep から呼ぶ。月次キャップは runRelationshipAi が守る)。web 検索は行わない。
+  app.post("/api/admin/contacts/refresh-digests", async (c) => {
+    if (!generate) return c.json({ error: "unavailable", detail: "AI が設定されていません" }, 503);
+    const batch = Math.min(Math.max(parseInt(c.req.query("batch") ?? "5", 10) || 5, 1), 20);
+    const candidates = await prisma.contact.findMany({
+      where: { state: "active" },
+      select: { id: true, ownerUid: true, profileDigestAt: true },
+      take: 500,
+    });
+    const targets: Array<{ id: string; ownerUid: string }> = [];
+    for (const ct of candidates) {
+      if (targets.length >= batch) break;
+      const latest = await prisma.contactInteraction.findFirst({
+        where: { contactId: ct.id },
+        orderBy: { createdAt: "desc" },
+        select: { createdAt: true },
+      });
+      if (!latest) continue; // 記録が無い人はまとめても中身が無い
+      if (ct.profileDigestAt && ct.profileDigestAt >= latest.createdAt) continue; // 新しい記録なし
+      targets.push({ id: ct.id, ownerUid: ct.ownerUid });
+    }
+    let refreshed = 0;
+    const failures: string[] = [];
+    for (const t of targets) {
+      const ctx = await buildContactContext(t.ownerUid, t.id);
+      if (!ctx) continue;
+      const r = await generateDigest(ctx.contact, ctx.context, false, "ja");
+      if (!r.ok) {
+        failures.push(t.id);
+        if (r.status === 422) break; // 月次キャップ到達: これ以上回さない
+        continue;
+      }
+      await prisma.contact.update({
+        where: { id: t.id },
+        data: { profileDigest: r.digest, profileDigestAt: new Date() },
+      });
+      refreshed++;
+    }
+    return c.json({ refreshed, candidates: targets.length, failed: failures.length });
   });
 
   // 会話メモ・音声の文字起こし (Plaud / ZenTrack など) から登場人物と近況を抽出して「提案」する。

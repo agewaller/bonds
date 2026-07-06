@@ -192,3 +192,111 @@ describe("会話からの取り込み (extract-from-conversation)", () => {
     expect(empty.status).toBe(400);
   });
 });
+
+describe("相手ノート (profile_digest) の自動生成", () => {
+  const digestGenerate: GenerateFn = async ({ userMessage }) => ({
+    text: JSON.stringify({
+      digest: userMessage.includes("出典")
+        ? "## 公開情報によると、**新しいお仕事**を始められたと伝えられています。"
+        : "お孫さんの誕生を喜んでいらっしゃるとのこと。次にお会いするときは、お孫さんのお名前を聞いてみると喜ばれそうです。",
+    }),
+    model: "claude-sonnet-4-6",
+    inputTokens: 200,
+    outputTokens: 80,
+  });
+
+  it("記録からまとめを作り、暗号化して保存する (更新日時つき)", async () => {
+    const app = createApp({ prisma, generate: digestGenerate, search: null });
+    const c = await (
+      await app.request("/api/contacts", {
+        method: "POST",
+        headers: H,
+        body: JSON.stringify({ name: "見立て 花子", personalProfile: "お孫さんが生まれた" }),
+      })
+    ).json();
+    const res = await app.request(`/api/contacts/${c.contact.id}/refresh-digest`, {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.digest).toContain("お孫さん");
+    expect(body.searched).toBe(false);
+    expect(body.digestAt).toBeTruthy();
+
+    // DB 上は暗号文 (平文が無い)
+    const rows = await prisma.$queryRawUnsafe<Array<{ profile_digest: string }>>(
+      `SELECT profile_digest FROM contacts WHERE id = '${c.contact.id}'`,
+    );
+    expect(isEncrypted(rows[0]!.profile_digest)).toBe(true);
+    expect(rows[0]!.profile_digest).not.toContain("お孫さん");
+  });
+
+  it("公開情報オプション: 検索器があるときだけ検索し、記号はサニタイズされる", async () => {
+    const app = createApp({
+      prisma,
+      generate: digestGenerate,
+      search: async () => [{ title: "人事ニュース", url: "https://example.com/news", snippet: "山田氏が就任" }],
+    });
+    const c = await (
+      await app.request("/api/contacts", {
+        method: "POST",
+        headers: H,
+        body: JSON.stringify({ name: "検索 太郎", company: "サンプル株式会社" }),
+      })
+    ).json();
+    const body = await (
+      await app.request(`/api/contacts/${c.contact.id}/refresh-digest`, {
+        method: "POST",
+        headers: H,
+        body: JSON.stringify({ includePublic: true }),
+      })
+    ).json();
+    expect(body.searched).toBe(true);
+    expect(body.digest).not.toContain("**"); // BR-09 最終防衛線
+    expect(body.digest).not.toContain("##");
+  });
+
+  it("バッチ更新は新しい記録がある人だけを対象にする (冪等)", async () => {
+    const app = createApp({ prisma, generate: digestGenerate, search: null });
+    // 記録なし (対象外) と記録あり (対象) の 2 名
+    await app.request("/api/contacts", {
+      method: "POST", headers: H, body: JSON.stringify({ name: "記録なし 一郎" }),
+    });
+    const withLog = await (
+      await app.request("/api/contacts", {
+        method: "POST", headers: H, body: JSON.stringify({ name: "記録あり 二郎" }),
+      })
+    ).json();
+    await app.request(`/api/contacts/${withLog.contact.id}/interactions`, {
+      method: "POST", headers: H, body: JSON.stringify({ type: "meeting", notes: "近況を聞いた" }),
+    });
+
+    const first = await (
+      await app.request("/api/admin/contacts/refresh-digests?batch=10", { method: "POST", headers: H })
+    ).json();
+    expect(first.refreshed).toBe(1);
+
+    // 新しい記録が無ければ 2 回目は何もしない
+    const second = await (
+      await app.request("/api/admin/contacts/refresh-digests?batch=10", { method: "POST", headers: H })
+    ).json();
+    expect(second.refreshed).toBe(0);
+  });
+
+  it("AI キー無しは 503 に縮退する", async () => {
+    const app = createApp({ prisma, generate: null });
+    const c = await (
+      await app.request("/api/contacts", {
+        method: "POST", headers: H, body: JSON.stringify({ name: "縮退 三郎" }),
+      })
+    ).json();
+    const res = await app.request(`/api/contacts/${c.contact.id}/refresh-digest`, {
+      method: "POST", headers: H, body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(503);
+    const batch = await app.request("/api/admin/contacts/refresh-digests", { method: "POST", headers: H });
+    expect(batch.status).toBe(503);
+  });
+});
