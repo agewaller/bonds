@@ -23,7 +23,8 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   const res = await fetch(url, {
     method: req.method,
     headers,
-    body: req.method === "GET" || req.method === "HEAD" ? undefined : await req.text(),
+    // arrayBuffer で転送する (text() だと ZIP 等のバイナリ取込ファイルが壊れる)
+    body: req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer(),
     // Next の fetch キャッシュを無効化 (常に最新)
     cache: "no-store",
   });

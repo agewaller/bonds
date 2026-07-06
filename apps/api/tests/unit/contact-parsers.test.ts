@@ -179,3 +179,132 @@ describe("SNS アーカイブ取込 (lms 移植)", () => {
     expect(parseTwitterFollowing("window.YTD.x = {bad")).toEqual([]);
   });
 });
+
+// ------------------------------------------------------------
+// トーク履歴・Google 連絡先・lms エクスポートの取込 (2026-07-06 追加)
+// ------------------------------------------------------------
+
+import {
+  parseLineTalk,
+  parseWhatsAppChat,
+  parseGoogleContactsCsv,
+  parseLmsExport,
+  parseImportText,
+} from "../../src/lib/contact-parsers.js";
+
+const LINE_TALK = `[LINE] 山田太郎とのトーク履歴
+保存日時：2026/07/01 12:00
+
+2026/06/01(月)
+10:23\t山田太郎\tこんにちは
+10:24\t自分\tどうも
+2026/06/03(水)
+09:00\t山田太郎\t写真を送信しました
+2026/06/05(金)
+`;
+
+describe("parseLineTalk (LINE トーク履歴)", () => {
+  it("ヘッダから相手名、日付行から日別の接触履歴を復元する", () => {
+    const r = parseLineTalk(LINE_TALK);
+    expect(r.contacts[0]).toMatchObject({ name: "山田太郎", source: "line", distance: 3 });
+    expect(r.interactions).toEqual([
+      { name: "山田太郎", occurredAt: "2026-06-01", type: "message" },
+      { name: "山田太郎", occurredAt: "2026-06-03", type: "message" },
+    ]); // 6/5 はメッセージが無いので数えない
+  });
+
+  it("英語ヘッダ (Chat history with) も受ける", () => {
+    const r = parseLineTalk("[LINE] Chat history with John Smith\n\n2026/06/01(Mon)\n10:00\tJohn Smith\thi\n");
+    expect(r.contacts[0]?.name).toBe("John Smith");
+  });
+
+  it("グループトークの他の参加者 (3通以上) も連絡先候補になる", () => {
+    const msgs = Array.from({ length: 3 }, (_, i) => `10:0${i}\t佐藤次郎\tやあ`).join("\n");
+    const r = parseLineTalk(`[LINE] 山田太郎とのトーク履歴\n\n2026/06/01(月)\n10:23\t山田太郎\tこんにちは\n${msgs}\n`);
+    expect(r.contacts.map((c) => c.name)).toEqual(["山田太郎", "佐藤次郎"]);
+  });
+});
+
+describe("parseWhatsAppChat", () => {
+  it("iOS 形式 [YYYY/MM/DD hh:mm:ss] を取り込む (相手はファイル名から)", () => {
+    const txt = "[2026/07/01 12:34:56] 田中良子: こんにちは\n[2026/07/02 08:00:00] 自分: どうも\n";
+    const r = parseWhatsAppChat(txt, "WhatsApp Chat with 田中良子.txt");
+    expect(r.contacts[0]).toMatchObject({ name: "田中良子", source: "whatsapp" });
+    expect(r.interactions).toEqual([{ name: "田中良子", occurredAt: "2026-07-01", type: "message" }]);
+  });
+
+  it("Android 形式 D/M/YYYY, hh:mm - も取り込む", () => {
+    const txt = "13/6/2026, 12:34 - Maria: hola\n14/6/2026, 09:10 - Maria: buenos dias\n";
+    const r = parseWhatsAppChat(txt, "WhatsApp Chat with Maria.txt");
+    expect(r.interactions.map((i) => i.occurredAt)).toEqual(["2026-06-13", "2026-06-14"]);
+  });
+});
+
+describe("parseGoogleContactsCsv", () => {
+  const GOOGLE_CSV = `First Name,Middle Name,Last Name,Phonetic First Name,Phonetic Last Name,Name,Birthday,E-mail 1 - Value,Phone 1 - Value,Organization Name,Organization Title
+太郎,,山本,たろう,やまもと,,1960-04-01,taro.y@example.com,090-0000-1111,山本工務店,代表
+John,Q,Public,,,,,jq@example.com,,,`;
+
+  it("姓名を CJK は姓→名で結合し、誕生日・連絡先も拾う", () => {
+    const rows = parseGoogleContactsCsv(GOOGLE_CSV);
+    expect(rows[0]).toMatchObject({
+      name: "山本 太郎",
+      furigana: "やまもと たろう",
+      email: "taro.y@example.com",
+      phone: "090-0000-1111",
+      company: "山本工務店",
+      title: "代表",
+      birthday: "1960-04-01",
+      source: "google",
+    });
+    expect(rows[1]?.name).toBe("John Q Public");
+  });
+
+  it("parseContacts の自動判別が LinkedIn より先に Google を見分ける", () => {
+    expect(parseContacts(GOOGLE_CSV)[0]?.source).toBe("google");
+  });
+});
+
+describe("parseLmsExport", () => {
+  it("relationship_contacts と relationship_interactions を取り込む", () => {
+    const json = JSON.stringify({
+      relationship_contacts: [
+        { name: "lms山田", distance: "2", email: "lms@example.com", company: "LMS社" },
+        { name: "" },
+      ],
+      relationship_interactions: [
+        { person: "lms山田", type: "call", timestamp: "2026-06-20T10:00:00.000Z" },
+        { person: "lms山田" }, // 日付なしは捨てる
+      ],
+    });
+    const r = parseLmsExport(json);
+    expect(r.contacts).toEqual([
+      { name: "lms山田", phone: undefined, email: "lms@example.com", address: undefined, company: "LMS社", title: undefined, birthday: undefined, distance: 2, notes: undefined, source: "lms" },
+    ]);
+    expect(r.interactions).toEqual([{ name: "lms山田", occurredAt: "2026-06-20", type: "call" }]);
+  });
+
+  it("領域エクスポート形式 { contacts: [...] } も受ける", () => {
+    const r = parseLmsExport(JSON.stringify({ contacts: [{ name: "領域 花子", distance: 3 }], interactions: [] }));
+    expect(r.contacts[0]?.name).toBe("領域 花子");
+  });
+});
+
+describe("parseImportText (統合判別)", () => {
+  it("LINE トークを見分けて接触履歴つきで返す", () => {
+    const r = parseImportText(LINE_TALK);
+    expect(r.contacts[0]?.source).toBe("line");
+    expect(r.interactions.length).toBe(2);
+  });
+
+  it("lms エクスポートを見分ける", () => {
+    const r = parseImportText(JSON.stringify({ relationship_contacts: [{ name: "A", distance: 1 }] }));
+    expect(r.contacts[0]?.source).toBe("lms");
+  });
+
+  it("従来 CSV は接触履歴なしで返す", () => {
+    const r = parseImportText("氏名,距離\nふつう取込,3");
+    expect(r.contacts[0]?.name).toBe("ふつう取込");
+    expect(r.interactions).toEqual([]);
+  });
+});

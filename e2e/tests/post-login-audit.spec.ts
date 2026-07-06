@@ -74,7 +74,7 @@ test("連絡帳: CSV 取り込みが画面から動く", async ({ page }) => {
   await page.getByRole("button", { name: /ファイルからまとめて取り込む/ }).click();
   const stamp = Date.now() % 100000;
   await page.getByLabel("取り込み内容").fill(`氏名,距離\n監査取込 佐々木${stamp},3`);
-  await page.getByRole("button", { name: "取り込む" }).click();
+  await page.getByRole("button", { name: "取り込む", exact: true }).click();
   await expect(page.getByText("1件の連絡先を取り込みました")).toBeVisible();
   await expect(page.getByText(`監査取込 佐々木${stamp}`).first()).toBeVisible(); // おすすめ欄と一覧の両方に出る
   expect(errors, errors.join("\n")).toHaveLength(0);
@@ -151,4 +151,61 @@ test("連絡帳に前進の記録 (これまでの歩み) が出る", async ({ p
   await page.goto("/contacts");
   // 直前のテストで接触記録があるため表示されるはず
   await expect(page.getByRole("heading", { name: "これまでの歩み" })).toBeVisible();
+});
+
+test("連絡帳: ファイル取り込み口 (置くだけ) と各サービスの手順ガイドが機能する", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/contacts");
+  await page.getByRole("button", { name: /ファイルからまとめて取り込む/ }).click();
+  await expect(page.getByText("ここにファイルを置くか、押して選んでください")).toBeVisible();
+  await page.getByText("各サービスからの取り出し方").click();
+  await expect(page.getByText(/トーク履歴を送信/)).toBeVisible(); // LINE の手順
+  await expect(page.getByRole("link", { name: "データのダウンロード" })).toBeVisible(); // LinkedIn 直リンク
+
+  // CSV ファイルを置く → 取り込まれて一覧に出る
+  const stamp = Date.now() % 100000;
+  await page.getByLabel("取り込みファイル").setInputFiles({
+    name: "list.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(`氏名,距離\nファイル取込 井上${stamp},3`),
+  });
+  await expect(page.getByText("1件の連絡先を取り込みました")).toBeVisible();
+  await expect(page.getByText(`ファイル取込 井上${stamp}`).first()).toBeVisible();
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
+test("連絡帳: LINE トーク履歴ファイルで相手とやりとりの記録が一度に入る", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/contacts");
+  await page.getByRole("button", { name: /ファイルからまとめて取り込む/ }).click();
+  const stamp = Date.now() % 100000;
+  const talk = [
+    `[LINE] LINE取込 森${stamp}とのトーク履歴`,
+    "保存日時：2026/07/01 12:00",
+    "",
+    "2026/06/01(月)",
+    `10:23\tLINE取込 森${stamp}\tこんにちは`,
+    "2026/06/03(水)",
+    `09:00\tLINE取込 森${stamp}\t元気？`,
+    "",
+  ].join("\n");
+  await page.getByLabel("取り込みファイル").setInputFiles({
+    name: "line-talk.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from(talk),
+  });
+  await expect(page.getByText(/1件の連絡先を取り込みました \(やりとりの記録も2件\)/)).toBeVisible();
+  await expect(page.getByText(`LINE取込 森${stamp}`).first()).toBeVisible();
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
+test("連絡帳: 会話やメモからの取り込み口が開く (キー無しはやさしい案内)", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/contacts");
+  await page.getByRole("button", { name: /会話やメモから取り込む/ }).click();
+  await page.getByLabel("会話の内容").fill("昨日は田中さんとお茶をしました。お孫さんが生まれたそうです。");
+  await page.getByRole("button", { name: "お相手と近況をさがす" }).click();
+  // AI キーがある環境では提案一覧、無い環境では優しいエラーバナー
+  await expect(page.getByText("見つかったお相手").or(page.getByRole("alert"))).toBeVisible({ timeout: 20000 });
+  expect(errors, errors.join("\n")).toHaveLength(0);
 });
