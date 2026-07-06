@@ -22,6 +22,16 @@ export function sanitizeProse(input: string | null | undefined): string {
   // AI が好みがちな装飾・注記記号を除去
   s = s.replace(/^[ \t]*[※●▼◆■★◎►]+[ \t]*/gm, "");
   s = s.replace(/[※●▼◆■★◎►]/g, "");
+  // Markdown の表: 区切り行 (|---|---|) は行ごと削除、データ行は | を読点相当の空白に開く
+  s = s.replace(/^[ \t]*\|?[-:| \t]+\|[-:| \t]*$/gm, "");
+  s = s.replace(/^[ \t]*\|(.+)\|[ \t]*$/gm, (_m, inner: string) =>
+    inner.split("|").map((c: string) => c.trim()).filter(Boolean).join("　"),
+  );
+  // 区切り線 (--- や ===) の行を削除
+  s = s.replace(/^[ \t]*[-=＝ー]{3,}[ \t]*$/gm, "");
+  // 行頭の番号付き見出し・箇条書き (1. / 2) / （3） / ①) は番号を落として文章にする
+  s = s.replace(/^[ \t]*[（(]?\d{1,2}[.．)）][ \t]+/gm, "");
+  s = s.replace(/^[ \t]*[①②③④⑤⑥⑦⑧⑨⑩][ \t]*/gm, "");
   // 3 行以上の連続改行を 2 行に圧縮
   s = s.replace(/\n{3,}/g, "\n\n");
   return s.trim();
