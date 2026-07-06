@@ -200,6 +200,13 @@
     s = s.replace(/\*\*/g, "");
     s = s.replace(/^[ \t]*[※●▼◆■★◎►]+[ \t]*/gm, "");
     s = s.replace(/[※●▼◆■★◎►]/g, "");
+    s = s.replace(/^[ \t]*\|?[-:| \t]+\|[-:| \t]*$/gm, "");
+    s = s.replace(/^[ \t]*\|(.+)\|[ \t]*$/gm, function (_m, inner) {
+      return inner.split("|").map(function (c) { return c.trim(); }).filter(Boolean).join("　");
+    });
+    s = s.replace(/^[ \t]*[-=＝ー]{3,}[ \t]*$/gm, "");
+    s = s.replace(/^[ \t]*[（(]?\d{1,2}[.．)）][ \t]+/gm, "");
+    s = s.replace(/^[ \t]*[①②③④⑤⑥⑦⑧⑨⑩][ \t]*/gm, "");
     s = s.replace(/\n{3,}/g, "\n\n");
     return s.trim();
   }
