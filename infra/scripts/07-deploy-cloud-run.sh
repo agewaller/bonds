@@ -17,7 +17,7 @@ if [ "$ONLY" != "web" ]; then
     --image="${IMAGE_REGISTRY}/bonds-api:${TAG}" \
     --add-cloudsql-instances="$SQL_CONN" \
     --set-secrets="ANTHROPIC_API_KEY=${SECRET_ANTHROPIC}:latest,DATA_ENCRYPTION_KEY=${SECRET_ENCRYPTION}:latest,ADMIN_BREAKGLASS_TOKEN=${SECRET_BREAKGLASS}:latest,DB_PASSWORD=${SECRET_DB_PASSWORD}:latest,SENDGRID_API_KEY=${SECRET_SENDGRID}:latest" \
-    --set-env-vars="ALLOWED_ORIGINS=${WEB_URL:-http://localhost:3000},SQL_CONN=${SQL_CONN},SQL_DB=${SQL_DB},SQL_USER=${SQL_USER},FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-$PROJECT}" \
+    --set-env-vars="ALLOWED_ORIGINS=${WEB_URL:-http://localhost:3000},SQL_CONN=${SQL_CONN},SQL_DB=${SQL_DB},SQL_USER=${SQL_USER},FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-$PROJECT},OUTREACH_FROM_EMAIL=${OUTREACH_FROM_EMAIL:-}" \
     --service-account="bonds-run@${PROJECT}.iam.gserviceaccount.com" \
     --allow-unauthenticated --port=8080
   API_URL="$(gcloud run services describe "$RUN_API" --project="$PROJECT" --region="$REGION" --format='value(status.url)')"

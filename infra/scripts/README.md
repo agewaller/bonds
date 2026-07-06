@@ -14,6 +14,12 @@ cares の infra/scripts 方式を bonds-* リソース名で複製。**cares と
 - **ローカル開発**は Secret Manager を参照できないため、`.env` の `ANTHROPIC_API_KEY=` に
   同じ鍵の値を貼る (`gcloud secrets versions access latest --secret=ANTHROPIC_API_KEY` で取得可)。
 
+## メール送信 (発信機能) を使うとき
+
+SendGrid のキーを `BONDS_SENDGRID_API_KEY` シークレットに投入し、送信元アドレスを
+`OUTREACH_FROM_EMAIL` 環境変数で 07 に渡す (例: `OUTREACH_FROM_EMAIL=bonds@example.com bash 07-...`)。
+両方そろうまで送信系は 503 に縮退する (それ以外の機能は動く)。
+
 ## 手順 (初回)
 
 1. `bash 01-create-secrets.sh` — bonds 専用シークレット作成 (暗号鍵・break-glass・DB パスワード)
