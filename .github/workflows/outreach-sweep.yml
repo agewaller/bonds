@@ -1,5 +1,7 @@
-# 配信キューの定期処理 (cares outreach-sweep.yml 相当)。
-# 1 時間ごとに process-queue を叩き、送信予定時刻を過ぎた承認済みメッセージを送る。
+# 定期処理 (cares outreach-sweep.yml 相当)。1 時間ごとに:
+# 1) process-queue — 送信予定時刻を過ぎた承認済みメッセージを送る
+# 2) refresh-digests — 新しい記録が積まれた連絡先の「相手ノート (見立て)」を自動更新する
+#    (web 検索はしない。月次キャップはサーバ側が守る)
 # 必要な設定: Variables BONDS_API_URL / Secrets BONDS_ADMIN_TOKEN (break-glass)。
 # 未設定ならジョブは何もせず成功する (グリーンに見せかけないよう notice を出す)。
 name: outreach-sweep
@@ -20,4 +22,6 @@ jobs:
             exit 0
           fi
           curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/outreach/process-queue?batch=10" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
+          curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/contacts/refresh-digests?batch=5" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
