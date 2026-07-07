@@ -78,6 +78,11 @@ export default function AdminPage() {
     <main style={{ maxWidth: 860, margin: "0 auto", padding: "40px 16px" }}>
       <p><Link href="/" style={{ color: "#2563eb" }}>ホームへ戻る</Link></p>
       <h1 style={{ fontSize: 24 }}>管理</h1>
+      <p>
+        <Link href="/admin/partners" style={{ color: "#2563eb" }}>
+          提携先への連絡 (発見・下書き・送信・掲載)
+        </Link>
+      </p>
       {notice && <p style={{ color: "#166534", background: "#f0fdf4", padding: 8, borderRadius: 8 }}>{notice}</p>}
       {error && <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>{error}</p>}
 

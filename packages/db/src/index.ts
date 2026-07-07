@@ -33,6 +33,9 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
   calendarLink: ["icsUrl"],
   // フェーズ4 発信: 承認本文と生成候補 (JSON 文字列) は文面そのもの = PII として暗号化
   outreachMessage: ["body", "candidates"],
+  // 提携先アウトリーチ (ADR-0022 移植): 連絡先メールと本文は要配慮のため暗号化
+  partnerTarget: ["contactEmail"],
+  partnerMessage: ["body"],
 };
 
 // data ({ field: value } / { field: { set: value } } / 配列) を in-place で暗号化。
