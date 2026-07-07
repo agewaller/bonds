@@ -17,8 +17,9 @@ export const PERSON_DD_MAX_NAME_LENGTH = 100;
 // AI 呼び出しタイムアウト。評価は長文 JSON 1 本 (2 モジュール並列実行)。
 export const PERSON_DD_TIMEOUT_MS = 120_000;
 
-// 出力トークン上限 (1 評価あたり)。JSON 構造化で散文より膨らむため cares 比 +50%。
-export const PERSON_DD_MAX_TOKENS = 6000;
+// 出力トークン上限 (1 評価あたり)。JSON 構造化で散文より膨らむ。上限到達で JSON が
+// 途中で切れると invalid_output になるため、余裕を大きめに取る (2026-07-07 途中切れ対策)。
+export const PERSON_DD_MAX_TOKENS = 8000;
 
 // モデル設定: app_config のこのキーに canonical alias を保存し管理者が変更できる。
 export const PERSON_DD_MODEL_CONFIG_KEY = "person_eval_model";
