@@ -70,8 +70,9 @@ beforeEach(async () => {
 });
 
 describe("プロンプト seed (フェーズ3+4 追加分)", () => {
-  it("outreach_message_gen / values_profile_enrich が seed される", async () => {
-    expect(await prisma.prompt.count()).toBe(6);
+  it("outreach_message_gen / values_profile_enrich / partner 系が seed される", async () => {
+    expect(await prisma.prompt.count()).toBe(9);
+    expect(await prisma.prompt.count({ where: { key: { startsWith: "partner_" } } })).toBe(3);
   });
 });
 

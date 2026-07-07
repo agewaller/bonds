@@ -49,6 +49,18 @@ import {
   parseIdentifyCandidates,
   clampProfileHint,
 } from "./lib/identify.js";
+import {
+  BONDS_PITCH,
+  PARTNER_KINDS,
+  PARTNER_STATUSES,
+  PARTNER_DRAFT_JSON_INSTRUCTION,
+  partnerDailyLimit,
+  partnerAutoSendEnabled,
+  buildPartnerFooter,
+  isValidEmail,
+  parseDiscoveredTargets,
+  validatePartnerDraft,
+} from "./lib/partners.js";
 
 export type AppDeps = {
   prisma: ExtendedPrismaClient;
@@ -1491,6 +1503,432 @@ export function createApp(deps: AppDeps) {
       else failed++;
     }
     return c.json({ picked: due.length, sent, failed });
+  });
+
+  // ---------------- 提携先アウトリーチ (cares ADR-0022 の移植) ----------------
+  // bonds を広げるための提携候補 (サイト/協会/コミュニティ/サービス/企業) の
+  // 発見 → 個別連絡文の下書き → 送信 → 返信対応 → 公開ディレクトリ掲載。
+  // 管理者 (オーナー) 専用 (/api/admin/* ガード済み)。公開ディレクトリのみ未認証。
+  // 外への送信は既定で承認制。自動送信は PARTNER_AUTO_SEND=1 の明示許可時のみで、
+  // その場合も送信除外 (suppressed)・日次上限・法的フッタは必ず効く。
+
+  const partnerContext = (t: {
+    name: string;
+    kind: string;
+    url: string | null;
+    handle: string | null;
+    source: string | null;
+    notes: string | null;
+  }): string =>
+    [
+      `名称: ${t.name}`,
+      `種別: ${t.kind}`,
+      t.url ? `URL: ${t.url}` : "",
+      t.handle ? `ハンドル: ${t.handle}` : "",
+      t.source ? `発見元: ${t.source}` : "",
+      t.notes ? `メモ: ${t.notes}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+  // 実送信の共通処理 (承認送信 / 自動送信 / キューから呼ぶ)。安全装置はここに集約する。
+  const performPartnerSend = async (
+    messageId: string,
+  ): Promise<{ status: string; detail?: string }> => {
+    const msg = await prisma.partnerMessage.findFirst({
+      where: { id: messageId, direction: "outbound" },
+    });
+    if (!msg) return { status: "not_found", detail: "メッセージが見つかりません" };
+    if (msg.status === "sent") return { status: "sent" };
+    const target = await prisma.partnerTarget.findFirst({
+      where: { id: msg.targetId, state: "active" },
+    });
+    if (!target) return { status: "not_found", detail: "提携先が見つかりません" };
+    if (target.status === "suppressed") {
+      return { status: "suppressed", detail: "この提携先は送信除外に設定されています" };
+    }
+    if (!isValidEmail(target.contactEmail)) {
+      return { status: "no_email", detail: "送信先メールが未設定か不正です" };
+    }
+    // 日次送信上限 (迷惑メール判定・ドメイン汚染の防止)
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recent = await prisma.partnerMessage.count({
+      where: { direction: "outbound", status: "sent", sentAt: { gte: since } },
+    });
+    if (recent >= partnerDailyLimit()) {
+      return { status: "rate_limited", detail: "本日の送信上限に達しました" };
+    }
+    if (!mailer) {
+      // 送信基盤が未設定でも失敗にせず、承認済みとして保留 (設定後に process-queue が送る)
+      await prisma.partnerMessage.update({ where: { id: msg.id }, data: { status: "approved" } });
+      return {
+        status: "approved",
+        detail: "送信基盤が未設定のため、承認済みとして保留しました。設定が整うと送信されます",
+      };
+    }
+    try {
+      const result = await mailer({
+        to: (target.contactEmail as string).trim(),
+        subject: msg.subject ?? "bonds との連携のご相談",
+        body: `${msg.body}${buildPartnerFooter()}`, // 送信者明示 + 配信停止フッタは必ず付ける
+      });
+      await prisma.partnerMessage.update({
+        where: { id: msg.id },
+        data: { status: "sent", sentAt: new Date(), providerMessageId: result.messageId, errorDetail: null },
+      });
+      await prisma.partnerTarget.update({
+        where: { id: target.id },
+        data: { status: target.status === "replied" || target.status === "partner" ? target.status : "contacted", lastContactedAt: new Date() },
+      });
+      return { status: "sent" };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      await prisma.partnerMessage.update({
+        where: { id: msg.id },
+        data: { status: "failed", errorDetail: detail.slice(0, 300) },
+      });
+      return { status: "failed", detail: "送信できませんでした" };
+    }
+  };
+
+  // 公開ディレクトリ (未認証可)。掲載許可した提携先のみ・PII (メール等) は返さない。
+  app.get("/api/partners", async (c) => {
+    const rows = await prisma.partnerTarget.findMany({
+      where: { isPublic: true, state: "active" },
+      orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }],
+      take: 100,
+    });
+    return c.json({
+      partners: rows.map((t) => ({ kind: t.kind, name: t.name, url: t.url, blurb: t.blurb })),
+    });
+  });
+
+  app.get("/api/admin/partners/targets", async (c) => {
+    const status = c.req.query("status");
+    const targets = await prisma.partnerTarget.findMany({
+      where: {
+        state: "active",
+        ...(status && (PARTNER_STATUSES as readonly string[]).includes(status) ? { status } : {}),
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 200,
+      include: { messages: { orderBy: { createdAt: "desc" }, take: 1 } },
+    });
+    return c.json({
+      targets: targets.map(({ messages, ...t }) => ({
+        ...t,
+        latestMessage: messages[0]
+          ? { id: messages[0].id, direction: messages[0].direction, status: messages[0].status, createdAt: messages[0].createdAt }
+          : null,
+      })),
+    });
+  });
+
+  app.get("/api/admin/partners/targets/:id", async (c) => {
+    const target = await prisma.partnerTarget.findFirst({
+      where: { id: c.req.param("id"), state: "active" },
+    });
+    if (!target) return c.json({ error: "not_found" }, 404);
+    const messages = await prisma.partnerMessage.findMany({
+      where: { targetId: target.id },
+      orderBy: { createdAt: "asc" },
+      take: 50,
+    });
+    return c.json({ target, messages });
+  });
+
+  const partnerTargetData = (b: Record<string, unknown>) => ({
+    kind:
+      typeof b.kind === "string" && (PARTNER_KINDS as readonly string[]).includes(b.kind)
+        ? b.kind
+        : "other",
+    url: typeof b.url === "string" ? b.url.trim() || null : null,
+    handle: typeof b.handle === "string" ? b.handle.trim() || null : null,
+    contactEmail: typeof b.contactEmail === "string" ? b.contactEmail.trim() || null : null,
+    source: typeof b.source === "string" ? b.source.trim() || null : null,
+    notes: typeof b.notes === "string" ? b.notes.trim() || null : null,
+  });
+
+  app.post("/api/admin/partners/targets", async (c) => {
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const name = typeof b.name === "string" ? b.name.trim().slice(0, 120) : "";
+    if (!name) return c.json({ error: "name_required", detail: "名称を入力してください" }, 400);
+    const created = await prisma.partnerTarget.create({
+      data: { name, ...partnerTargetData(b) },
+    });
+    return c.json({ target: created }, 201);
+  });
+
+  app.patch("/api/admin/partners/targets/:id", async (c) => {
+    const target = await prisma.partnerTarget.findFirst({
+      where: { id: c.req.param("id"), state: "active" },
+    });
+    if (!target) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const data: Record<string, unknown> = {};
+    if (typeof b.name === "string" && b.name.trim()) data.name = b.name.trim().slice(0, 120);
+    if (typeof b.kind === "string" && (PARTNER_KINDS as readonly string[]).includes(b.kind)) data.kind = b.kind;
+    if (typeof b.status === "string" && (PARTNER_STATUSES as readonly string[]).includes(b.status)) data.status = b.status;
+    for (const f of ["url", "handle", "contactEmail", "source", "notes", "blurb"] as const) {
+      if (typeof b[f] === "string") data[f] = (b[f] as string).trim() || null;
+    }
+    if (typeof b.isPublic === "boolean") data.isPublic = b.isPublic;
+    if (typeof b.displayOrder === "number" && Number.isFinite(b.displayOrder)) {
+      data.displayOrder = Math.trunc(b.displayOrder);
+    }
+    const updated = await prisma.partnerTarget.update({ where: { id: target.id }, data: data as never });
+    return c.json({ target: updated });
+  });
+
+  app.delete("/api/admin/partners/targets/:id", async (c) => {
+    const target = await prisma.partnerTarget.findFirst({
+      where: { id: c.req.param("id"), state: "active" },
+    });
+    if (!target) return c.json({ error: "not_found" }, 404);
+    await prisma.partnerTarget.update({ where: { id: target.id }, data: { state: "archived" } });
+    return c.json({ ok: true });
+  });
+
+  // 候補の発見: テーマから提携候補を AI が提案 → candidate として保存 (同名は重複させない)
+  app.post("/api/admin/partners/discover", async (c) => {
+    const b = await c.req
+      .json<{ theme?: string; locale?: string }>()
+      .catch(() => ({}) as { theme?: string; locale?: string });
+    const theme = typeof b.theme === "string" ? b.theme.trim().slice(0, 200) : "";
+    if (!theme) return c.json({ error: "theme_required", detail: "テーマを入力してください" }, 400);
+
+    // 検索器があれば実在確認の材料を渡す (無ければ知識ベース)
+    let digest = "";
+    if (ddSearch) {
+      try {
+        const items = await ddSearch(`${theme} 団体 コミュニティ サービス`);
+        digest = items
+          .slice(0, 5)
+          .map((i) => `参考: ${i.url} ${i.title} ${i.snippet.slice(0, 200)}`)
+          .join("\n");
+      } catch {
+        digest = "";
+      }
+    }
+    const userMessage = [`テーマ: ${theme}`, `bonds の紹介: ${BONDS_PITCH}`, digest]
+      .filter(Boolean)
+      .join("\n\n");
+    const r = await runRelationshipAi(
+      "partner_discover",
+      "",
+      userMessage,
+      "partner_discover",
+      normalizeLocale(b.locale),
+    );
+    if (!r.ok) return c.json(r.body as never, r.status);
+    const found = parseDiscoveredTargets(r.text);
+    const existing = new Set(
+      (await prisma.partnerTarget.findMany({ where: { state: "active" }, select: { name: true } })).map(
+        (t) => t.name,
+      ),
+    );
+    const created = [];
+    for (const f of found) {
+      if (existing.has(f.name)) continue;
+      existing.add(f.name);
+      created.push(
+        await prisma.partnerTarget.create({
+          data: { name: f.name, kind: f.kind, url: f.url, source: `discover: ${theme}`, notes: f.reason || null },
+        }),
+      );
+    }
+    return c.json({ found: found.length, created: created.map((t) => ({ id: t.id, name: t.name, kind: t.kind })) });
+  });
+
+  // 連絡文の下書き (AI)。PARTNER_AUTO_SEND=1 のときだけ下書き後に自動送信まで進む。
+  app.post("/api/admin/partners/targets/:id/draft", async (c) => {
+    const target = await prisma.partnerTarget.findFirst({
+      where: { id: c.req.param("id"), state: "active" },
+    });
+    if (!target) return c.json({ error: "not_found" }, 404);
+    const b = await c.req
+      .json<{ points?: string; locale?: string }>()
+      .catch(() => ({}) as { points?: string; locale?: string });
+    const userMessage = [
+      "提携候補の情報:",
+      partnerContext(target),
+      "",
+      `bonds の紹介: ${BONDS_PITCH}`,
+      `bonds の URL: 本文にはシステムが署名として自動で付けるため書かなくてよい`,
+      typeof b.points === "string" && b.points.trim()
+        ? `伝えたいこと: ${b.points.trim().slice(0, 500)}`
+        : "伝えたいこと: 特になし (連携のご相談の最初のご挨拶)",
+    ].join("\n");
+    const r = await runRelationshipAi(
+      "partner_outreach_draft",
+      PARTNER_DRAFT_JSON_INSTRUCTION,
+      userMessage,
+      "partner_draft",
+      normalizeLocale(b.locale),
+    );
+    if (!r.ok) return c.json(r.body as never, r.status);
+    const validated = validatePartnerDraft(extractJson(r.text));
+    if (!validated.ok) {
+      return c.json({ error: "invalid_output", detail: "下書きづくりに失敗しました。もう一度お試しください" }, 502);
+    }
+    const message = await prisma.partnerMessage.create({
+      data: {
+        targetId: target.id,
+        direction: "outbound",
+        channel: "email",
+        subject: validated.draft.subject,
+        body: validated.draft.body,
+        status: "draft",
+      },
+    });
+    if (target.status === "candidate") {
+      await prisma.partnerTarget.update({ where: { id: target.id }, data: { status: "queued" } });
+    }
+    // 自動送信 (既定 OFF)。明示的に有効化された場合のみ。安全装置は performPartnerSend 側で必ず効く。
+    let autoSend: { status: string; detail?: string } | null = null;
+    if (partnerAutoSendEnabled()) {
+      autoSend = await performPartnerSend(message.id);
+    }
+    const fresh = await prisma.partnerMessage.findUnique({ where: { id: message.id } });
+    return c.json({ message: fresh, autoSend }, 201);
+  });
+
+  // 返信への返事の下書き (スレッド文脈を渡す)。送信は同じく承認制/明示許可時のみ自動。
+  app.post("/api/admin/partners/targets/:id/reply-draft", async (c) => {
+    const target = await prisma.partnerTarget.findFirst({
+      where: { id: c.req.param("id"), state: "active" },
+    });
+    if (!target) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<{ locale?: string }>().catch(() => ({}) as { locale?: string });
+    const thread = await prisma.partnerMessage.findMany({
+      where: { targetId: target.id },
+      orderBy: { createdAt: "desc" },
+      take: 6,
+    });
+    if (!thread.some((m) => m.direction === "inbound")) {
+      return c.json({ error: "no_inbound", detail: "まだ相手からの返信が記録されていません" }, 400);
+    }
+    const userMessage = [
+      "提携候補の情報:",
+      partnerContext(target),
+      "",
+      `bonds の紹介: ${BONDS_PITCH}`,
+      "",
+      "これまでのやりとり (古い順):",
+      ...thread
+        .reverse()
+        .map((m) => `${m.direction === "outbound" ? "こちらから" : "相手から"}: ${m.subject ?? ""}\n${m.body}`),
+    ].join("\n");
+    const r = await runRelationshipAi(
+      "partner_reply_draft",
+      PARTNER_DRAFT_JSON_INSTRUCTION,
+      userMessage,
+      "partner_reply_draft",
+      normalizeLocale(b.locale),
+    );
+    if (!r.ok) return c.json(r.body as never, r.status);
+    const validated = validatePartnerDraft(extractJson(r.text));
+    if (!validated.ok) {
+      return c.json({ error: "invalid_output", detail: "下書きづくりに失敗しました。もう一度お試しください" }, 502);
+    }
+    const message = await prisma.partnerMessage.create({
+      data: {
+        targetId: target.id,
+        direction: "outbound",
+        channel: "email",
+        subject: validated.draft.subject,
+        body: validated.draft.body,
+        status: "draft",
+      },
+    });
+    let autoSend: { status: string; detail?: string } | null = null;
+    if (partnerAutoSendEnabled()) {
+      autoSend = await performPartnerSend(message.id);
+    }
+    const fresh = await prisma.partnerMessage.findUnique({ where: { id: message.id } });
+    return c.json({ message: fresh, autoSend }, 201);
+  });
+
+  // 返信の記録 (受信)。target を replied にし、返事の下書きにつなげる。
+  app.post("/api/admin/partners/targets/:id/inbound", async (c) => {
+    const target = await prisma.partnerTarget.findFirst({
+      where: { id: c.req.param("id"), state: "active" },
+    });
+    if (!target) return c.json({ error: "not_found" }, 404);
+    const b = await c.req
+      .json<{ body?: string; subject?: string }>()
+      .catch(() => ({}) as { body?: string; subject?: string });
+    if (typeof b.body !== "string" || !b.body.trim()) {
+      return c.json({ error: "body_required", detail: "返信の内容を入力してください" }, 400);
+    }
+    const message = await prisma.partnerMessage.create({
+      data: {
+        targetId: target.id,
+        direction: "inbound",
+        channel: "email",
+        subject: typeof b.subject === "string" ? b.subject.trim() || null : null,
+        body: b.body.trim(),
+        status: "received",
+      },
+    });
+    if (target.status !== "partner" && target.status !== "suppressed") {
+      await prisma.partnerTarget.update({ where: { id: target.id }, data: { status: "replied" } });
+    }
+    return c.json({ message }, 201);
+  });
+
+  // 承認 (本文の手直しつき)。人が確認した印。
+  app.post("/api/admin/partners/messages/:id/approve", async (c) => {
+    const msg = await prisma.partnerMessage.findFirst({
+      where: { id: c.req.param("id"), direction: "outbound" },
+    });
+    if (!msg) return c.json({ error: "not_found" }, 404);
+    if (msg.status === "sent") return c.json({ error: "already_sent", detail: "すでに送信済みです" }, 409);
+    const b = await c.req
+      .json<{ subject?: string; body?: string }>()
+      .catch(() => ({}) as { subject?: string; body?: string });
+    const updated = await prisma.partnerMessage.update({
+      where: { id: msg.id },
+      data: {
+        status: "approved",
+        subject: typeof b.subject === "string" && b.subject.trim() ? b.subject.trim().slice(0, 150) : msg.subject,
+        body: typeof b.body === "string" && b.body.trim() ? b.body.trim() : msg.body,
+      },
+    });
+    return c.json({ message: updated });
+  });
+
+  // 送信 (人の明示操作 = 承認とみなす)。安全装置は performPartnerSend が担う。
+  app.post("/api/admin/partners/messages/:id/send", async (c) => {
+    const msg = await prisma.partnerMessage.findFirst({
+      where: { id: c.req.param("id"), direction: "outbound" },
+    });
+    if (!msg) return c.json({ error: "not_found" }, 404);
+    if (msg.status === "sent") return c.json({ error: "already_sent", detail: "すでに送信済みです" }, 409);
+    const r = await performPartnerSend(msg.id);
+    const ok = r.status === "sent" || r.status === "approved";
+    return c.json(r, ok ? 200 : 422);
+  });
+
+  // 承認済みの一括送信 (Actions cron から)。送信基盤が整った後の保留分もここで流れる。
+  app.post("/api/admin/partners/process-queue", async (c) => {
+    const batch = Math.min(50, Math.max(1, Number(c.req.query("batch")) || 10));
+    const due = await prisma.partnerMessage.findMany({
+      where: { status: "approved", direction: "outbound" },
+      orderBy: { createdAt: "asc" },
+      take: batch,
+    });
+    let sent = 0;
+    let held = 0;
+    let failed = 0;
+    for (const m of due) {
+      const r = await performPartnerSend(m.id);
+      if (r.status === "sent") sent++;
+      else if (r.status === "approved" || r.status === "rate_limited") held++;
+      else failed++;
+      if (r.status === "rate_limited") break; // 上限到達: 以降は次回に回す
+    }
+    return c.json({ picked: due.length, sent, held, failed });
   });
 
   // 実行詳細 (ステップ含む)

@@ -254,6 +254,55 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+/// 提携先 (成長アウトリーチ) の候補と状態。cares ADR-0022 の移植。管理者 (オーナー) 専用。
+/// 発見 → 下書き → 承認送信 → 返信 → 提携 (公開ディレクトリ掲載) のファネルを持つ。
+model PartnerTarget {
+  id              String    @id @default(uuid())
+  kind            String    @default("other") // site / sns / association / community / service / corp / other
+  name            String
+  url             String?
+  handle          String? // SNS handle 等
+  contactEmail    String?   @map("contact_email") // 暗号化 (要配慮の連絡先)
+  source          String? // 発見元 (検索/紹介/イベント等)
+  status          String    @default("candidate") // candidate / queued / contacted / replied / partner / declined / suppressed
+  notes           String? // 管理者の精査メモ
+  isPublic        Boolean   @default(false) @map("is_public") // 提携先ディレクトリ (/partners) 掲載
+  blurb           String? // 公開ディレクトリ用の一言紹介
+  displayOrder    Int       @default(0) @map("display_order")
+  lastContactedAt DateTime? @map("last_contacted_at")
+  state           String    @default("active") // active / archived (ソフト削除)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  messages PartnerMessage[]
+
+  @@index([status, kind])
+  @@index([isPublic, displayOrder])
+  @@map("partner_targets")
+}
+
+/// 提携先との連絡履歴。本文はアプリ層暗号化。既定フローは draft → approved → sent (承認制)。
+/// 自動送信は PARTNER_AUTO_SEND=1 の明示許可時のみ (CLAUDE.md 自律性の段階)。
+model PartnerMessage {
+  id                String        @id @default(uuid())
+  targetId          String        @map("target_id")
+  target            PartnerTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  direction         String        @default("outbound") // outbound / inbound
+  channel           String        @default("email")
+  subject           String?
+  body              String // 暗号化
+  status            String        @default("draft") // draft / approved / sent / failed / received
+  providerMessageId String?       @map("provider_message_id")
+  errorDetail       String?       @map("error_detail")
+  sentAt            DateTime?     @map("sent_at")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  @@index([targetId, createdAt])
+  @@index([status])
+  @@map("partner_messages")
+}
+
 /// 公人 (dd_subjects) と人脈 (contacts) の任意リンク (DESIGN-HANDOVER §2 の将来項目)。
 model PersonLink {
   id        String   @id @default(uuid())

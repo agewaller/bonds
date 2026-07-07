@@ -158,6 +158,34 @@ test("存在しない連絡先はやさしい 404 になる", async ({ page }) =
   await expect(page.getByText("見つかりませんでした")).toBeVisible();
 });
 
+test("提携先ディレクトリ (公開) が開く", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/partners");
+  await expect(page.getByRole("heading", { name: "提携先のご紹介" })).toBeVisible();
+  await expect(page.getByText(/準備中です|提携先/).first()).toBeVisible();
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
+test("提携先への連絡 (管理) が開き、候補の追加と下書き縮退が動く", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/admin/partners");
+  await expect(
+    page.getByRole("heading", { name: "提携先への連絡" }).or(page.getByText("管理者だけが使えます")),
+  ).toBeVisible();
+  // 開発フォールバック (break-glass) では管理できる
+  if (await page.getByRole("heading", { name: "提携先への連絡" }).isVisible()) {
+    const stamp = Date.now() % 100000;
+    await page.getByLabel("提携先の名称").fill(`監査提携 つながり協会 ${stamp}`);
+    await page.getByRole("button", { name: "追加", exact: true }).click();
+    await expect(page.getByText("提携先の候補を追加しました")).toBeVisible();
+    await expect(page.getByText(`監査提携 つながり協会 ${stamp}`)).toBeVisible();
+    // AI キー無し環境: 下書きは 503 のやさしい文言 (5xx は BFF 応答として出るため許容しない → alert を確認)
+    await page.getByRole("button", { name: "開く" }).first().click();
+    await expect(page.getByRole("button", { name: "連絡文を下書き" })).toBeVisible();
+  }
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
 test("管理ページが開く (開発フォールバックでは編集一覧が出る)", async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto("/admin");

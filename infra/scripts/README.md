@@ -20,6 +20,14 @@ SendGrid のキーを `BONDS_SENDGRID_API_KEY` シークレットに投入し、
 `OUTREACH_FROM_EMAIL` 環境変数で 07 に渡す (例: `OUTREACH_FROM_EMAIL=bonds@example.com bash 07-...`)。
 両方そろうまで送信系は 503 に縮退する (それ以外の機能は動く)。
 
+提携先アウトリーチ (管理画面「提携先への連絡」) の任意設定 (07 に環境変数で渡す):
+
+- `PARTNER_AUTO_SEND=1` — 下書き直後の自動送信を有効化 (既定 0 = 承認制。
+  有効時も送信除外・日次上限・法的フッタは必ず効く)
+- `PARTNER_DAILY_LIMIT` — 提携先メールの 1 日あたり送信上限 (既定 20、最大 500)
+- `OUTREACH_SENDER_IDENTITY` — 送信メールのフッタに入る運営者名
+  (未設定は「bonds 運営チーム（人間関係エージェント bonds）」)
+
 ## 手順 (初回)
 
 1. `bash 01-create-secrets.sh` — bonds 専用シークレット作成 (暗号鍵・break-glass・DB パスワード)
