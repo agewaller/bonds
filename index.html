@@ -242,6 +242,30 @@
   var params = new URLSearchParams(location.search);
   var API_BASE = params.get("api") || "https://cares-api-xj6szhutkq-an.a.run.app";
 
+  // 管理者の制限解除キー。?ownerkey=キー を付けて一度開くとこの端末に保存され、
+  // 以後の評価は日次の回数制限なしで実行される (キーの照合はサーバ側)。
+  // ?ownerkey= (空) を付けて開くと解除。このキーは日次制限の解除にしか使えない
+  // 専用キーで、鍵 (AI キーや管理トークン) はブラウザに置かない原則は維持する。
+  var OWNER_KEY_STORAGE = "bonds_owner_key";
+  var ownerKey = "";
+  try { ownerKey = localStorage.getItem(OWNER_KEY_STORAGE) || ""; } catch (_) { /* 私的モード等 */ }
+  if (params.get("ownerkey") !== null) {
+    ownerKey = (params.get("ownerkey") || "").trim();
+    try {
+      if (ownerKey) localStorage.setItem(OWNER_KEY_STORAGE, ownerKey);
+      else localStorage.removeItem(OWNER_KEY_STORAGE);
+    } catch (_) { /* 保存できない環境ではこの回のみ有効 */ }
+    // アドレス欄・履歴にキーを残さない
+    params.delete("ownerkey");
+    var cleanQs = params.toString();
+    history.replaceState(null, "", location.pathname + (cleanQs ? "?" + cleanQs : ""));
+  }
+  function apiHeaders() {
+    var h = { "Content-Type": "application/json" };
+    if (ownerKey) h["x-person-eval-owner-key"] = ownerKey;
+    return h;
+  }
+
   var form = document.getElementById("form");
   var nameInput = document.getElementById("name");
   var submitBtn = document.getElementById("submit");
@@ -410,9 +434,13 @@
     var label = hint ? body.name + "（" + hint + "）" : body.name;
     fillSection("out-7d", "subject-7d", body.consciousness, label);
     fillSection("out-svc", "subject-svc", body.socialValue, label);
-    meta.textContent = typeof body.remainingToday === "number"
-      ? "本日はあと " + body.remainingToday + " 回評価できます"
-      : "";
+    meta.textContent = body.unlimited
+      ? "管理者として、回数の制限なくお使いいただけます"
+      : ownerKey && body.unlimited === false
+        ? "管理者のキーを確認できませんでした (通常の回数制限で動いています)"
+        : typeof body.remainingToday === "number"
+          ? "本日はあと " + body.remainingToday + " 回評価できます"
+          : "";
     results.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -473,7 +501,7 @@
       if (hint) payload.profileHint = hint;
       var res = await fetch(API_BASE + "/api/trial/person-eval", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: apiHeaders(),
         body: JSON.stringify(payload),
         signal: controller.signal
       });
@@ -519,7 +547,7 @@
     try {
       var res = await fetch(API_BASE + "/api/trial/person-eval", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: apiHeaders(),
         body: JSON.stringify({
           name: name,
           locale: (navigator.language || "ja").split("-")[0],
