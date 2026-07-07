@@ -51,7 +51,7 @@ type RunSummary = {
   createdAt: string;
 };
 type Detail = {
-  subject: { id: string; slug: string; name: string; subjectType: string };
+  subject: { id: string; slug: string; name: string; subjectType: string; profileHint: string | null };
   latestByType: Record<string, RunSummary>;
 };
 
@@ -283,7 +283,12 @@ export default function SubjectDetailPage() {
           一覧へ戻る
         </Link>
       </p>
-      <h1 style={{ fontSize: 26 }}>{detail.subject.name}</h1>
+      <h1 style={{ fontSize: 26, marginBottom: detail.subject.profileHint ? 4 : undefined }}>
+        {detail.subject.name}
+      </h1>
+      {detail.subject.profileHint && (
+        <p style={{ color: "#64748b", margin: "0 0 16px", fontSize: 14 }}>{detail.subject.profileHint}</p>
+      )}
 
       <button
         onClick={() => void run()}

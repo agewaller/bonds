@@ -69,13 +69,23 @@ export const PERSON_EVAL_SAFETY = [
 ].join("\n");
 
 // ユーザーメッセージの組み立て (cares buildPersonEvalUserMessage を踏襲)。
-export function buildPersonEvalUserMessage(name: string): string {
-  return [
-    `評価対象人物: ${name}`,
+// profileHint はユーザーが同姓同名の候補から選んだ「どの人物か」の特定メモ。
+// これがあるときは別人との混同を明示的に禁止する。
+export function buildPersonEvalUserMessage(name: string, profileHint?: string | null): string {
+  const lines = [`評価対象人物: ${name}`];
+  if (profileHint && profileHint.trim()) {
+    lines.push(
+      `対象の特定: ${profileHint.trim()}`,
+      "同じ名前の別人が存在します。上の特定に合致する人物だけを評価し、別人の経歴・実績・問題を混ぜないでください。",
+    );
+  } else {
+    lines.push("役職・領域: 不明 (公開情報から特定してください)");
+  }
+  lines.push(
     "対象期間: 特に指定なし (公人としての活動全体)",
-    "役職・領域: 不明 (公開情報から特定してください)",
     "重点的に見たい論点: 特になし (全体をバランスよく)",
     "比較対象: 特になし",
     "対象国・地域: 特に指定なし",
-  ].join("\n");
+  );
+  return lines.join("\n");
 }

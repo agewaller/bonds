@@ -43,6 +43,7 @@ model DdSubject {
   subjectType  String   @default("other") @map("subject_type") // politician / executive / other
   affiliations Json?
   country      String?
+  profileHint  String?  @map("profile_hint") // 同姓同名の特定メモ (ユーザーが選んだ候補の簡単なプロフィール)
   state        String   @default("active") // active / archived
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")

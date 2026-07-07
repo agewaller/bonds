@@ -72,5 +72,14 @@ describe("buildPersonEvalUserMessage", () => {
     const m = buildPersonEvalUserMessage("渋沢栄一");
     expect(m).toContain("評価対象人物: 渋沢栄一");
     expect(m).toContain("対象期間");
+    expect(m).not.toContain("対象の特定");
+  });
+
+  it("profileHint (同姓同名の特定メモ) があれば接地し、別人との混同を禁止する", () => {
+    const m = buildPersonEvalUserMessage("山田太郎", "1967年生まれの参議院議員");
+    expect(m).toContain("対象の特定: 1967年生まれの参議院議員");
+    expect(m).toContain("別人の経歴・実績・問題を混ぜないでください");
+    // 空白だけのメモは無いものとして扱う
+    expect(buildPersonEvalUserMessage("山田太郎", "   ")).not.toContain("対象の特定");
   });
 });

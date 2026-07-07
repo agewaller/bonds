@@ -35,8 +35,12 @@ export function buildTavilySearch(): SearchFn | null {
 }
 
 /** 人物 DD 用の定型クエリ (一次/実績/批判を分けて集める = vm の search_catalog の精神)。 */
-export function personSearchQueries(name: string): string[] {
-  return [`${name}`, `${name} 経歴 実績`, `${name} 批判 問題点`];
+export function personSearchQueries(name: string, profileHint?: string | null): string[] {
+  // 同姓同名の特定メモがあるときは、先頭のクエリにだけ短い識別語を添えて
+  // 別人の記事を拾いにくくする (長すぎる語は検索精度を落とすため 40 文字まで)。
+  const hint = (profileHint ?? "").trim().slice(0, 40);
+  const first = hint ? `${name} ${hint}` : `${name}`;
+  return [first, `${name} 経歴 実績`, `${name} 批判 問題点`];
 }
 
 /** 検索結果を evaluate へ渡す参考情報ダイジェストにする。出典 URL を必ず添える。 */

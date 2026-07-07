@@ -270,6 +270,100 @@ describe("run (両評価並列)", () => {
   });
 });
 
+describe("identify (同姓同名の特定)", () => {
+  it("候補リストを簡単なプロフィール付きで返し、usage を記録する", async () => {
+    const identifyGenerate: GenerateFn = async ({ model }) => ({
+      text: JSON.stringify({
+        candidates: [
+          { name: "山田太郎", description: "1950年生まれの政治家。元総務大臣" },
+          { name: "山田太郎", description: "1967年生まれの参議院議員" },
+        ],
+      }),
+      model,
+      inputTokens: 300,
+      outputTokens: 150,
+    });
+    const app = createApp({ prisma, generate: identifyGenerate });
+    const res = await app.request("/api/dd/identify", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ name: "山田太郎" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.candidates).toHaveLength(2);
+    expect(body.candidates[0].description).toContain("政治家");
+    const usage = await prisma.aiUsageLog.findMany({ where: { purpose: "person_dd_identify" } });
+    expect(usage).toHaveLength(1);
+  });
+
+  it("壊れた出力は候補ゼロ (名前のみで続行できる)、AI キー未設定は候補なし縮退、name 無しは 400", async () => {
+    const brokenGenerate: GenerateFn = async ({ model }) => ({
+      text: "JSON ではない返答",
+      model,
+      inputTokens: 1,
+      outputTokens: 1,
+    });
+    const app = createApp({ prisma, generate: brokenGenerate });
+    const ok = await app.request("/api/dd/identify", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ name: "山田太郎" }),
+    });
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).candidates).toEqual([]);
+
+    const noAi = createApp({ prisma, generate: null });
+    const degraded = await noAi.request("/api/dd/identify", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ name: "山田太郎" }),
+    });
+    expect(degraded.status).toBe(200); // 補助機能なので 5xx にしない (画面監査の原則)
+    const dBody = await degraded.json();
+    expect(dBody.candidates).toEqual([]);
+    expect(dBody.unavailable).toBe(true);
+
+    const res400 = await app.request("/api/dd/identify", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({}),
+    });
+    expect(res400.status).toBe(400);
+  });
+
+  it("profileHint 付きで登録すると評価の入力に特定メモが接地される", async () => {
+    const captured: string[] = [];
+    const capturingGenerate: GenerateFn = async (args) => {
+      captured.push(args.userMessage);
+      return validGenerate(args);
+    };
+    const app = createApp({ prisma, generate: capturingGenerate });
+    const res = await app.request("/api/dd/subjects", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        name: "山田太郎",
+        subjectType: "politician",
+        profileHint: "1967年生まれの参議院議員",
+      }),
+    });
+    expect(res.status).toBe(201);
+    const subject = (await res.json()).subject as { slug: string; profileHint: string };
+    expect(subject.profileHint).toBe("1967年生まれの参議院議員");
+
+    const run = await app.request(`/api/dd/subjects/${subject.slug}/run`, {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ ddType: "consciousness_7d" }),
+    });
+    expect(run.status).toBe(200);
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toContain("対象の特定: 1967年生まれの参議院議員");
+    expect(captured[0]).toContain("別人の経歴・実績・問題を混ぜないでください");
+  });
+});
+
 describe("admin person-eval-config", () => {
   it("既定は sonnet、canonical alias のみ受け付け、datestamped は正規化", async () => {
     const app = createApp({ prisma, generate: validGenerate });
