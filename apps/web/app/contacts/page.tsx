@@ -28,6 +28,14 @@ type Summary = {
   isolation: { level: string; overdueCount: number; total: number };
   today: { contactId: string; name: string; kind: string; reason: string }[];
 };
+type Duplicate = {
+  id: string;
+  name: string;
+  company: string | null;
+  title: string | null;
+  relationship: string;
+  distance: number;
+};
 
 const LEVEL_LABEL: Record<string, { label: string; color: string; message: string }> = {
   good: { label: "良好", color: "#27ae60", message: "大切な方とのつながりがしっかり保たれています。" },
@@ -64,6 +72,9 @@ export default function ContactsPage() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  // 同姓同名の確認 (null = 非表示)。既存の同名者を見せて「同じ人か別の人か」を選んでもらう
+  const [duplicates, setDuplicates] = useState<Duplicate[] | null>(null);
+  const [pendingName, setPendingName] = useState("");
 
   const load = useCallback(async () => {
     const [cRes, sRes, pRes] = await Promise.all([
@@ -80,21 +91,31 @@ export default function ContactsPage() {
     void load();
   }, [load]);
 
-  const add = async () => {
-    if (!name.trim() || busy) return;
+  const add = async (confirmNew = false) => {
+    const targetName = confirmNew ? pendingName : name.trim();
+    if (!targetName || busy) return;
     setBusy(true);
     setError("");
     try {
       const res = await apiFetch("contacts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), distance: Number(distance) }),
+        body: JSON.stringify({ name: targetName, distance: Number(distance), confirmNew }),
       });
+      if (res.status === 409) {
+        // 同じお名前の方が既にいる。まず「どの方のことか」を確かめてもらう
+        const body = await res.json().catch(() => ({}));
+        setPendingName(targetName);
+        setDuplicates(Array.isArray(body.duplicates) ? body.duplicates : []);
+        return;
+      }
       if (!res.ok) {
         setError((await res.json().catch(() => ({}))).detail ?? "追加できませんでした");
         return;
       }
       setName("");
+      setDuplicates(null);
+      setPendingName("");
       await load();
     } finally {
       setBusy(false);
@@ -116,7 +137,12 @@ export default function ContactsPage() {
         setError(body.detail ?? "取り込めませんでした");
         return;
       }
-      setNotice(`${body.imported}件の連絡先を取り込みました`);
+      const sameName: string[] = Array.isArray(body.sameName) ? body.sameName : [];
+      setNotice(
+        sameName.length > 0
+          ? `${body.imported}件の連絡先を取り込みました。同じお名前の方がすでにいるため見送った分があります (${sameName.join("、")})。別の方でしたら、上の追加欄からもう一度お名前を入れてください`
+          : `${body.imported}件の連絡先を取り込みました`,
+      );
       setImportText("");
       setShowImport(false);
       await load();
@@ -132,6 +158,7 @@ export default function ContactsPage() {
     setError("");
     let imported = 0;
     let interactions = 0;
+    const sameNames = new Set<string>();
     const problems: string[] = [];
     try {
       for (const file of Array.from(files)) {
@@ -147,10 +174,15 @@ export default function ContactsPage() {
         }
         imported += body.imported ?? 0;
         interactions += body.interactionsAdded ?? 0;
+        if (Array.isArray(body.sameName)) body.sameName.forEach((n: string) => sameNames.add(n));
       }
       if (imported > 0 || interactions > 0) {
         const talk = interactions > 0 ? ` (やりとりの記録も${interactions}件)` : "";
-        setNotice(`${imported}件の連絡先を取り込みました${talk}`);
+        const dup =
+          sameNames.size > 0
+            ? `。同じお名前の方がすでにいるため見送った分があります (${[...sameNames].slice(0, 10).join("、")})。別の方でしたら追加欄からお名前を入れてください`
+            : "";
+        setNotice(`${imported}件の連絡先を取り込みました${talk}${dup}`);
         await load();
       }
       if (problems.length > 0) setError(problems.join(" / "));
@@ -390,6 +422,73 @@ export default function ContactsPage() {
             {t("add_button")}
           </button>
         </div>
+        {duplicates && (
+          <section
+            aria-label="同じお名前の確認"
+            style={{
+              border: "1px solid #bfdbfe",
+              background: "#eff6ff",
+              borderRadius: 12,
+              padding: 16,
+              marginTop: 12,
+            }}
+          >
+            <p style={{ margin: "0 0 10px", fontWeight: 600 }}>
+              「{pendingName}」というお名前の方がすでに連絡帳にいます。同じ方でしょうか。
+            </p>
+            <div style={{ display: "grid", gap: 8 }}>
+              {duplicates.map((d) => (
+                <Link
+                  key={d.id}
+                  href={`/contacts/${d.id}`}
+                  style={{
+                    display: "block",
+                    padding: "10px 14px",
+                    background: "#fff",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 10,
+                    textDecoration: "none",
+                    color: "inherit",
+                  }}
+                >
+                  <span style={{ fontWeight: 600 }}>{d.name}</span>
+                  <span style={{ display: "block", color: "#64748b", fontSize: 14 }}>
+                    {[d.company, d.title].filter(Boolean).join(" ") || "所属の記録なし"}
+                    {" ・ "}
+                    {DISTANCE_LABEL[d.distance] ?? ""}
+                    {" ・ 同じ方ならこちらを開いて追記してください"}
+                  </span>
+                </Link>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+              <button
+                onClick={() => void add(true)}
+                disabled={busy}
+                style={{
+                  padding: "8px 14px",
+                  background: "#2563eb",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                }}
+              >
+                別の人として追加する
+              </button>
+              <button
+                onClick={() => {
+                  setDuplicates(null);
+                  setPendingName("");
+                }}
+                disabled={busy}
+                style={{ padding: "8px 14px", background: "none", border: "none", color: "#64748b", cursor: "pointer" }}
+              >
+                やめる
+              </button>
+            </div>
+          </section>
+        )}
         <p style={{ marginTop: 8 }}>
           <button
             onClick={() => setShowImport(!showImport)}

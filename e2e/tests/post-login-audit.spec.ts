@@ -68,6 +68,26 @@ test("連絡帳: 追加 → つながりスコア → 今日のおすすめ → 
   expect(errors, errors.join("\n")).toHaveLength(0);
 });
 
+test("連絡帳: 同じお名前は確認を挟み、別の人として追加できる", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/contacts");
+  const name = `監査同名 山田 ${Date.now() % 100000}`;
+  await page.getByLabel("お名前").fill(name);
+  await page.getByRole("button", { name: "追加" }).click();
+  await expect(page.getByText(name).first()).toBeVisible();
+
+  // 同じ名前をもう一度 → まず「同じ方でしょうか」の確認が出る
+  await page.getByLabel("お名前").fill(name);
+  await page.getByRole("button", { name: "追加" }).click();
+  await expect(page.getByText(/すでに連絡帳にいます/)).toBeVisible();
+
+  // 別の人と特定 → 追加され、一覧に同名が 2 件になる
+  await page.getByRole("button", { name: "別の人として追加する" }).click();
+  await expect(page.getByText(/すでに連絡帳にいます/)).toBeHidden();
+  await expect(page.getByRole("link", { name: new RegExp(name) })).toHaveCount(2);
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
 test("連絡帳: CSV 取り込みが画面から動く", async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto("/contacts");

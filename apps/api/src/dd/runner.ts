@@ -149,7 +149,7 @@ export async function runPersonDd(
     });
     emit({ type: "step_started", runId: run.id, stepKey: "search" });
     try {
-      const queries = personSearchQueries(subject.name);
+      const queries = personSearchQueries(subject.name, subject.profileHint);
       const results = [] as Array<{ query: string; items: Awaited<ReturnType<SearchFn>> }>;
       for (const q of queries) {
         results.push({ query: q, items: await deps.search(q) });
@@ -205,9 +205,9 @@ export async function runPersonDd(
   emit({ type: "step_started", runId: run.id, stepKey: "evaluate" });
 
   const system = buildSystemPrompt(prompt.body, ddType, locale);
-  const userMessage = searchDigest
-    ? `${buildPersonEvalUserMessage(subject.name)}\n\n${searchDigest}`
-    : buildPersonEvalUserMessage(subject.name);
+  // profileHint (同姓同名の特定メモ) があれば接地し、別人との混同を防ぐ
+  const base = buildPersonEvalUserMessage(subject.name, subject.profileHint);
+  const userMessage = searchDigest ? `${base}\n\n${searchDigest}` : base;
 
   let text: string;
   try {

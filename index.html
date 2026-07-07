@@ -144,6 +144,35 @@
     cursor: pointer;
   }
   .meta { color: var(--muted); font-size: 0.8rem; margin-top: 16px; text-align: right; }
+  /* 同姓同名の候補選択 */
+  #candidates { margin-top: 16px; }
+  #candidates .cand-lead { font-weight: 600; margin: 0 0 10px; }
+  button.cand {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    font: inherit;
+    color: var(--text);
+  }
+  button.cand:hover { border-color: var(--accent); }
+  button.cand .cand-name { font-weight: 600; display: block; }
+  button.cand .cand-desc { color: var(--muted); font-size: 0.88rem; display: block; }
+  .cand-row { display: flex; gap: 12px; margin-top: 4px; flex-wrap: wrap; }
+  button.cand-skip {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-size: 0.9rem;
+    color: var(--muted);
+    cursor: pointer;
+  }
   footer {
     margin-top: 40px;
     color: var(--muted);
@@ -169,6 +198,7 @@
       </div>
       <p class="hint">意識の七次元と社会価値創造の二つの評価を一度に作ります。一〜二分ほどかかります。</p>
     </form>
+    <div id="candidates" hidden></div>
     <div id="alert" class="alert" role="alert" hidden></div>
   </div>
 
@@ -245,6 +275,8 @@
     return s.trim();
   }
 
+  var candidatesBox = document.getElementById("candidates");
+
   var LOADING_MESSAGES = [
     "評価を作っています。一〜二分ほどお待ちください。",
     "公開情報を整理しています…",
@@ -254,11 +286,14 @@
   ];
   var loadingTimer = null;
 
-  function setLoading(on) {
+  function setLoading(on, stage) {
     submitBtn.disabled = on;
     submitBtn.textContent = on ? "評価中…" : "評価する";
     loading.hidden = !on;
-    if (on) {
+    if (loadingTimer) { clearInterval(loadingTimer); loadingTimer = null; }
+    if (on && stage === "identify") {
+      loadingText.textContent = "どなたのことか確認しています…";
+    } else if (on) {
       var i = 0;
       loadingText.textContent = LOADING_MESSAGES[0];
       loadingTimer = setInterval(function () {
@@ -369,11 +404,60 @@
     });
   });
 
-  form.addEventListener("submit", async function (e) {
-    e.preventDefault();
-    var name = nameInput.value.trim();
-    if (!name) { showError("評価したい人物の名前を入力してください。"); return; }
+  // 評価結果の表示。hint (どの人物かの特定メモ) があれば対象名に添える。
+  function displayResults(body, hint) {
+    results.hidden = false;
+    var label = hint ? body.name + "（" + hint + "）" : body.name;
+    fillSection("out-7d", "subject-7d", body.consciousness, label);
+    fillSection("out-svc", "subject-svc", body.socialValue, label);
+    meta.textContent = typeof body.remainingToday === "number"
+      ? "本日はあと " + body.remainingToday + " 回評価できます"
+      : "";
+    results.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
+  // 同姓同名の候補を選んでもらう (createElement + textContent のみ = HTML 注入なし)。
+  function showCandidates(name, list) {
+    candidatesBox.textContent = "";
+    var lead = document.createElement("p");
+    lead.className = "cand-lead";
+    lead.textContent = "「" + name + "」というお名前の方は複数いるようです。どの方のことか選んでください。";
+    candidatesBox.appendChild(lead);
+    list.forEach(function (cd) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cand";
+      var n = document.createElement("span");
+      n.className = "cand-name";
+      n.textContent = cd.name;
+      var d = document.createElement("span");
+      d.className = "cand-desc";
+      d.textContent = cd.description;
+      btn.appendChild(n);
+      btn.appendChild(d);
+      btn.addEventListener("click", function () {
+        candidatesBox.hidden = true;
+        runEval(cd.name, cd.description);
+      });
+      candidatesBox.appendChild(btn);
+    });
+    var row = document.createElement("div");
+    row.className = "cand-row";
+    var skip = document.createElement("button");
+    skip.type = "button";
+    skip.className = "cand-skip";
+    skip.textContent = "この中にはいない (名前のまま評価する)";
+    skip.addEventListener("click", function () {
+      candidatesBox.hidden = true;
+      runEval(name, null);
+    });
+    row.appendChild(skip);
+    candidatesBox.appendChild(row);
+    candidatesBox.hidden = false;
+  }
+
+  // 評価の実行 (第二段)。profileHint はユーザーが選んだ候補のプロフィール。
+  async function runEval(name, hint) {
     alertBox.hidden = true;
     results.hidden = true;
     setLoading(true);
@@ -382,13 +466,15 @@
     var timeout = setTimeout(function () { controller.abort(); }, 180000);
 
     try {
+      var payload = {
+        name: name,
+        locale: (navigator.language || "ja").split("-")[0]
+      };
+      if (hint) payload.profileHint = hint;
       var res = await fetch(API_BASE + "/api/trial/person-eval", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name,
-          locale: (navigator.language || "ja").split("-")[0]
-        }),
+        body: JSON.stringify(payload),
         signal: controller.signal
       });
       var body = null;
@@ -405,13 +491,7 @@
       }
 
       // クランプ判定は高さの実測が要るため、先に表示してから流し込む
-      results.hidden = false;
-      fillSection("out-7d", "subject-7d", body.consciousness, body.name);
-      fillSection("out-svc", "subject-svc", body.socialValue, body.name);
-      meta.textContent = typeof body.remainingToday === "number"
-        ? "本日はあと " + body.remainingToday + " 回評価できます"
-        : "";
-      results.scrollIntoView({ behavior: "smooth", block: "start" });
+      displayResults(body, hint);
     } catch (err) {
       showError(err && err.name === "AbortError"
         ? "評価に時間がかかりすぎました。もう一度お試しください。"
@@ -419,6 +499,63 @@
     } finally {
       clearTimeout(timeout);
       setLoading(false);
+    }
+  }
+
+  form.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var name = nameInput.value.trim();
+    if (!name) { showError("評価したい人物の名前を入力してください。"); return; }
+
+    alertBox.hidden = true;
+    results.hidden = true;
+    candidatesBox.hidden = true;
+
+    // 第一段: 同姓同名の確認。世の中には同じ名前の方が複数いるため、
+    // まず「どなたのことか」を確かめ、複数いれば選んでもらってから評価する。
+    setLoading(true, "identify");
+    var controller = new AbortController();
+    var timeout = setTimeout(function () { controller.abort(); }, 60000);
+    try {
+      var res = await fetch(API_BASE + "/api/trial/person-eval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name,
+          locale: (navigator.language || "ja").split("-")[0],
+          mode: "identify"
+        }),
+        signal: controller.signal
+      });
+      var body = null;
+      try { body = await res.json(); } catch (_) { /* 非 JSON 応答 */ }
+      clearTimeout(timeout);
+
+      if (res.ok && body && Array.isArray(body.candidates)) {
+        if (body.candidates.length >= 2) {
+          setLoading(false);
+          showCandidates(name, body.candidates);
+          return;
+        }
+        // 候補が 1 件ならその特定メモを添えて、0 件なら名前のまま評価へ
+        var only = body.candidates[0];
+        setLoading(false);
+        await runEval(name, only ? only.description : null);
+        return;
+      }
+      if (res.ok && body && typeof body.consciousness !== "undefined") {
+        // 確認に未対応のサーバが評価をそのまま返した場合 (移行期): そのまま表示する
+        setLoading(false);
+        displayResults(body, null);
+        return;
+      }
+      // 確認が使えないときは評価だけ実行する (レート制限などの案内は評価側で出る)
+      setLoading(false);
+      await runEval(name, null);
+    } catch (_err) {
+      clearTimeout(timeout);
+      setLoading(false);
+      await runEval(name, null);
     }
   });
 })();

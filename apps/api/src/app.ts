@@ -41,6 +41,14 @@ import { PERSON_DD_MAX_TOKENS, PERSON_DD_TIMEOUT_MS } from "./lib/person-eval.js
 import { authorizeAdmin, authorizeUser, type VerifyIdTokenFn } from "./lib/auth.js";
 import { buildTavilySearch, type SearchFn } from "./lib/tavily.js";
 import { sanitizeProse } from "./lib/plain-text.js";
+import {
+  IDENTIFY_SYSTEM_PROMPT,
+  IDENTIFY_MAX_TOKENS,
+  IDENTIFY_TIMEOUT_MS,
+  buildIdentifyUserMessage,
+  parseIdentifyCandidates,
+  clampProfileHint,
+} from "./lib/identify.js";
 
 export type AppDeps = {
   prisma: ExtendedPrismaClient;
@@ -235,10 +243,66 @@ export function createApp(deps: AppDeps) {
         name: s.name,
         subjectType: s.subjectType,
         country: s.country,
+        profileHint: s.profileHint,
         latestScores: scoreMap.get(s.id) ?? {},
         createdAt: s.createdAt,
       })),
     });
+  });
+
+  // 同姓同名の特定 — 評価の前に「どの人物のことか」の候補を簡単なプロフィール付きで返す。
+  // AI キー無し環境は 503 (クライアントは名前のみで登録に縮退)。壊れた出力は候補ゼロで返す。
+  app.post("/api/dd/identify", async (c) => {
+    const body = await c.req
+      .json<{ name?: string }>()
+      .catch(() => ({}) as { name?: string });
+    const name = clampName(body.name);
+    if (!name) {
+      return c.json({ error: "name_required", detail: "人物名を入力してください" }, 400);
+    }
+    // AI キー無し環境は候補確認をスキップし「候補なし」で返す (名前のみで登録に縮退)。
+    // 実行系 (run) の 503 縮退とは違い、確認は補助機能のため画面を 5xx にしない。
+    if (!generate) {
+      return c.json({ name, candidates: [], unavailable: true });
+    }
+    const cost = await getMonthlyCostJpy(prisma);
+    if (cost >= PERSON_DD_MONTHLY_CAP_JPY) {
+      return c.json({ error: "quota_exceeded", detail: "今月の評価枠は終了しました" }, 422);
+    }
+    const model = await resolveModel();
+    try {
+      const gen = await generate({
+        model,
+        system: IDENTIFY_SYSTEM_PROMPT,
+        userMessage: buildIdentifyUserMessage(name),
+        maxTokens: IDENTIFY_MAX_TOKENS,
+        timeoutMs: IDENTIFY_TIMEOUT_MS,
+      });
+      const canonical = canonicalizeModelId(gen.model) ?? model;
+      await prisma.aiUsageLog.create({
+        data: {
+          provider: "anthropic",
+          model: canonical,
+          purpose: "person_dd_identify",
+          inputTokens: gen.inputTokens,
+          outputTokens: gen.outputTokens,
+          costJpy: calcCostJpy(canonical, gen.inputTokens, gen.outputTokens),
+        },
+      });
+      return c.json({ name, candidates: parseIdentifyCandidates(gen.text) });
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          event: "ai_error",
+          purpose: "person_dd_identify",
+          detail: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      return c.json(
+        { error: "ai_failed", detail: "候補の確認に失敗しました。名前のみで登録できます" },
+        502,
+      );
+    }
   });
 
   app.post("/api/dd/subjects", async (c) => {
@@ -250,6 +314,7 @@ export function createApp(deps: AppDeps) {
         subjectType?: string;
         country?: string;
         affiliations?: unknown;
+        profileHint?: string;
       }>()
       .catch(() => ({}) as Record<string, never>);
     const name = clampName(body.name);
@@ -274,6 +339,7 @@ export function createApp(deps: AppDeps) {
         subjectType,
         country: typeof body.country === "string" ? body.country.trim() || null : null,
         affiliations: (body.affiliations ?? undefined) as never,
+        profileHint: clampProfileHint(body.profileHint),
       },
     });
     return c.json({ subject }, 201);
@@ -422,6 +488,33 @@ export function createApp(deps: AppDeps) {
     const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
     const name = clampName(b.name);
     if (!name) return c.json({ error: "name_required", detail: "お名前を入力してください" }, 400);
+    // 同姓同名の確認 — 既に同じお名前の方がいれば、まず「同じ人か別の人か」を
+    // ユーザーに特定してもらう (confirmNew:true の再送で別人として追加できる)。
+    if (b.confirmNew !== true) {
+      const sameName = await prisma.contact.findMany({
+        where: { ownerUid: c.get("ownerUid"), state: "active", name },
+        orderBy: { createdAt: "asc" },
+        take: 10,
+      });
+      if (sameName.length > 0) {
+        return c.json(
+          {
+            error: "same_name_exists",
+            detail: "同じお名前の方がすでに連絡帳にいます",
+            duplicates: sameName.map((d) => ({
+              id: d.id,
+              name: d.name,
+              company: d.company,
+              title: d.title,
+              relationship: d.relationship,
+              distance: d.distance,
+              createdAt: d.createdAt,
+            })),
+          },
+          409,
+        );
+      }
+    }
     const created = await prisma.contact.create({
       data: { ownerUid: c.get("ownerUid"), name, source: "manual", ...contactData(b) },
     });
@@ -506,9 +599,13 @@ export function createApp(deps: AppDeps) {
     const byName = new Map(existing.map((e) => [e.name, e.id]));
     let imported = 0;
     let skipped = 0;
+    // 同姓同名で見送った名前。世の中には同じ名前の別人がいるため、黙って捨てず
+    // ユーザーに知らせ、「別の人」なら追加欄 (confirmNew) から特定して足してもらう。
+    const sameName = new Set<string>();
     for (const r of parsed.contacts) {
       const name = clampName(r.name);
       if (!name || byName.has(name)) {
+        if (name) sameName.add(name);
         skipped++;
         continue;
       }
@@ -538,7 +635,13 @@ export function createApp(deps: AppDeps) {
       seen.add(it.occurredAt);
       interactionsAdded++;
     }
-    return { imported, skipped, parsed: parsed.contacts.length, interactionsAdded };
+    return {
+      imported,
+      skipped,
+      parsed: parsed.contacts.length,
+      interactionsAdded,
+      sameName: [...sameName].slice(0, 20),
+    };
   };
 
   app.post("/api/contacts/import", async (c) => {

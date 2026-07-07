@@ -159,6 +159,72 @@ describe("取込 (CSV / vCard)", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it("取込時の同姓同名 (既存・取込内の重複) は冪等にスキップし、sameName で知らせる", async () => {
+    await createContact({ name: "佐藤太郎" });
+    const csv = "氏名,距離\n佐藤太郎,3\n鈴木次郎,3\n鈴木次郎,2";
+    const res = await app.request("/api/contacts/import", {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ content: csv, format: "csv" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.imported).toBe(1); // 再取込で二重登録しない (冪等)
+    expect(body.skipped).toBe(2);
+    expect(body.sameName.sort()).toEqual(["佐藤太郎", "鈴木次郎"]); // 見送りは黙って捨てず知らせる
+  });
+});
+
+describe("同姓同名の確認 (追加時)", () => {
+  it("同じ名前の追加は 409 + 既存の簡単なプロフィールを返し、confirmNew:true で別人として追加できる", async () => {
+    await createContact({ name: "山田太郎", company: "青空商事", title: "部長", distance: 2 });
+    // 確認なしの再追加 → 409 で既存者のプロフィールが返る
+    const res = await app.request("/api/contacts", {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ name: "山田太郎", distance: 4 }),
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toBe("same_name_exists");
+    expect(body.duplicates).toHaveLength(1);
+    expect(body.duplicates[0].company).toBe("青空商事");
+    expect(body.duplicates[0].title).toBe("部長");
+    expect(body.duplicates[0].distance).toBe(2);
+    // PII (メール・電話・プロフィール) は確認応答に含めない
+    expect(body.duplicates[0].email).toBeUndefined();
+    expect(body.duplicates[0].personalProfile).toBeUndefined();
+
+    // ユーザーが「別の人」と特定 → confirmNew:true で追加できる
+    const confirmed = await app.request("/api/contacts", {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ name: "山田太郎", distance: 4, confirmNew: true }),
+    });
+    expect(confirmed.status).toBe(201);
+    const list = await (await app.request("/api/contacts", { headers: H })).json();
+    expect(list.contacts.filter((c: { name: string }) => c.name === "山田太郎")).toHaveLength(2);
+  });
+
+  it("別名の追加や、アーカイブ済み同名は確認なしで通る", async () => {
+    const c = await createContact({ name: "田中一郎" });
+    // 違う名前は素通り
+    const other = await app.request("/api/contacts", {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ name: "田中二郎" }),
+    });
+    expect(other.status).toBe(201);
+    // ソフト削除した同名は対象外
+    await app.request(`/api/contacts/${c.id}`, { method: "DELETE", headers: H });
+    const again = await app.request("/api/contacts", {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ name: "田中一郎" }),
+    });
+    expect(again.status).toBe(201);
+  });
 });
 
 describe("つながりサマリ (lms 距離スコアの結合検証)", () => {

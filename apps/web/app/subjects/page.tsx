@@ -1,5 +1,6 @@
 "use client";
 // 評価対象 (公人) の一覧 + 追加。文言は自然な日本語で、技術語 (AI 等) を出さない。
+// 追加時はまず同姓同名の候補を確かめ、複数いればユーザーに「どの方か」を選んでもらう。
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
@@ -9,8 +10,11 @@ type SubjectRow = {
   name: string;
   subjectType: string;
   country: string | null;
+  profileHint: string | null;
   latestScores: Record<string, number | null>;
 };
+
+type Candidate = { name: string; description: string };
 
 const TYPE_LABEL: Record<string, string> = {
   politician: "政治家",
@@ -24,6 +28,9 @@ export default function SubjectsPage() {
   const [subjectType, setSubjectType] = useState("other");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // 同姓同名の候補選択 (null = 非表示)
+  const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+  const [pendingName, setPendingName] = useState("");
 
   const load = useCallback(async () => {
     const res = await fetch("/api/bff/dd/subjects");
@@ -34,15 +41,14 @@ export default function SubjectsPage() {
     void load();
   }, [load]);
 
-  const add = async () => {
-    if (!name.trim() || busy) return;
+  const createSubject = async (targetName: string, profileHint: string | null) => {
     setBusy(true);
     setError("");
     try {
       const res = await fetch("/api/bff/dd/subjects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), subjectType }),
+        body: JSON.stringify({ name: targetName, subjectType, profileHint }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -50,7 +56,43 @@ export default function SubjectsPage() {
         return;
       }
       setName("");
+      setCandidates(null);
+      setPendingName("");
       await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const add = async () => {
+    const trimmed = name.trim();
+    if (!trimmed || busy) return;
+    setBusy(true);
+    setError("");
+    setCandidates(null);
+    try {
+      // まず「どの人物のことか」を確かめる。候補が複数ならユーザーに選んでもらう。
+      const res = await fetch("/api/bff/dd/identify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (res.ok) {
+        const body = await res.json().catch(() => ({ candidates: [] }));
+        const list: Candidate[] = Array.isArray(body.candidates) ? body.candidates : [];
+        if (list.length >= 2) {
+          setPendingName(trimmed);
+          setCandidates(list);
+          setBusy(false);
+          return;
+        }
+        await createSubject(trimmed, list[0]?.description ?? null);
+        return;
+      }
+      // 確認が使えない環境 (キー未設定など) は名前のみで登録する
+      await createSubject(trimmed, null);
+    } catch {
+      await createSubject(trimmed, null);
     } finally {
       setBusy(false);
     }
@@ -97,10 +139,75 @@ export default function SubjectsPage() {
           追加
         </button>
       </div>
+      {busy && !candidates && (
+        <p style={{ color: "#64748b" }}>どなたのことか確認しています…</p>
+      )}
       {error && (
         <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>
           {error}
         </p>
+      )}
+
+      {candidates && (
+        <section
+          aria-label="人物の候補"
+          style={{
+            border: "1px solid #bfdbfe",
+            background: "#eff6ff",
+            borderRadius: 12,
+            padding: 16,
+            marginBottom: 16,
+          }}
+        >
+          <p style={{ margin: "0 0 10px", fontWeight: 600 }}>
+            「{pendingName}」というお名前の方は複数いるようです。どの方のことか選んでください。
+          </p>
+          <div style={{ display: "grid", gap: 8 }}>
+            {candidates.map((cd, i) => (
+              <button
+                key={i}
+                onClick={() => void createSubject(cd.name, cd.description)}
+                disabled={busy}
+                style={{
+                  textAlign: "left",
+                  padding: "10px 14px",
+                  background: "#fff",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 10,
+                  cursor: "pointer",
+                }}
+              >
+                <span style={{ fontWeight: 600 }}>{cd.name}</span>
+                <span style={{ display: "block", color: "#64748b", fontSize: 14 }}>{cd.description}</span>
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+            <button
+              onClick={() => void createSubject(pendingName, null)}
+              disabled={busy}
+              style={{
+                padding: "8px 14px",
+                background: "none",
+                border: "1px solid #cbd5e1",
+                borderRadius: 8,
+                cursor: "pointer",
+              }}
+            >
+              この中にはいない (名前のみで登録)
+            </button>
+            <button
+              onClick={() => {
+                setCandidates(null);
+                setPendingName("");
+              }}
+              disabled={busy}
+              style={{ padding: "8px 14px", background: "none", border: "none", color: "#64748b", cursor: "pointer" }}
+            >
+              やめる
+            </button>
+          </div>
+        </section>
       )}
 
       <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 8 }}>
@@ -111,6 +218,7 @@ export default function SubjectsPage() {
               style={{
                 display: "flex",
                 justifyContent: "space-between",
+                gap: 12,
                 padding: "12px 16px",
                 border: "1px solid #e2e8f0",
                 borderRadius: 12,
@@ -121,8 +229,11 @@ export default function SubjectsPage() {
               <span>
                 {s.name}
                 <small style={{ color: "#64748b", marginLeft: 8 }}>{TYPE_LABEL[s.subjectType] ?? s.subjectType}</small>
+                {s.profileHint && (
+                  <small style={{ display: "block", color: "#94a3b8" }}>{s.profileHint}</small>
+                )}
               </span>
-              <span style={{ color: "#64748b" }}>
+              <span style={{ color: "#64748b", whiteSpace: "nowrap" }}>
                 {s.latestScores.consciousness_7d != null && `意識 ${s.latestScores.consciousness_7d}`}
                 {s.latestScores.social_value_creation != null &&
                   ` ・ 価値 ${s.latestScores.social_value_creation}`}
