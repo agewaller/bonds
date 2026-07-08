@@ -9,6 +9,7 @@ import {
   signInWithGoogle,
   completeGoogleRedirect,
   watchUser,
+  authErrorMessage,
 } from "../../lib/firebase";
 import { t } from "../../lib/i18n";
 
@@ -20,11 +21,19 @@ export default function LoginPage() {
 
   // スマホの画面遷移方式ログインから戻ってきたら、ここで完了処理する。
   // これを呼ばないと redirect ログインが成立扱いにならない (スマホ不具合の根因)。
+  // 失敗したら理由を握りつぶさず画面に出す (承認済みドメイン未登録などを切り分けるため)。
   useEffect(() => {
-    void completeGoogleRedirect();
-    return watchUser((user) => {
+    let active = true;
+    void completeGoogleRedirect().then((r) => {
+      if (active && r.errorCode) setError(authErrorMessage(r.errorCode));
+    });
+    const unsub = watchUser((user) => {
       if (user) router.replace("/contacts");
     });
+    return () => {
+      active = false;
+      unsub();
+    };
   }, [router]);
 
   const login = async () => {
@@ -35,8 +44,9 @@ export default function LoginPage() {
       // popup で成立したときだけ遷移する。redirect のときはページが遷移するので
       // ここには戻らない (戻ってきたら上の completeGoogleRedirect が拾う)。
       if (done) router.replace("/contacts");
-    } catch {
-      setError("サインインできませんでした。もう一度お試しください");
+    } catch (e) {
+      const code = e && typeof e === "object" && "code" in e ? String((e as { code: unknown }).code) : "";
+      setError(code ? authErrorMessage(code) : "サインインできませんでした。もう一度お試しください");
       setBusy(false);
     }
   };

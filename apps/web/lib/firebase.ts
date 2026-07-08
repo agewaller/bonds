@@ -89,16 +89,33 @@ export async function signInWithGoogle(): Promise<boolean> {
  * 画面遷移方式の Google ログインから戻ってきた直後に呼ぶ。ログインが成立していれば
  * その User を、そうでなければ (通常の初回表示など) null を返す。これを呼ばないと
  * スマホの redirect ログインが完了扱いにならない (今回のスマホ不具合の根因)。
+ * 失敗したときは errorCode を返す (原因を握りつぶさず画面に出せるように)。
+ * 例: auth/unauthorized-domain = この画面のドメインが Firebase の承認済みドメイン未登録。
  */
-export async function completeGoogleRedirect(): Promise<User | null> {
+export async function completeGoogleRedirect(): Promise<{ user: User | null; errorCode?: string }> {
   const auth = firebaseAuth();
-  if (!auth) return null;
+  if (!auth) return { user: null };
   await ensurePersistence(auth);
   try {
     const result = await getRedirectResult(auth);
-    return result?.user ?? null;
-  } catch {
-    return null; // 取得できない/エラーは未ログイン扱い
+    return { user: result?.user ?? null };
+  } catch (e) {
+    return { user: null, errorCode: errCode(e) || "unknown" };
+  }
+}
+
+/** Firebase の auth エラーコードを人にわかる日本語に直す (未知はコードをそのまま添える)。 */
+export function authErrorMessage(code: string): string {
+  switch (code) {
+    case "auth/unauthorized-domain":
+      return "この画面のアドレスがサインインを許可されていません（管理者がドメインを承認すると直ります）。";
+    case "auth/popup-blocked":
+    case "auth/operation-not-supported-in-environment":
+      return "この環境ではうまく開けませんでした。別のブラウザでお試しください。";
+    case "auth/network-request-failed":
+      return "通信が不安定なようです。電波の良い場所でもう一度お試しください。";
+    default:
+      return `サインインを完了できませんでした（${code}）。もう一度お試しください。`;
   }
 }
 
