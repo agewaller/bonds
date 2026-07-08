@@ -30,7 +30,7 @@ test.describe("人物評価 (実機)", () => {
     await expect(score7d).toBeVisible();
     // 社会価値創造 (二つ目・長い方) も最後まで完了していること (svc 固有の「10段階で N」チップ)。
     // 途中停止すると出ない = 途中停止の回帰を防ぐハードゲート。
-    await expect(page.getByText(/10段階で\s*\d+/)).toBeVisible();
+    await expect(page.getByText(/10段階で\s*\d+/).first()).toBeVisible();
     await expect(
       page.getByText("前回の評価は完了しませんでした。もう一度お試しください。"),
       "いずれかの評価が途中停止した",
