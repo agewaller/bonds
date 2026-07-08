@@ -19,7 +19,11 @@ export const PERSON_DD_TIMEOUT_MS = 120_000;
 
 // 出力トークン上限 (1 評価あたり)。JSON 構造化で散文より膨らむ。上限到達で JSON が
 // 途中で切れると invalid_output になるため、余裕を大きめに取る (2026-07-07 途中切れ対策)。
-export const PERSON_DD_MAX_TOKENS = 8000;
+// さらに切れても続きを繋ぐ継続機構 (maxContinuations) と併用する (2026-07-08)。
+export const PERSON_DD_MAX_TOKENS = 16000;
+
+// max_tokens で切れたときに続きを生成して繋ぐ最大回数 (人物DD の途中停止対策)。
+export const PERSON_DD_MAX_CONTINUATIONS = 3;
 
 // モデル設定: app_config のこのキーに canonical alias を保存し管理者が変更できる。
 export const PERSON_DD_MODEL_CONFIG_KEY = "person_eval_model";
@@ -72,7 +76,11 @@ export const PERSON_EVAL_SAFETY = [
 // ユーザーメッセージの組み立て (cares buildPersonEvalUserMessage を踏襲)。
 // profileHint はユーザーが同姓同名の候補から選んだ「どの人物か」の特定メモ。
 // これがあるときは別人との混同を明示的に禁止する。
-export function buildPersonEvalUserMessage(name: string, profileHint?: string | null): string {
+export function buildPersonEvalUserMessage(
+  name: string,
+  profileHint?: string | null,
+  referenceDate?: Date,
+): string {
   const lines = [`評価対象人物: ${name}`];
   if (profileHint && profileHint.trim()) {
     lines.push(
@@ -82,11 +90,24 @@ export function buildPersonEvalUserMessage(name: string, profileHint?: string | 
   } else {
     lines.push("役職・領域: 不明 (公開情報から特定してください)");
   }
+  const today = (referenceDate ?? new Date()).toISOString().slice(0, 10);
   lines.push(
-    "対象期間: 特に指定なし (公人としての活動全体)",
+    `今日の日付: ${today}`,
+    "対象期間: 直近を重視 (公人としての活動全体を踏まえつつ、最新の動き・発言・実績・評価の変化に重みを置く)",
     "重点的に見たい論点: 特になし (全体をバランスよく)",
     "比較対象: 特になし",
     "対象国・地域: 特に指定なし",
   );
   return lines.join("\n");
 }
+
+// 直近情報の重視を評価に明示的に効かせるためのガイド (system に付帯)。
+// このツールは人間関係を日々アップデートする前提で、固まった評価でなく
+// 「いま時点のいちばん新しい像」を返す (2026-07-08 オーナー指示)。
+export const PERSON_EVAL_RECENCY = [
+  "直近情報の扱い (重要):",
+  "- この評価は固定的な結論ではなく、今日時点での最新像である。あなたが知る範囲で最も新しい動き・発言・実績・役職・評価の変化を優先して重み付けする。",
+  "- 主要な事実には、可能な範囲で時点 (年、できれば月) を添える。古い情報は「以前は〜」、最近の情報は「直近では〜」と時制を分けて書く。",
+  "- あなたの知識には時点の区切りがあり、それ以降の出来事は反映できない。最後にその可能性を短く注記し、確認するとよい最近の観点を 1 つ挙げる。",
+  "- 検索結果 (最新の公開情報) が与えられている場合は、それを最優先の一次材料として扱い、あなたの記憶より新しければそちらを採る。",
+].join("\n");

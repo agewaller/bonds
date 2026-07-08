@@ -4,15 +4,24 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { firebaseConfigured, signInWithGoogle, watchUser } from "../../lib/firebase";
+import {
+  firebaseConfigured,
+  signInWithGoogle,
+  completeGoogleRedirect,
+  watchUser,
+} from "../../lib/firebase";
 import { t } from "../../lib/i18n";
 
 export default function LoginPage() {
   const router = useRouter();
   const [configured] = useState(firebaseConfigured());
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
+  // スマホの画面遷移方式ログインから戻ってきたら、ここで完了処理する。
+  // これを呼ばないと redirect ログインが成立扱いにならない (スマホ不具合の根因)。
   useEffect(() => {
+    void completeGoogleRedirect();
     return watchUser((user) => {
       if (user) router.replace("/contacts");
     });
@@ -20,11 +29,15 @@ export default function LoginPage() {
 
   const login = async () => {
     setError("");
+    setBusy(true);
     try {
-      await signInWithGoogle();
-      router.replace("/contacts");
+      const done = await signInWithGoogle();
+      // popup で成立したときだけ遷移する。redirect のときはページが遷移するので
+      // ここには戻らない (戻ってきたら上の completeGoogleRedirect が拾う)。
+      if (done) router.replace("/contacts");
     } catch {
       setError("サインインできませんでした。もう一度お試しください");
+      setBusy(false);
     }
   };
 
@@ -35,6 +48,7 @@ export default function LoginPage() {
       {configured ? (
         <button
           onClick={() => void login()}
+          disabled={busy}
           style={{
             padding: "12px 32px",
             background: "#2563eb",
@@ -42,10 +56,11 @@ export default function LoginPage() {
             border: "none",
             borderRadius: 8,
             fontSize: 16,
-            cursor: "pointer",
+            cursor: busy ? "default" : "pointer",
+            opacity: busy ? 0.7 : 1,
           }}
         >
-          {t("login_google")}
+          {busy ? "サインインしています…" : t("login_google")}
         </button>
       ) : (
         <p style={{ color: "#64748b" }}>
