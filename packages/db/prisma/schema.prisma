@@ -147,6 +147,8 @@ model Contact {
   notes           String? // 暗号化
   profileDigest   String?   @map("profile_digest") // 暗号化: 記録から自動でまとまる相手ノート (見立て)
   profileDigestAt DateTime? @map("profile_digest_at") // 見立ての最終更新 (これより新しい記録があれば再生成対象)
+  profileFacets   String?   @map("profile_facets") // 暗号化: 記録から整理した論点 (連絡先/状況/スキル/悩み/家族/仕事/健康/価値観/目標 等) の JSON
+  profileFacetsAt DateTime? @map("profile_facets_at") // 論点の最終更新
   source          String    @default("manual") // manual / csv / vcard / sns / eight / nengajo
   state           String    @default("active") // active / archived (ソフト削除)
   createdAt       DateTime  @default(now()) @map("created_at")

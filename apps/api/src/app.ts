@@ -1716,6 +1716,44 @@ export function createApp(deps: AppDeps) {
     return c.json({ suggestions, note: clean(parsed?.note) });
   });
 
+  // 相手の論点整理 — 蓄積した記録から、その人を多面的な観点 (連絡先・状況・スキル・悩み・
+  // 家族構成・仕事・健康・価値観・目標・関心・注意点・貢献余地) に整えて保存する。
+  const FACET_STR_KEYS = ["summary", "contact", "status", "work", "family", "health", "values"] as const;
+  const FACET_ARR_KEYS = ["skills", "concerns", "goals", "likes", "cautions", "opportunities"] as const;
+  const FACETS_JSON_INSTRUCTION =
+    '出力は JSON オブジェクト 1 個だけ: {"summary":"","contact":"","status":"","work":"","family":"","health":"","values":"","skills":[],"concerns":[],"goals":[],"likes":[],"cautions":[],"opportunities":[]}。分からない項目は空文字か空配列にする。';
+  const sanitizeFacets = (parsed: Record<string, unknown> | null): Record<string, unknown> => {
+    const p = parsed ?? {};
+    const clean = (v: unknown, max = 500) => sanitizeProse(typeof v === "string" ? v : "").trim().slice(0, max);
+    const cleanArr = (v: unknown) =>
+      Array.isArray(v) ? v.map((x) => clean(x, 200)).filter(Boolean).slice(0, 12) : [];
+    const out: Record<string, unknown> = {};
+    for (const k of FACET_STR_KEYS) out[k] = clean(p[k]);
+    for (const k of FACET_ARR_KEYS) out[k] = cleanArr(p[k]);
+    return out;
+  };
+
+  app.post("/api/contacts/:id/facets", async (c) => {
+    const ctx = await buildContactContext(c.get("ownerUid"), c.req.param("id"));
+    if (!ctx) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<{ locale?: string }>().catch(() => ({}) as { locale?: string });
+    const r = await runRelationshipAi(
+      "contact_facets",
+      FACETS_JSON_INSTRUCTION,
+      ctx.context,
+      "contact_facets",
+      normalizeLocale(b.locale),
+      { actor: actorOf(c) },
+    );
+    if (!r.ok) return c.json(r.body as never, r.status);
+    const facets = sanitizeFacets(extractJson(r.text) as Record<string, unknown> | null);
+    const updated = await prisma.contact.update({
+      where: { id: ctx.contact.id },
+      data: { profileFacets: JSON.stringify(facets), profileFacetsAt: new Date() },
+    });
+    return c.json({ facets, facetsAt: updated.profileFacetsAt });
+  });
+
   // 相手ノート (見立て) の生成 — 蓄積した記録に根拠を置き、希望があれば公開情報の検索を足す。
   // 検索はユーザーが明示的に頼んだときだけ (相手の尊厳: 自動巡回で私人を web 検索しない)。
   const generateDigest = async (
