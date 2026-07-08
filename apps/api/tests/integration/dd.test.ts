@@ -364,6 +364,66 @@ describe("identify (同姓同名の特定)", () => {
   });
 });
 
+describe("公開の評価ページ + 履歴削除", () => {
+  it("完了した評価があれば公開ページで返り、無ければ 404", async () => {
+    const app = createApp({ prisma, generate: validGenerate });
+    const s = await createSubject(app);
+    // 実行前は共有できる評価が無い
+    const before = await app.request(`/api/public/subjects/${s.slug}`);
+    expect(before.status).toBe(404);
+    // 評価すると公開ページに載る (認証不要)
+    await app.request(`/api/dd/subjects/${s.slug}/run`, { method: "POST", headers: adminHeaders, body: "{}" });
+    const pub = await app.request(`/api/public/subjects/${s.slug}`);
+    expect(pub.status).toBe(200);
+    const body = await pub.json();
+    expect(body.subject.name).toBe("渋沢栄一");
+    expect(Object.keys(body.latestByType).sort()).toEqual(["consciousness_7d", "social_value_creation"]);
+    // 存在しない slug は 404
+    expect((await app.request("/api/public/subjects/none")).status).toBe(404);
+  });
+
+  it("評価の履歴を 1 件ずつ削除できる", async () => {
+    const app = createApp({ prisma, generate: validGenerate });
+    const s = await createSubject(app);
+    await app.request(`/api/dd/subjects/${s.slug}/run`, { method: "POST", headers: adminHeaders, body: "{}" });
+    const runs = await prisma.personDueDiligence.findMany();
+    expect(runs.length).toBe(2);
+    const del = await app.request(`/api/dd/subjects/${s.slug}/runs/${runs[0]!.id}`, {
+      method: "DELETE",
+      headers: adminHeaders,
+    });
+    expect(del.status).toBe(200);
+    expect(await prisma.personDueDiligence.count()).toBe(1);
+    // 他人の run は消せない (subject 不一致は 404)
+    const other = await createSubject(app, "岩崎弥太郎");
+    const mismatch = await app.request(`/api/dd/subjects/${other.slug}/runs/${runs[1]!.id}`, {
+      method: "DELETE",
+      headers: adminHeaders,
+    });
+    expect(mismatch.status).toBe(404);
+  });
+
+  it("人物ごと削除すると評価履歴もすべて消える", async () => {
+    const app = createApp({ prisma, generate: validGenerate });
+    const s = await createSubject(app);
+    await app.request(`/api/dd/subjects/${s.slug}/run`, { method: "POST", headers: adminHeaders, body: "{}" });
+    const del = await app.request(`/api/dd/subjects/${s.slug}`, { method: "DELETE", headers: adminHeaders });
+    expect(del.status).toBe(200);
+    expect(await prisma.ddSubject.count()).toBe(0);
+    expect(await prisma.personDueDiligence.count()).toBe(0);
+    // 削除後は詳細も公開も 404
+    expect((await app.request(`/api/dd/subjects/${s.slug}`)).status).toBe(404);
+    expect((await app.request(`/api/public/subjects/${s.slug}`)).status).toBe(404);
+  });
+
+  it("削除系は認証必須 (トークン無しは通らない)", async () => {
+    const app = createApp({ prisma, generate: validGenerate });
+    const s = await createSubject(app);
+    const noAuth = await app.request(`/api/dd/subjects/${s.slug}`, { method: "DELETE" });
+    expect([401, 503]).toContain(noAuth.status);
+  });
+});
+
 describe("admin person-eval-config", () => {
   it("既定は sonnet、canonical alias のみ受け付け、datestamped は正規化", async () => {
     const app = createApp({ prisma, generate: validGenerate });
