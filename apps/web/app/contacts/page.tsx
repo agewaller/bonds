@@ -70,6 +70,7 @@ export default function ContactsPage() {
   const [icsUrl, setIcsUrl] = useState("");
   const [showCalendar, setShowCalendar] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [importMsg, setImportMsg] = useState(""); // 取り込み中などの進行表示 (何も出ない状態をなくす)
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   // 同姓同名の確認 (null = 非表示)。既存の同名者を見せて「同じ人か別の人か」を選んでもらう
@@ -183,6 +184,7 @@ export default function ContactsPage() {
     setBusy(true);
     setError("");
     setNotice("");
+    setImportMsg("取り込んでいます。内容によっては少し時間がかかります…");
     try {
       const res = await apiFetch("contacts/import", {
         method: "POST",
@@ -226,6 +228,7 @@ export default function ContactsPage() {
       setError(`取り込み中にエラーが起きました: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
+      setImportMsg("");
     }
   };
 
@@ -297,7 +300,11 @@ export default function ContactsPage() {
       for (let i = 0; i < list.length; i++) {
         const file = list[i]!;
         const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-        if (list.length > 1) setNotice(`読み取っています (${i + 1}/${list.length}件目): ${path}`);
+        setImportMsg(
+          list.length > 1
+            ? `読み取っています (${i + 1}/${list.length}件目): ${path}`
+            : `「${path}」を読み取っています。内容によっては少し時間がかかります…`,
+        );
         const res = await apiFetch(`contacts/import-file?filename=${encodeURIComponent(path)}`, {
           method: "POST",
           headers: { "Content-Type": "application/octet-stream" },
@@ -354,6 +361,7 @@ export default function ContactsPage() {
       setError(`取り込み中にエラーが起きました: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
+      setImportMsg("");
     }
   };
 
@@ -362,16 +370,25 @@ export default function ContactsPage() {
     if (!convText.trim() || busy) return;
     setBusy(true);
     setError("");
+    setNotice("");
     setProposals([]);
+    setImportMsg("会話の内容からお相手をさがしています…");
     try {
       const res = await apiFetch("contacts/extract-from-conversation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: convText }),
       });
-      const body = await res.json().catch(() => ({}));
+      const raw = await res.text();
+      let body: Record<string, unknown> = {};
+      try {
+        body = raw ? JSON.parse(raw) : {};
+      } catch {
+        body = {};
+      }
       if (!res.ok) {
-        setError(body.detail ?? "いまは読み取れませんでした");
+        const detail = (body.detail as string) || (body.error as string) || raw.slice(0, 200);
+        setError(`いまは読み取れませんでした (エラー ${res.status})${detail ? `: ${detail}` : ""}`);
         return;
       }
       const list = (body.proposals ?? []) as { name: string; note: string; date: string | null; contactId: string | null }[];
@@ -380,8 +397,11 @@ export default function ContactsPage() {
         return;
       }
       setProposals(list.map((p) => ({ ...p, selected: true })));
+    } catch (e) {
+      setError(`読み取り中にエラーが起きました: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
+      setImportMsg("");
     }
   };
 
@@ -572,6 +592,11 @@ export default function ContactsPage() {
         </section>
       )}
 
+      {importMsg && (
+        <p aria-live="polite" style={{ color: "#1e40af", background: "#eff6ff", padding: 8, borderRadius: 8 }}>
+          {importMsg}
+        </p>
+      )}
       {notice && <p style={{ color: "#166534", background: "#f0fdf4", padding: 8, borderRadius: 8 }}>{notice}</p>}
       {error && (
         <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>
