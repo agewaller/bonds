@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   splitCsvLine,
   parseCsvContacts,
+  stripHonorific,
   parseVCardContacts,
   parseContacts,
   parseLinkedInConnections,
@@ -147,6 +148,21 @@ describe("Eight / 年賀状リストの取込 (フェーズ3)", () => {
     const en = `First Name,Last Name,Email\nJohn,Smith,john@example.com`;
     const rows = parseCsvContacts(en);
     expect(rows[0]).toMatchObject({ name: "Smith John", email: "john@example.com" });
+  });
+});
+
+describe("stripHonorific (敬称・肩書きの除去)", () => {
+  it("末尾の敬称を落とす (チャット・議事録由来の名前を正規化)", () => {
+    expect(stripHonorific("田中さん")).toBe("田中");
+    expect(stripHonorific("佐藤 様")).toBe("佐藤");
+    expect(stripHonorific("鈴木部長")).toBe("鈴木");
+    expect(stripHonorific("山本先生")).toBe("山本");
+    expect(stripHonorific("近藤くん")).toBe("近藤");
+  });
+  it("敬称が無ければそのまま。全部敬称なら元に戻す (取りこぼさない)", () => {
+    expect(stripHonorific("渋沢栄一")).toBe("渋沢栄一");
+    expect(stripHonorific("John Smith")).toBe("John Smith");
+    expect(stripHonorific("様")).toBe("様");
   });
 });
 
