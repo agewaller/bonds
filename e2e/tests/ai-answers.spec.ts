@@ -19,14 +19,18 @@ test.describe("人物評価 (実機)", () => {
     await page.getByRole("link", { name: new RegExp(name.slice(0, 6)) }).click();
     await page.getByRole("button", { name: "二つの視点で評価する" }).click();
 
-    // 完了までポーリング表示。エラーバナーが出たら即失敗。
-    const alert = page.getByRole("alert");
-    const score7d = page.getByText(/公的社会価値創造スコア/);
-    await expect(score7d.or(alert)).toBeVisible({ timeout: 200_000 });
-    await expect(alert, "評価がエラーで終わった").toHaveCount(0);
+    // 意識の七次元の完了マーカー (スコアの見出し・完全一致で narrative の部分一致を避ける)。
+    // 実際のエラーは画面の <p> バナー本文で判定する (Next.js の空 route-announcer[role=alert]
+    // を誤検知しないため、role ではなく本文テキストで拾う)。
+    const score7d = page.getByText("公的社会価値創造スコア", { exact: true });
+    const errorBanner = page.getByText(/評価を実行できませんでした|利用枠は終了しました|うまくいきませんでした/);
+    // 長い評価なので余裕を持って、完了かエラーのどちらかが出るまで待つ。
+    await expect(score7d.or(errorBanner).first()).toBeVisible({ timeout: 220_000 });
+    await expect(errorBanner, "評価がエラーで終わった").toHaveCount(0);
     await expect(score7d).toBeVisible();
-    // 社会価値創造 (二つ目・長い方) も最後まで完了していること。途中停止の回帰を防ぐ。
-    await expect(page.getByText(/総合 \d+/)).toBeVisible();
+    // 社会価値創造 (二つ目・長い方) も最後まで完了していること (svc 固有の「10段階で N」チップ)。
+    // 途中停止すると出ない = 途中停止の回帰を防ぐハードゲート。
+    await expect(page.getByText(/10段階で\s*\d+/)).toBeVisible();
     await expect(
       page.getByText("前回の評価は完了しませんでした。もう一度お試しください。"),
       "いずれかの評価が途中停止した",
