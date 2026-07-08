@@ -1,0 +1,53 @@
+name: e2e-audit
+
+# 実機 (本番) に対する AI スモーク + ログイン後ユーザー監査。
+# GitHub ランナーは本番 URL に到達できる (サンドボックスは egress 制限で不可) ため、
+# 人物評価が「二つとも最後まで返るか」をここで実測する。既定は本番 web を対象。
+# AI スモークは実 LLM を叩くのでコストが出る (オーナー admin 前提で許容)。
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "対象サイトURL (既定: 本番 web)"
+        type: string
+        default: "https://bonds-web-xj6szhutkq-an.a.run.app"
+      include_ai:
+        description: "AI 実機スモーク (渋沢栄一で二評価が最後まで返るか) も実行する (コスト発生)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: e2e-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.0.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Playwright (chromium)
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run audit (本番実測)
+        env:
+          E2E_BASE_URL: ${{ inputs.base_url }}
+          E2E_INCLUDE_AI: ${{ inputs.include_ai && '1' || '0' }}
+        run: pnpm test:e2e
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 7
