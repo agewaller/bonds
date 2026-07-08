@@ -25,10 +25,13 @@ if [ "$ONLY" != "web" ]; then
 fi
 
 if [ "$ONLY" != "api" ]; then
+  # --service-account を明示する (未指定だと既定の compute SA を使おうとし、
+  # デプロイ SA が actAs 権限を持たず失敗する。実障害 2026-07-08)
   gcloud run deploy "$RUN_WEB" --project="$PROJECT" --region="$REGION" \
     --image="${IMAGE_REGISTRY}/bonds-web:${TAG}" \
     --set-secrets="ADMIN_TOKEN=${SECRET_BREAKGLASS}:latest" \
     --set-env-vars="INTERNAL_API_URL=${API_URL},NEXT_PUBLIC_API_URL=${API_URL}" \
+    --service-account="bonds-run@${PROJECT}.iam.gserviceaccount.com" \
     --allow-unauthenticated --port=3000
   WEB_URL="$(gcloud run services describe "$RUN_WEB" --project="$PROJECT" --region="$REGION" --format='value(status.url)')"
   echo "web: $WEB_URL"
