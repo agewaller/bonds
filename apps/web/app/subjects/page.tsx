@@ -32,6 +32,8 @@ export default function SubjectsPage() {
   // 同姓同名の候補選択 (null = 非表示)
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [pendingName, setPendingName] = useState("");
+  // 削除の確認中の slug (confirm/alert は使わずインライン確認にする)
+  const [confirmingDelete, setConfirmingDelete] = useState("");
 
   const load = useCallback(async () => {
     const res = await fetch("/api/bff/dd/subjects");
@@ -63,6 +65,14 @@ export default function SubjectsPage() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const deleteSubject = async (slug: string) => {
+    setError("");
+    const res = await fetch(`/api/bff/dd/subjects/${slug}`, { method: "DELETE" });
+    setConfirmingDelete("");
+    if (res.ok) await load();
+    else setError("削除できませんでした。もう一度お試しください");
   };
 
   const add = async () => {
@@ -213,18 +223,18 @@ export default function SubjectsPage() {
 
       <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 8 }}>
         {subjects.map((s) => (
-          <li key={s.id}>
+          <li
+            key={s.id}
+            style={{
+              display: "flex", alignItems: "center", gap: 8,
+              border: "1px solid #e2e8f0", borderRadius: 12, padding: "8px 12px 8px 16px",
+            }}
+          >
             <Link
               href={`/subjects/${s.slug}`}
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 12,
-                padding: "12px 16px",
-                border: "1px solid #e2e8f0",
-                borderRadius: 12,
-                textDecoration: "none",
-                color: "inherit",
+                flex: 1, display: "flex", justifyContent: "space-between", gap: 12,
+                textDecoration: "none", color: "inherit", padding: "4px 0",
               }}
             >
               <span>
@@ -240,6 +250,30 @@ export default function SubjectsPage() {
                   ` ・ 価値 ${s.latestScores.social_value_creation}`}
               </span>
             </Link>
+            {confirmingDelete === s.slug ? (
+              <span style={{ whiteSpace: "nowrap" }}>
+                <button
+                  onClick={() => void deleteSubject(s.slug)}
+                  style={{ padding: "4px 10px", background: "#b91c1c", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+                >
+                  削除する
+                </button>
+                <button
+                  onClick={() => setConfirmingDelete("")}
+                  style={{ marginLeft: 6, padding: "4px 10px", background: "none", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+                >
+                  やめる
+                </button>
+              </span>
+            ) : (
+              <button
+                onClick={() => setConfirmingDelete(s.slug)}
+                aria-label={`${s.name} を削除`}
+                style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", fontSize: 13, whiteSpace: "nowrap" }}
+              >
+                削除
+              </button>
+            )}
           </li>
         ))}
         {subjects.length === 0 && <li style={{ color: "#64748b" }}>まだ登録がありません。</li>}

@@ -68,18 +68,33 @@ const HEADER_MAP: Record<string, keyof ParsedContact> = {
   宛名: "name",
 };
 
+// 姓・名を分けて持つ CSV (Eight 名刺・年賀状ソフト・Outlook 等) のための列。
+// 氏名がある行はそちらを優先し、無ければ姓+名を結合して name にする。
+const FAMILY_HEADERS = new Set(["姓", "せい", "セイ", "苗字", "名字", "lastname", "last name", "family name", "surname"]);
+const GIVEN_HEADERS = new Set(["名", "めい", "メイ", "firstname", "first name", "given name"]);
+
 export function parseCsvContacts(csv: string): ParsedContact[] {
   const lines = csv.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return [];
   const headers = splitCsvLine(lines[0]!).map((h) => h.replace(/"/g, "").toLowerCase());
   const fields = headers.map((h) => HEADER_MAP[h] ?? null);
+  // 姓/名の列位置 (氏名が無い名刺 CSV 向け)
+  const familyIdx = headers.findIndex((h) => FAMILY_HEADERS.has(h));
+  const givenIdx = headers.findIndex((h) => GIVEN_HEADERS.has(h));
   const out: ParsedContact[] = [];
   for (const line of lines.slice(1)) {
-    const values = splitCsvLine(line);
+    const values = splitCsvLine(line).map((v) => v.replace(/^"|"$/g, ""));
     const c: Partial<Record<keyof ParsedContact, string>> = {};
     fields.forEach((f, i) => {
       if (f && values[i]) c[f] = values[i];
     });
+    // 氏名列が無ければ姓+名を結合する (どちらか片方だけでも採用)
+    if (!c.name) {
+      const family = familyIdx >= 0 ? (values[familyIdx] ?? "").trim() : "";
+      const given = givenIdx >= 0 ? (values[givenIdx] ?? "").trim() : "";
+      const joined = [family, given].filter(Boolean).join(" ");
+      if (joined) c.name = joined;
+    }
     if (!c.name) continue;
     out.push({
       ...c,

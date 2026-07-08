@@ -481,6 +481,61 @@ export function createApp(deps: AppDeps) {
     return c.json({ subject, latestByType, recentRuns: runs.map(({ scores: _s, ...r }) => r) });
   });
 
+  // 評価履歴の削除 (1 回分の評価 = run 単位)。データ主権: 1 件単位で消せること。
+  // cascade で紐づく steps も消える (schema onDelete: Cascade)。
+  app.delete("/api/dd/subjects/:slug/runs/:runId", async (c) => {
+    const subject = await prisma.ddSubject.findUnique({ where: { slug: c.req.param("slug") } });
+    if (!subject) return c.json({ error: "not_found" }, 404);
+    const run = await prisma.personDueDiligence.findFirst({
+      where: { id: c.req.param("runId"), subjectId: subject.id },
+      select: { id: true },
+    });
+    if (!run) return c.json({ error: "not_found" }, 404);
+    await prisma.personDueDiligence.delete({ where: { id: run.id } });
+    return c.json({ deleted: true });
+  });
+
+  // 人物ごと丸ごと削除 (その人の評価履歴もすべて消える)。
+  // person_links は FK 制約が無いため明示的に消す (孤児レコードを残さない)。
+  app.delete("/api/dd/subjects/:slug", async (c) => {
+    const subject = await prisma.ddSubject.findUnique({ where: { slug: c.req.param("slug") } });
+    if (!subject) return c.json({ error: "not_found" }, 404);
+    await prisma.personLink.deleteMany({ where: { subjectId: subject.id } });
+    await prisma.ddSubject.delete({ where: { id: subject.id } });
+    return c.json({ deleted: true });
+  });
+
+  // 公開の評価結果 (共有リンク用・認証不要)。人物DD は公人評価のみで PII を含まないため
+  // だれでも閲覧できる URL にしてよい。完了した評価だけを返し、未完了/失敗は出さない。
+  // 完了した評価が一つも無ければ 404 (共有できる中身がない)。
+  app.get("/api/public/subjects/:slug", async (c) => {
+    const subject = await prisma.ddSubject.findUnique({ where: { slug: c.req.param("slug") } });
+    if (!subject) return c.json({ error: "not_found" }, 404);
+    const runs = await prisma.personDueDiligence.findMany({
+      where: { subjectId: subject.id, status: "completed" },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      select: {
+        id: true,
+        ddType: true,
+        status: true,
+        moduleScore: true,
+        confidenceScore: true,
+        scores: true,
+        createdAt: true,
+      },
+    });
+    const latestByType: Record<string, (typeof runs)[number]> = {};
+    for (const r of runs) if (!latestByType[r.ddType]) latestByType[r.ddType] = r;
+    if (Object.keys(latestByType).length === 0) {
+      return c.json({ error: "no_result", detail: "まだ共有できる評価がありません" }, 404);
+    }
+    return c.json({
+      subject: { name: subject.name, subjectType: subject.subjectType, profileHint: subject.profileHint },
+      latestByType,
+    });
+  });
+
   // ---------------- 実行 ----------------
 
   const resolveModel = async (): Promise<ModelId> => {
@@ -787,8 +842,8 @@ export function createApp(deps: AppDeps) {
 
   app.post("/api/contacts/import", async (c) => {
     const b = await c.req
-      .json<{ content?: string; format?: string; filename?: string }>()
-      .catch(() => ({}) as { content?: string; format?: string; filename?: string });
+      .json<{ content?: string; format?: string; filename?: string; locale?: string }>()
+      .catch(() => ({}) as { content?: string; format?: string; filename?: string; locale?: string });
     if (typeof b.content !== "string" || !b.content.trim()) {
       return c.json({ error: "content_required", detail: "取り込む内容がありません" }, 400);
     }
@@ -797,6 +852,28 @@ export function createApp(deps: AppDeps) {
       format === "auto"
         ? parseImportText(b.content, typeof b.filename === "string" ? b.filename : undefined)
         : { contacts: parseContacts(b.content, format), interactions: [] as ParsedInteraction[] };
+    // 構造化パーサで 1 件も拾えないときは AI 抽出に回す (Eight など未知の列並び・
+    // 名刺の姓/名分割・自由な名簿でも人物を拾う。ファイル取込と同じ方針)。
+    if (parsed.contacts.length === 0) {
+      const r = await extractPeopleFromTexts(
+        [{ file: "paste", kind: "text", text: b.content }],
+        normalizeLocale(b.locale),
+        actorOf(c),
+      );
+      if (!r.ok) return c.json(r.body as never, r.status);
+      if (r.contacts.length === 0) {
+        return c.json(
+          {
+            error: "no_contacts_found",
+            detail:
+              "この内容からはお名前を見つけられませんでした。氏名 (または姓と名) の列がある表や vCard、名簿の文面ならたいてい読み取れます",
+          },
+          422,
+        );
+      }
+      const result = await applyImport(c.get("ownerUid"), { contacts: r.contacts, interactions: r.interactions });
+      return c.json(result);
+    }
     const result = await applyImport(c.get("ownerUid"), parsed);
     return c.json(result);
   });

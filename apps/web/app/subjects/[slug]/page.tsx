@@ -1,58 +1,39 @@
 "use client";
 // 人物詳細 + 評価実行 + 2 セクション表示。
 // 実行は 1〜2 分かかるためメッセージをローテーションして待たせる (プロトタイプ index.html の UX を踏襲)。
-// 長い散文は折りたたみ、記号装飾は出さない。
+// 結果表示部品は components/EvalResult に集約し、公開共有ページ (/p/[slug]) と共用する。
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import {
+  Section7d,
+  SectionSvc,
+  evalHeadline,
+  type RunSummary,
+} from "../../../components/EvalResult";
 
-type DimensionResult = {
-  score: number;
-  confidence: string;
-  keyEvidence: { summary: string; certainty: string }[];
-  risks: string[];
-};
-type Scores7d = {
-  identified: boolean;
-  reason?: string;
-  subjectNote?: string;
-  dimensions?: Record<string, DimensionResult>;
-  allocation?: Record<string, number>;
-  publicValueScore?: number;
-  rank?: string;
-  createdValueEstimate?: string;
-  socialCosts?: string;
-  counterfactual?: string;
-  evolutionConditions?: string[];
-  summary?: string;
-};
-type ScoresSvc = {
-  identified: boolean;
-  reason?: string;
-  subjectNote?: string;
-  items?: { key: string; score: number; reason: string }[];
-  total100?: number;
-  grade?: number;
-  createdValue?: { annualJpy: string; cumulativeJpy: string; assumptions: string[]; confidence: string };
-  counterfactualContributionPct?: number;
-  verdict?: string;
-  somethingNew?: string;
-  limitations?: string[];
-  summary?: string;
-};
-type RunSummary = {
+type HistoryRun = {
   id: string;
   ddType: string;
   status: string;
   moduleScore: number | null;
-  confidenceScore: number | null;
-  scores: Scores7d | ScoresSvc | null;
   errorDetail: string | null;
   createdAt: string;
 };
 type Detail = {
   subject: { id: string; slug: string; name: string; subjectType: string; profileHint: string | null };
   latestByType: Record<string, RunSummary>;
+  recentRuns: HistoryRun[];
+};
+
+const DDTYPE_LABEL: Record<string, string> = {
+  consciousness_7d: "意識の七次元",
+  social_value_creation: "社会価値創造",
+};
+const STATUS_LABEL: Record<string, string> = {
+  completed: "完了",
+  invalid_output: "うまくまとまらず",
+  failed: "できませんでした",
 };
 
 const WAIT_MESSAGES = [
@@ -62,153 +43,6 @@ const WAIT_MESSAGES = [
   "もう少しで評価がまとまります",
 ];
 
-const DIM_LABEL: Record<string, string> = {
-  "1D": "一の次元", "2D": "二の次元", "3D": "三の次元", "4D": "四の次元",
-  "5D": "五の次元", "6D": "六の次元", "7D": "七の次元",
-};
-
-function Collapsible({ title, text }: { title: string; text?: string }) {
-  if (!text) return null;
-  return (
-    <details style={{ margin: "8px 0" }}>
-      <summary style={{ cursor: "pointer", fontWeight: 600 }}>{title}</summary>
-      <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.8 }}>{text}</p>
-    </details>
-  );
-}
-
-const RANK_COLOR: Record<string, string> = {
-  S: "#7c3aed", A: "#2563eb", B: "#0891b2", C: "#d97706", D: "#64748b",
-};
-const CONF_LABEL: Record<string, string> = { A: "確か", B: "概ね確か", C: "推計含む", D: "情報少" };
-
-function ScoreHero({ value, max, chip, chipColor, caption }: {
-  value: number; max: number; chip: string; chipColor: string; caption: string;
-}) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 16, margin: "12px 0 16px" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-        <span style={{ fontSize: 44, fontWeight: 700, color: "#0f172a", fontVariantNumeric: "tabular-nums" }}>
-          {value}
-        </span>
-        <span style={{ color: "#64748b" }}>/{max}</span>
-      </div>
-      <span
-        style={{
-          background: chipColor, color: "#fff", borderRadius: 999,
-          padding: "4px 14px", fontWeight: 700,
-        }}
-      >
-        {chip}
-      </span>
-      <span style={{ color: "#64748b", fontSize: 13 }}>{caption}</span>
-    </div>
-  );
-}
-
-function Meter({ label, score, max, right, hint }: {
-  label: string; score: number; max: number; right?: string; hint?: string;
-}) {
-  const pct = Math.min(100, Math.round((score / max) * 100));
-  return (
-    <div style={{ margin: "10px 0" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginBottom: 3 }}>
-        <span>{label}{hint ? <span style={{ color: "#94a3b8", marginLeft: 8, fontSize: 12 }}>{hint}</span> : null}</span>
-        <span style={{ color: "#334155", fontVariantNumeric: "tabular-nums" }}>
-          {score}
-          <span style={{ color: "#94a3b8" }}>/{max}</span>
-          {right ? <span style={{ color: "#64748b", marginLeft: 8 }}>{right}</span> : null}
-        </span>
-      </div>
-      <div style={{ background: "#e2e8f0", borderRadius: 6, height: 10 }}>
-        <div style={{ width: `${pct}%`, background: "linear-gradient(90deg,#60a5fa,#2563eb)", height: 10, borderRadius: 6 }} />
-      </div>
-    </div>
-  );
-}
-
-function Section7d({ run }: { run: RunSummary }) {
-  const s = run.scores as Scores7d | null;
-  if (!s) return null;
-  if (!s.identified) {
-    return <p>この名前からは公人を特定できませんでした。{s.reason}</p>;
-  }
-  return (
-    <div>
-      {s.subjectNote && <p style={{ color: "#64748b" }}>{s.subjectNote}</p>}
-      <ScoreHero
-        value={s.publicValueScore ?? 0}
-        max={100}
-        chip={`ランク ${s.rank}`}
-        chipColor={RANK_COLOR[s.rank ?? "D"] ?? "#64748b"}
-        caption="公的社会価値創造スコア"
-      />
-      <div style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px" }}>
-        {Object.entries(s.dimensions ?? {}).map(([k, d]) => (
-          <Meter
-            key={k}
-            label={DIM_LABEL[k] ?? k}
-            hint={CONF_LABEL[d.confidence] ?? d.confidence}
-            score={d.score}
-            max={10}
-            right={s.allocation?.[k] != null ? `意識 ${s.allocation[k]}%` : undefined}
-          />
-        ))}
-      </div>
-      <Collapsible title="総括" text={s.summary} />
-      <Collapsible title="生み出した価値の見立て" text={s.createdValueEstimate} />
-      <Collapsible title="社会的なコストや課題" text={s.socialCosts} />
-      <Collapsible title="もしこの人がいなかったら" text={s.counterfactual} />
-      <Collapsible title="さらに伸びる条件" text={(s.evolutionConditions ?? []).join("\n")} />
-    </div>
-  );
-}
-
-function SectionSvc({ run }: { run: RunSummary }) {
-  const s = run.scores as ScoresSvc | null;
-  if (!s) return null;
-  if (!s.identified) {
-    return <p>この名前からは公人を特定できませんでした。{s.reason}</p>;
-  }
-  return (
-    <div>
-      {s.subjectNote && <p style={{ color: "#64748b" }}>{s.subjectNote}</p>}
-      <ScoreHero
-        value={s.total100 ?? 0}
-        max={100}
-        chip={`10段階で ${s.grade}`}
-        chipColor="#0891b2"
-        caption={s.counterfactualContributionPct != null ? `本人ならではの貢献 ${s.counterfactualContributionPct}%` : "社会価値創造"}
-      />
-      {s.createdValue && (
-        <div
-          style={{
-            background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 12,
-            padding: "10px 16px", margin: "8px 0",
-          }}
-        >
-          <div style={{ color: "#0369a1", fontSize: 13 }}>生み出した価値の推計 (確からしさ {CONF_LABEL[s.createdValue.confidence] ?? s.createdValue.confidence})</div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: "#0c4a6e" }}>
-            年間 {s.createdValue.annualJpy || "推計困難"} ・ 累積 {s.createdValue.cumulativeJpy || "推計困難"}
-          </div>
-        </div>
-      )}
-      <div style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px" }}>
-        {(s.items ?? []).map((it) => (
-          <Meter key={it.key} label={it.key} score={it.score} max={10} />
-        ))}
-      </div>
-      <Collapsible title="総括" text={s.summary} />
-      <Collapsible title="総合判断" text={s.verdict} />
-      <Collapsible title="新しい視点" text={s.somethingNew} />
-      <Collapsible title="この評価の限界" text={(s.limitations ?? []).join("\n")} />
-    </div>
-  );
-}
-
-// だれでも試せる公開の入口 (GitHub Pages のプロトタイプ)。共有からの誘導先。
-const BONDS_PUBLIC_URL = "https://agewaller.github.io/bonds/";
-
 export default function SubjectDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -217,6 +51,7 @@ export default function SubjectDetailPage() {
   const [waitMsg, setWaitMsg] = useState(WAIT_MESSAGES[0]);
   const [error, setError] = useState("");
   const [shareMsg, setShareMsg] = useState("");
+  const [confirmDeletePerson, setConfirmDeletePerson] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -261,52 +96,52 @@ export default function SubjectDetailPage() {
     }
   };
 
-  // 評価結果を共有できるかたちにまとめる (公人評価なので個人情報は含まない)。
-  // bonds の公開の入口を添えて、受け取った人も試せるよう誘導する。
-  const buildShareText = (): string | null => {
-    if (!detail) return null;
-    const name = detail.subject.name;
+  // 評価結果そのものが出る公開ページ (/p/[slug]) の URL を共有する。
+  // 受け取った人はリンクを開くだけで結果を見られ、そこから自分でも試せる。
+  const shareResult = async () => {
+    if (!detail) return;
     const r7 = detail.latestByType.consciousness_7d;
     const rS = detail.latestByType.social_value_creation;
-    const lines: string[] = [`${name} の人物評価（bonds）`];
-    if (r7?.status === "completed") {
-      const s = r7.scores as Scores7d | null;
-      if (typeof s?.publicValueScore === "number") {
-        lines.push(`公的社会価値創造スコア ${s.publicValueScore}/100${s.rank ? `（ランク${s.rank}）` : ""}`);
-      }
-    }
-    if (rS?.status === "completed") {
-      const s = rS.scores as ScoresSvc | null;
-      if (typeof s?.total100 === "number") lines.push(`社会価値創造 ${s.total100}/100`);
-    }
-    if (lines.length === 1) return null; // まだ完了した評価がない
-    lines.push("意識の七次元と社会価値創造の二つの視点で公人を評価します。");
-    lines.push(`あなたも試せます → ${BONDS_PUBLIC_URL}`);
-    return lines.join("\n");
-  };
-
-  const shareResult = async () => {
-    const text = buildShareText();
-    if (!text) {
+    if (r7?.status !== "completed" && rS?.status !== "completed") {
       setShareMsg("共有できる評価がまだありません。まず評価してください");
       return;
     }
     setShareMsg("");
-    const nav = navigator as Navigator & { share?: (d: { title?: string; text?: string }) => Promise<void> };
+    const url = `${location.origin}/p/${detail.subject.slug}`;
+    const headline = evalHeadline(detail.subject.name, r7, rS);
+    const nav = navigator as Navigator & {
+      share?: (d: { title?: string; text?: string; url?: string }) => Promise<void>;
+    };
     if (typeof nav.share === "function") {
       try {
-        await nav.share({ title: "bonds 人物評価", text });
+        await nav.share({ title: `${detail.subject.name} の人物評価`, text: headline, url });
         return;
       } catch {
         // 共有をキャンセル/失敗したらコピーにフォールバック
       }
     }
     try {
-      await navigator.clipboard.writeText(text);
-      setShareMsg("結果とリンクをコピーしました。貼り付けて共有できます");
+      await navigator.clipboard.writeText(url);
+      setShareMsg("結果ページのリンクをコピーしました。貼り付けて共有できます");
     } catch {
-      setShareMsg("コピーできませんでした。文面を選択して共有してください");
+      setShareMsg(`リンクをコピーできませんでした: ${url}`);
     }
+  };
+
+  // 評価の履歴を 1 件ずつ削除する (データ主権: 1 件単位で消せる)。
+  const deleteRun = async (runId: string) => {
+    setError("");
+    const res = await fetch(`/api/bff/dd/subjects/${slug}/runs/${runId}`, { method: "DELETE" });
+    if (res.ok) await load();
+    else setError("履歴を削除できませんでした。もう一度お試しください");
+  };
+
+  // この人物ごと (評価履歴すべて) を削除する。
+  const deletePerson = async () => {
+    setError("");
+    const res = await fetch(`/api/bff/dd/subjects/${slug}`, { method: "DELETE" });
+    if (res.ok) location.href = "/subjects";
+    else setError("削除できませんでした。もう一度お試しください");
   };
 
   if (notFound) {
@@ -327,6 +162,7 @@ export default function SubjectDetailPage() {
 
   const r7d = detail.latestByType.consciousness_7d;
   const rSvc = detail.latestByType.social_value_creation;
+  const hasResult = r7d?.status === "completed" || rSvc?.status === "completed";
 
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
@@ -357,7 +193,7 @@ export default function SubjectDetailPage() {
       >
         {running ? "評価しています…" : "二つの視点で評価する"}
       </button>
-      {(r7d?.status === "completed" || rSvc?.status === "completed") && (
+      {hasResult && (
         <button
           onClick={() => void shareResult()}
           style={{
@@ -373,6 +209,13 @@ export default function SubjectDetailPage() {
         >
           この評価を共有する
         </button>
+      )}
+      {hasResult && (
+        <p style={{ marginTop: 8 }}>
+          <Link href={`/p/${detail.subject.slug}`} style={{ color: "#2563eb", fontSize: 14 }} target="_blank">
+            共有ページを開く
+          </Link>
+        </p>
       )}
       {running && <p style={{ color: "#64748b" }}>{waitMsg} (1〜2 分ほどかかります)</p>}
       {shareMsg && <p style={{ color: "#166534", background: "#f0fdf4", padding: 8, borderRadius: 8 }}>{shareMsg}</p>}
@@ -401,6 +244,69 @@ export default function SubjectDetailPage() {
           <p style={{ color: "#64748b" }}>
             {rSvc ? "前回の評価は完了しませんでした。もう一度お試しください。" : "まだ評価がありません。"}
           </p>
+        )}
+      </section>
+
+      {detail.recentRuns.length > 0 && (
+        <section style={{ marginTop: 32 }}>
+          <h2 style={{ fontSize: 18 }}>評価の履歴</h2>
+          <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 6 }}>
+            {detail.recentRuns.map((r) => (
+              <li
+                key={r.id}
+                style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 12px", fontSize: 14,
+                }}
+              >
+                <span style={{ color: "#334155" }}>
+                  {DDTYPE_LABEL[r.ddType] ?? r.ddType}
+                  <span style={{ color: "#94a3b8", marginLeft: 8 }}>
+                    {new Date(r.createdAt).toLocaleString("ja-JP")}
+                  </span>
+                  <span style={{ color: "#64748b", marginLeft: 8 }}>{STATUS_LABEL[r.status] ?? r.status}</span>
+                  {typeof r.moduleScore === "number" && (
+                    <span style={{ color: "#334155", marginLeft: 8 }}>{r.moduleScore}/100</span>
+                  )}
+                </span>
+                <button
+                  onClick={() => void deleteRun(r.id)}
+                  style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", padding: "2px 6px" }}
+                >
+                  削除
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section style={{ marginTop: 28 }}>
+        {confirmDeletePerson ? (
+          <div style={{ border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 8, padding: "12px 14px" }}>
+            <p style={{ margin: "0 0 10px", color: "#7f1d1d" }}>
+              {detail.subject.name} と、その評価の履歴をすべて削除します。元に戻せません。よろしいですか。
+            </p>
+            <button
+              onClick={() => void deletePerson()}
+              style={{ padding: "8px 16px", background: "#b91c1c", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
+            >
+              削除する
+            </button>
+            <button
+              onClick={() => setConfirmDeletePerson(false)}
+              style={{ marginLeft: 8, padding: "8px 16px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer" }}
+            >
+              やめる
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirmDeletePerson(true)}
+            style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", padding: 0, fontSize: 14 }}
+          >
+            この人物と評価の履歴を削除する
+          </button>
         )}
       </section>
 

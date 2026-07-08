@@ -130,6 +130,24 @@ describe("Eight / 年賀状リストの取込 (フェーズ3)", () => {
     const rows = parseCsvContacts(nenga);
     expect(rows[0]).toMatchObject({ name: "田村八重子", address: "東京都千代田区千代田1-1" });
   });
+
+  it("氏名が無く姓/名に分かれた名刺 CSV (Eight の別形式) を結合して取り込む", () => {
+    const split = `会社名,役職,姓,名,e-mail
+株式会社エイト商事,課長,近藤,五郎,goro@eight-example.co.jp`;
+    const rows = parseCsvContacts(split);
+    expect(rows[0]).toMatchObject({
+      name: "近藤 五郎",
+      company: "株式会社エイト商事",
+      title: "課長",
+      email: "goro@eight-example.co.jp",
+    });
+  });
+
+  it("Last Name / First Name (英語ヘッダの姓名分割) も結合する", () => {
+    const en = `First Name,Last Name,Email\nJohn,Smith,john@example.com`;
+    const rows = parseCsvContacts(en);
+    expect(rows[0]).toMatchObject({ name: "Smith John", email: "john@example.com" });
+  });
 });
 
 describe("SNS アーカイブ取込 (lms 移植)", () => {
