@@ -20,9 +20,10 @@ export RUN_API="${RUN_API:-bonds-api}"
 export RUN_WEB="${RUN_WEB:-bonds-web}"
 
 # Secret Manager のシークレット名。
-#   ANTHROPIC_API_KEY   … cares と共有 (同じシークレットを参照。値の複製はしない)
+#   cares-anthropic-api-key … cares と共有 (cares 本番が実際に使っている名前。
+#     初回デプロイで ANTHROPIC_API_KEY という名前を仮定して失敗した実障害 2026-07-08)
 #   BONDS_DATA_ENCRYPTION_KEY / BONDS_ADMIN_BREAKGLASS_TOKEN … bonds 専用 (cares と別鍵)
-export SECRET_ANTHROPIC="${SECRET_ANTHROPIC:-ANTHROPIC_API_KEY}"
+export SECRET_ANTHROPIC="${SECRET_ANTHROPIC:-cares-anthropic-api-key}"
 export SECRET_ENCRYPTION="${SECRET_ENCRYPTION:-BONDS_DATA_ENCRYPTION_KEY}"
 export SECRET_BREAKGLASS="${SECRET_BREAKGLASS:-BONDS_ADMIN_BREAKGLASS_TOKEN}"
 export SECRET_DB_PASSWORD="${SECRET_DB_PASSWORD:-BONDS_DB_PASSWORD}"
