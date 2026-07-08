@@ -3,10 +3,21 @@
 
 import type { ModelId } from "./cost.js";
 
-// 月次コストキャップ (円)。env PERSON_DD_MONTHLY_CAP_JPY で上書き可 (不正値は既定)。
-const envCap = Number(process.env.PERSON_DD_MONTHLY_CAP_JPY);
+// 月次コストキャップ (円)。全 AI 機能 (人物DD・贈り物提案・取込抽出・見立て・発信など)
+// の当月合計に効く。env PERSON_DD_MONTHLY_CAP_JPY で上書き可:
+//   0        = 上限なし (オーナー専用アプリ向け。cares の AI_MONTHLY_CAP_OWNER_JPY=0 と同思想)
+//   正の数    = その額を上限にする
+//   未設定/不正 = 3000 (公開想定の既定)
+// bonds の web アプリは管理トークン経由の単一オーナー専用 (公開の入口はプロトタイプ→cares
+// 側で別キャップ) のため、本番は 0 (上限なし) を既定にしてオーナーの利用/検証を妨げない。
+const envCapRaw = process.env.PERSON_DD_MONTHLY_CAP_JPY;
+const envCap = Number(envCapRaw);
 export const PERSON_DD_MONTHLY_CAP_JPY =
-  Number.isFinite(envCap) && envCap > 0 ? envCap : 3000;
+  envCapRaw !== undefined && Number.isFinite(envCap) && envCap === 0
+    ? Number.POSITIVE_INFINITY
+    : Number.isFinite(envCap) && envCap > 0
+      ? envCap
+      : 3000;
 
 // ai_usage_logs.purpose の接頭辞。月次コスト集計をこの接頭辞で絞る。
 export const PERSON_DD_PURPOSE_PREFIX = "person_dd";
