@@ -68,6 +68,15 @@ const HEADER_MAP: Record<string, keyof ParsedContact> = {
   宛名: "name",
 };
 
+// 名前の末尾に付いた敬称・肩書きを取り除く (チャットや議事録由来の「田中さん」→「田中」)。
+// 名前の一部を誤って削らないよう、明確な接尾辞のみ・保守的に。全部消えたら元に戻す。
+const HONORIFIC_SUFFIX =
+  /(?:\s*(?:さん|サン|様|さま|サマ|君|くん|ちゃん|先生|せんせい|殿|どの|氏|社長|部長|課長|係長|専務|常務|会長|教授|博士|先輩))+$/;
+export function stripHonorific(name: string): string {
+  const stripped = name.replace(HONORIFIC_SUFFIX, "").trim();
+  return stripped || name;
+}
+
 // 姓・名を分けて持つ CSV (Eight 名刺・年賀状ソフト・Outlook 等) のための列。
 // 氏名がある行はそちらを優先し、無ければ姓+名を結合して name にする。
 const FAMILY_HEADERS = new Set(["姓", "せい", "セイ", "苗字", "名字", "lastname", "last name", "family name", "surname"]);

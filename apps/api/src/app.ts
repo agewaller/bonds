@@ -26,9 +26,8 @@ import { normalizeLocale } from "./lib/locale.js";
 import { clampScore } from "./lib/dd-spec.js";
 import { clampDistance, calculateIsolationScore, todaySuggestions } from "./lib/relationship.js";
 import { computeProgress } from "./lib/progress.js";
-import { parseContacts, parseImportText, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
+import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { parseImportFile, MAX_IMPORT_FILE_BYTES } from "./lib/import-file.js";
-import { MAX_EXTRACT_TEXT_CHARS } from "./lib/file-text.js";
 import { computeGiftOccasions, summarizeGiftLedger } from "./lib/gifts.js";
 import { parseIsoIntervals, meetingSlotProposals, toIso } from "./lib/timeslots.js";
 import { parseIcsBusy, looksLikeIcs, buildMeetingInviteIcs } from "./lib/ics.js";
@@ -1382,8 +1381,8 @@ export function createApp(deps: AppDeps) {
     const today = new Date().toISOString().slice(0, 10);
     const contacts: ParsedContact[] = [];
     const interactions: ParsedInteraction[] = [];
-    for (const p of raw.slice(0, 30)) {
-      const name = clampName(p?.name);
+    for (const p of raw.slice(0, 200)) {
+      const name = stripHonorific(clampName(p?.name));
       if (!name) continue;
       const note = sanitizeProse(typeof p.note === "string" ? p.note : "").trim().slice(0, 1000);
       contacts.push({
@@ -1420,6 +1419,38 @@ export function createApp(deps: AppDeps) {
   // requireUser を通ったリクエストの消費主体。オーナーは無制限、それ以外は設定値の月次上限。
   const actorOf = (c: Context): AiActor => ({ ownerUid: c.get("ownerUid"), isOwner: c.get("isOwner") });
 
+  // 大きく雑多な入力でも取りこぼさないよう、本文を塊に分けて順に AI 抽出し、まとめる。
+  // 1 塊あたりの文字数と塊数の上限でコストを守る (オーナーは月次無制限だが青天井にはしない)。
+  const EXTRACT_CHUNK_CHARS = 15000;
+  const EXTRACT_MAX_CHUNKS = 12;
+
+  const buildExtractChunks = (texts: Array<{ file: string; kind: string; text: string }>): string[] => {
+    const chunks: string[] = [];
+    let cur = "";
+    const flush = () => {
+      if (cur.trim()) chunks.push(cur);
+      cur = "";
+    };
+    for (const t of texts) {
+      if (chunks.length >= EXTRACT_MAX_CHUNKS) break;
+      const header = `ファイル ${t.file} (${t.kind}) の内容:\n`;
+      if (header.length + t.text.length > EXTRACT_CHUNK_CHARS) {
+        // 大きいファイルは分割 (見出しを各塊の頭に付けて文脈を保つ)
+        flush();
+        for (let i = 0; i < t.text.length && chunks.length < EXTRACT_MAX_CHUNKS; i += EXTRACT_CHUNK_CHARS) {
+          chunks.push(header + t.text.slice(i, i + EXTRACT_CHUNK_CHARS));
+        }
+      } else if (cur.length + header.length + t.text.length > EXTRACT_CHUNK_CHARS) {
+        flush();
+        cur = header + t.text + "\n\n----\n\n";
+      } else {
+        cur += header + t.text + "\n\n----\n\n";
+      }
+    }
+    flush();
+    return chunks.slice(0, EXTRACT_MAX_CHUNKS);
+  };
+
   const extractPeopleFromTexts = async (
     texts: Array<{ file: string; kind: string; text: string }>,
     locale: string,
@@ -1428,16 +1459,33 @@ export function createApp(deps: AppDeps) {
     | { ok: true; contacts: ParsedContact[]; interactions: ParsedInteraction[] }
     | { ok: false; status: 422 | 503 | 502; body: unknown }
   > => {
-    const joined = texts
-      .map((t) => `ファイル ${t.file} (${t.kind}) の内容:\n${t.text}`)
-      .join("\n\n----\n\n")
-      .slice(0, MAX_EXTRACT_TEXT_CHARS);
-    const r = await runRelationshipAi("import_extract", IMPORT_EXTRACT_INSTRUCTION, joined, "import_extract", locale, {
-      maxContinuations: 2,
-      actor,
-    });
-    if (!r.ok) return r;
-    return { ok: true, ...parseExtractedPeople(r.text, "file") };
+    const chunks = buildExtractChunks(texts);
+    if (chunks.length === 0) return { ok: true, contacts: [], interactions: [] };
+    const contacts: ParsedContact[] = [];
+    const interactions: ParsedInteraction[] = [];
+    let anyOk = false;
+    let firstError: { ok: false; status: 422 | 503 | 502; body: unknown } | null = null;
+    // 塊ごとに抽出。1 塊が失敗しても他は続ける (途中の 1 ファイルで全滅させない)。
+    // ただし月次上限 (422) に当たったらそれ以上は回さない。
+    for (const chunk of chunks) {
+      const r = await runRelationshipAi("import_extract", IMPORT_EXTRACT_INSTRUCTION, chunk, "import_extract", locale, {
+        maxContinuations: 2,
+        actor,
+      });
+      if (!r.ok) {
+        firstError ??= r;
+        if (r.status === 422) break;
+        continue;
+      }
+      anyOk = true;
+      const parsed = parseExtractedPeople(r.text, "file");
+      contacts.push(...parsed.contacts);
+      interactions.push(...parsed.interactions);
+    }
+    // 一度も成功していない (キー無し・全塊失敗) ときはエラーを伝える。applyImport 側の
+    // 冪等化で同名は 1 件にまとまるため、塊をまたいだ重複はここで消さなくてよい。
+    if (!anyOk && firstError) return firstError;
+    return { ok: true, contacts, interactions };
   };
 
   // 画像 (名刺・名簿・スクショ) から Vision で人物を読み取る。
