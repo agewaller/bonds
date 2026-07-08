@@ -82,7 +82,20 @@ describe("ファイル/ZIP 取込 (import-file)", () => {
     expect(interactions.every((i) => i.type === "message")).toBe(true);
   });
 
-  it("知らない形式は 422 で対応形式を案内する", async () => {
+  it("読み取れないバイナリは 422 で対応形式を案内する", async () => {
+    const app = createApp({ prisma, generate: null });
+    const res = await app.request("/api/contacts/import-file", {
+      method: "POST",
+      headers: BIN,
+      body: new Uint8Array([0xff, 0xd8, 0xff, 0x00, 0x01, 0x02, 0x03]).buffer as ArrayBuffer,
+    });
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toBe("no_contacts_found");
+    expect(body.detail).toContain("Word");
+  });
+
+  it("読める書類は AI 未設定だと人物の読み取り待ちに縮退する (LinkedIn 等の構造化は従来どおり)", async () => {
     const app = createApp({ prisma, generate: null });
     const res = await app.request("/api/contacts/import-file", {
       method: "POST",
@@ -90,7 +103,7 @@ describe("ファイル/ZIP 取込 (import-file)", () => {
       body: new TextEncoder().encode("ただのメモ書きです").buffer as ArrayBuffer,
     });
     expect(res.status).toBe(422);
-    expect((await res.json()).detail).toContain("LinkedIn");
+    expect((await res.json()).error).toBe("extract_unavailable");
   });
 
   it("上限超過は 413", async () => {
