@@ -3,6 +3,7 @@
 // 追加時はまず同姓同名の候補を確かめ、複数いればユーザーに「どの方か」を選んでもらう。
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { AuthBar } from "../../components/AuthBar";
 
 type SubjectRow = {
   id: string;
