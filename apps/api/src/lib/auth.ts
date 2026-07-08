@@ -95,9 +95,30 @@ export async function authorizeUser(
       const email = (t.email ?? "").trim().toLowerCase();
       const isOwner = t.admin === true || (!!ownerEmail && email === ownerEmail);
       return { ok: true, ownerUid: t.uid, actor: `firebase:${t.uid}`, isOwner };
-    } catch {
-      return { ok: false, status: 401, error: "unauthorized", detail: "サインインし直してください" };
+    } catch (e) {
+      // 失敗の理由を握りつぶさない。原因 (期待 aud と実際の食い違い＝プロジェクト ID 不一致、
+      // トークン期限切れ等) をログに残し、短い理由も返す (切り分け用)。
+      const code = e && typeof e === "object" && "code" in e ? String((e as { code: unknown }).code) : "";
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(JSON.stringify({ event: "verify_id_token_failed", scope: "user", code, detail: msg }));
+      return {
+        ok: false,
+        status: 401,
+        error: "unauthorized",
+        detail: `サインインを確認できませんでした${code ? ` (${code})` : ""}: ${msg.slice(0, 200)}`,
+      };
     }
+  }
+  // ログイン済み (Bearer あり) なのに検証器が無い = サーバの Firebase 設定漏れ。
+  // これも黙って「サインインが必要」にせず、原因が分かる文言にする。
+  if (bearer && !verify) {
+    console.error(JSON.stringify({ event: "verifier_missing", scope: "user" }));
+    return {
+      ok: false,
+      status: 503,
+      error: "unavailable",
+      detail: "サーバのサインイン検証が未設定です (FIREBASE_PROJECT_ID)",
+    };
   }
   if (!breakglass && !verify) {
     return { ok: false, status: 503, error: "unavailable", detail: "認証が未設定です" };

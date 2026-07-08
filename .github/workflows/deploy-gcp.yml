@@ -77,6 +77,10 @@ jobs:
           # Google 連携 (Calendar/Gmail/Drive 取込) の OAuth クライアント ID (公開値)。
           # Variables 未設定なら "unset" になり、連携機能は「準備中」に縮退する。
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          # ブラウザがログインする Firebase プロジェクトと同じ ID で API 側もトークンを
+          # 検証する (これがズレると verifyIdToken が aud 不一致で必ず 401 になり、
+          # ログイン後の全リクエスト＝取り込みも失敗する)。未設定なら 07 が $PROJECT に既定。
+          FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
         run: |
           case "${{ github.event.inputs.only }}" in
             api) bash infra/scripts/07-deploy-cloud-run.sh --only=api ;;
