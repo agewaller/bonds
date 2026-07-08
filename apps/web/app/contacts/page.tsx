@@ -75,6 +75,13 @@ export default function ContactsPage() {
   // 同姓同名の確認 (null = 非表示)。既存の同名者を見せて「同じ人か別の人か」を選んでもらう
   const [duplicates, setDuplicates] = useState<Duplicate[] | null>(null);
   const [pendingName, setPendingName] = useState("");
+  // Google 連携 (null = 確認中)
+  const [googleStatus, setGoogleStatus] = useState<{
+    available: boolean;
+    connected: boolean;
+    email?: string | null;
+    lastSyncNote?: string | null;
+  } | null>(null);
 
   const load = useCallback(async () => {
     const [cRes, sRes, pRes] = await Promise.all([
@@ -89,6 +96,20 @@ export default function ContactsPage() {
 
   useEffect(() => {
     void load();
+    void (async () => {
+      const res = await apiFetch("google/status");
+      setGoogleStatus(res.ok ? await res.json() : { available: false, connected: false });
+    })();
+    // Google 同意画面から戻ってきたときの案内 (アドレスからは印を消す)
+    const params = new URLSearchParams(window.location.search);
+    const g = params.get("google");
+    if (g) {
+      if (g === "connected") setNotice("Google とつながりました。「いま取り込む」でお相手を取り込めます");
+      if (g === "error") setError("Google との接続がうまくいきませんでした。もう一度お試しください");
+      params.delete("google");
+      const qs = params.toString();
+      window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+    }
   }, [load]);
 
   const add = async (confirmNew = false) => {
@@ -714,6 +735,73 @@ export default function ContactsPage() {
               style={{ padding: "10px 12px", border: "1px solid #2563eb", color: "#2563eb", background: "#fff", borderRadius: 8, cursor: "pointer" }}
             >
               最新にする
+            </button>
+          </div>
+        )}
+      </section>
+
+      <section style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+        <h2 style={{ fontSize: 18, marginTop: 0 }}>Google とつなぐ</h2>
+        <p style={{ color: "#64748b", margin: "4px 0 10px", fontSize: 14 }}>
+          カレンダーの同席者、メールのやりとりの相手、共有ファイルの仲間を、連絡帳へ自動で取り込みます。
+          読み取りだけの最小限の権限で、メールの本文は読みません。
+        </p>
+        {googleStatus === null && <p style={{ color: "#64748b" }}>確認しています…</p>}
+        {googleStatus?.available === false && (
+          <p style={{ color: "#64748b" }}>この機能は準備中です (運営者側の接続設定が済むと使えるようになります)。</p>
+        )}
+        {googleStatus?.available && !googleStatus.connected && (
+          <button
+            onClick={async () => {
+              const res = await apiFetch("google/auth-url");
+              const body = await res.json().catch(() => ({}));
+              if (res.ok && body.url) window.location.href = body.url;
+              else setError(body.detail ?? "いまはつなげませんでした");
+            }}
+            disabled={busy}
+            style={{ padding: "10px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
+          >
+            Google とつなぐ
+          </button>
+        )}
+        {googleStatus?.available && googleStatus.connected && (
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ color: "#166534" }}>
+              つながっています{googleStatus.email ? ` (${googleStatus.email})` : ""}
+            </span>
+            {googleStatus.lastSyncNote && (
+              <small style={{ color: "#64748b" }}>前回: {googleStatus.lastSyncNote}</small>
+            )}
+            <button
+              onClick={async () => {
+                if (busy) return;
+                setBusy(true);
+                setError("");
+                setNotice("お相手を取り込んでいます… (少し時間がかかります)");
+                try {
+                  const res = await apiFetch("google/sync", { method: "POST", body: "{}" });
+                  const body = await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    setNotice("");
+                    setError(body.detail ?? "いまは取り込めませんでした");
+                    return;
+                  }
+                  const dup =
+                    Array.isArray(body.sameName) && body.sameName.length > 0
+                      ? `。同じお名前で見送った方: ${body.sameName.slice(0, 5).join("、")}`
+                      : "";
+                  setNotice(`Google から連絡先${body.imported}件、やりとりの記録${body.interactionsAdded}件を取り込みました${dup}`);
+                  await load();
+                  const s = await apiFetch("google/status");
+                  if (s.ok) setGoogleStatus(await s.json());
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              disabled={busy}
+              style={{ padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
+            >
+              いま取り込む
             </button>
           </div>
         )}

@@ -79,6 +79,9 @@ ensure_secret "$SECRET_DB_PASSWORD" "$DB_PW"
 # --set-secrets 参照はバージョンが 1 つも無いと失敗するため、番兵値 "unset" を入れる。
 # 実キーに差し替えるまで送信は動かない (OUTREACH_FROM_EMAIL 未設定なら mailer 自体が無効 = 503 縮退)。
 ensure_secret "$SECRET_SENDGRID"    "unset"
+# Google 連携 (Calendar/Gmail/Drive 取込) の OAuth クライアントシークレット。
+# 実値に差し替えるまで連携機能は「準備中」に縮退する。
+ensure_secret "$SECRET_GOOGLE_CLIENT" "unset"
 echo "  = ANTHROPIC_API_KEY: cares の既存シークレットを参照 (作成しない)"
 
 echo "=== 4) Cloud SQL (${SQL_INSTANCE}) ==="

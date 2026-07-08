@@ -28,6 +28,14 @@ export SECRET_ENCRYPTION="${SECRET_ENCRYPTION:-BONDS_DATA_ENCRYPTION_KEY}"
 export SECRET_BREAKGLASS="${SECRET_BREAKGLASS:-BONDS_ADMIN_BREAKGLASS_TOKEN}"
 export SECRET_DB_PASSWORD="${SECRET_DB_PASSWORD:-BONDS_DB_PASSWORD}"
 export SECRET_SENDGRID="${SECRET_SENDGRID:-BONDS_SENDGRID_API_KEY}"
+export SECRET_GOOGLE_CLIENT="${SECRET_GOOGLE_CLIENT:-BONDS_GOOGLE_OAUTH_CLIENT_SECRET}"
+
+# 本番 web の既定 URL (api 単独デプロイ時の ALLOWED_ORIGINS / OAuth 戻り先の既定)
+export PROD_WEB_URL="${PROD_WEB_URL:-https://bonds-web-xj6szhutkq-an.a.run.app}"
+# Google 連携 (OAuth)。CLIENT_ID は公開値なので env / GitHub Variables で渡す。
+# 未設定 (unset) なら連携機能は「準備中」に縮退する。
+export GOOGLE_OAUTH_CLIENT_ID="${GOOGLE_OAUTH_CLIENT_ID:-unset}"
+export GOOGLE_OAUTH_REDIRECT_URL="${GOOGLE_OAUTH_REDIRECT_URL:-https://bonds-api-xj6szhutkq-an.a.run.app/api/google/callback}"
 
 if [ "${BONDS_ENV}" = "staging" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/_env.staging.sh" ]; then
   # shellcheck disable=SC1091

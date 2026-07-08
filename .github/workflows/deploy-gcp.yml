@@ -73,6 +73,10 @@ jobs:
           NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
         run: bash infra/scripts/06-build-push-images.sh
       - name: deploy cloud run (api → web)
+        env:
+          # Google 連携 (Calendar/Gmail/Drive 取込) の OAuth クライアント ID (公開値)。
+          # Variables 未設定なら "unset" になり、連携機能は「準備中」に縮退する。
+          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
         run: |
           case "${{ github.event.inputs.only }}" in
             api) bash infra/scripts/07-deploy-cloud-run.sh --only=api ;;

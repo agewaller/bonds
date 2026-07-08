@@ -240,6 +240,22 @@ model OutreachMessage {
   @@map("outreach_messages")
 }
 
+/// Google 連携 (Calendar / Gmail / Drive の読み取り専用)。人物データの受動収集に使う。
+/// refresh token は実質「本人の Google データへの合鍵」なのでアプリ層暗号化。
+model GoogleConnection {
+  id           String    @id @default(uuid())
+  ownerUid     String    @unique @map("owner_uid")
+  email        String? // 接続した Google アカウント (表示用)
+  refreshToken String    @map("refresh_token") // 暗号化
+  scopes       String?
+  lastSyncAt   DateTime? @map("last_sync_at")
+  lastSyncNote String?   @map("last_sync_note") // 直近同期の件数など (表示用)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@map("google_connections")
+}
+
 /// 監査ログ (フェーズ5)。書き込み系 API の who/what/when を記録する。
 model AuditLog {
   id        String   @id @default(uuid())
