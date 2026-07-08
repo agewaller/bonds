@@ -96,6 +96,22 @@ export async function getMonthlyCostJpy(prisma: ExtendedPrismaClient): Promise<n
   return agg._sum.costJpy ?? 0;
 }
 
+// 当月の AI コスト合計 (円) を利用者 1 人ぶんに絞って集計する。
+// オーナー以外の利用者に月次上限を効かせるために使う (オーナーは全体で無制限)。
+export async function getMonthlyCostJpyForUser(
+  prisma: ExtendedPrismaClient,
+  ownerUid: string,
+): Promise<number> {
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+  const agg = await prisma.aiUsageLog.aggregate({
+    _sum: { costJpy: true },
+    where: { ownerUid, createdAt: { gte: monthStart } },
+  });
+  return agg._sum.costJpy ?? 0;
+}
+
 export type RunPersonDdResult = {
   runId: string;
   status: "completed" | "invalid_output" | "failed";
@@ -229,6 +245,8 @@ export async function runPersonDd(
     const canonical = canonicalizeModelId(gen.model) ?? model;
     await prisma.aiUsageLog.create({
       data: {
+        // 人物DD は管理系 (requireAdmin = オーナー専用)。消費はオーナーに帰属させる。
+        ownerUid: "owner",
         provider: "anthropic",
         model: canonical,
         purpose: `${PERSON_DD_PURPOSE_PREFIX}_${ddType}`,

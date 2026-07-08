@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { authorizeAdmin, type VerifyIdTokenFn } from "../../src/lib/auth.js";
+import { authorizeAdmin, authorizeUser, type VerifyIdTokenFn } from "../../src/lib/auth.js";
 
 const savedEnv = { ...process.env };
 beforeEach(() => {
@@ -66,6 +66,62 @@ describe("authorizeAdmin (三段フェイルセーフ)", () => {
   it("完全未設定 (breakglass 無し・verifier 無し) は fail closed 503", async () => {
     delete process.env.ADMIN_BREAKGLASS_TOKEN;
     const r = await authorizeAdmin({}, { verifyIdToken: null });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.status).toBe(503);
+  });
+});
+
+describe("authorizeUser (関係性ユーザー + isOwner)", () => {
+  it("break-glass は owner スコープ・isOwner=true (単一オーナー時代の互換)", async () => {
+    const r = await authorizeUser({ adminToken: "bg-token" }, { verifyIdToken: null });
+    expect(r).toEqual({ ok: true, ownerUid: "owner", actor: "breakglass", isOwner: true });
+  });
+
+  it("Firebase ログインは uid スコープ。OWNER_EMAIL 本人は isOwner=true", async () => {
+    const r = await authorizeUser(
+      { authorization: "Bearer x" },
+      { verifyIdToken: verifierFor({ uid: "owner-uid", email: "AGEWALLER@gmail.com" }) },
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.ownerUid).toBe("owner-uid");
+      expect(r.isOwner).toBe(true);
+    }
+  });
+
+  it("custom claim admin:true も isOwner=true", async () => {
+    const r = await authorizeUser(
+      { authorization: "Bearer x" },
+      { verifyIdToken: verifierFor({ uid: "admin-uid", admin: true }) },
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.isOwner).toBe(true);
+  });
+
+  it("一般ユーザーは自分の uid スコープ・isOwner=false (月次上限が効く側)", async () => {
+    const r = await authorizeUser(
+      { authorization: "Bearer x" },
+      { verifyIdToken: verifierFor({ uid: "user-123", email: "someone@example.com" }) },
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.ownerUid).toBe("user-123");
+      expect(r.isOwner).toBe(false);
+    }
+  });
+
+  it("トークン検証の例外は 401", async () => {
+    const boom: VerifyIdTokenFn = async () => {
+      throw new Error("expired");
+    };
+    const r = await authorizeUser({ authorization: "Bearer x" }, { verifyIdToken: boom });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.status).toBe(401);
+  });
+
+  it("完全未設定は fail closed 503", async () => {
+    delete process.env.ADMIN_BREAKGLASS_TOKEN;
+    const r = await authorizeUser({}, { verifyIdToken: null });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.status).toBe(503);
   });

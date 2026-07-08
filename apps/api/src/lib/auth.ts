@@ -66,13 +66,15 @@ export async function authorizeAdmin(
 }
 
 export type UserAuthResult =
-  | { ok: true; ownerUid: string; actor: string }
+  | { ok: true; ownerUid: string; actor: string; isOwner: boolean }
   | { ok: false; status: 401 | 503; error: string; detail?: string };
 
 /**
  * 一般ユーザーの認可 (関係性ダッシュボード用)。
  * - Firebase ID トークンが有効なら、その uid を ownerUid としてデータを分離する
  * - break-glass トークンは単一オーナー時代の "owner" スコープに入る (互換・非常口)
+ * - isOwner: break-glass、または email==OWNER_EMAIL は「オーナー本人」。AI 月次上限を
+ *   オーナーは無制限、それ以外は設定値で効かせるために使う (cares の owner 無制限と同思想)。
  * 管理系 (人物DD 書き込み・admin) は authorizeAdmin を使い続ける。
  */
 export async function authorizeUser(
@@ -80,16 +82,19 @@ export async function authorizeUser(
   deps: AuthDeps,
 ): Promise<UserAuthResult> {
   const breakglass = process.env.ADMIN_BREAKGLASS_TOKEN;
+  const ownerEmail = (process.env.OWNER_EMAIL ?? "").trim().toLowerCase();
   const verify = deps.verifyIdToken ?? null;
 
   if (breakglass && headers.adminToken === breakglass) {
-    return { ok: true, ownerUid: "owner", actor: "breakglass" };
+    return { ok: true, ownerUid: "owner", actor: "breakglass", isOwner: true };
   }
   const bearer = headers.authorization?.match(/^Bearer (.+)$/)?.[1];
   if (bearer && verify) {
     try {
       const t = await verify(bearer);
-      return { ok: true, ownerUid: t.uid, actor: `firebase:${t.uid}` };
+      const email = (t.email ?? "").trim().toLowerCase();
+      const isOwner = t.admin === true || (!!ownerEmail && email === ownerEmail);
+      return { ok: true, ownerUid: t.uid, actor: `firebase:${t.uid}`, isOwner };
     } catch {
       return { ok: false, status: 401, error: "unauthorized", detail: "サインインし直してください" };
     }
