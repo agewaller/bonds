@@ -125,4 +125,28 @@ describe("authorizeUser (関係性ユーザー + isOwner)", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.status).toBe(503);
   });
+
+  it("ログイン済み (Bearer) なのに検証器が無ければ 503 で理由を返す (黙って 401 にしない)", async () => {
+    const r = await authorizeUser({ authorization: "Bearer x" }, { verifyIdToken: null });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.status).toBe(503);
+      expect(r.detail).toContain("FIREBASE_PROJECT_ID");
+    }
+  });
+
+  it("トークン検証エラーの理由 (aud 不一致など) を detail に含める", async () => {
+    const boom: VerifyIdTokenFn = async () => {
+      throw Object.assign(new Error("Firebase ID token has incorrect \"aud\" (audience) claim."), {
+        code: "auth/argument-error",
+      });
+    };
+    const r = await authorizeUser({ authorization: "Bearer x" }, { verifyIdToken: boom });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.status).toBe(401);
+      expect(r.detail).toContain("auth/argument-error");
+      expect(r.detail).toContain("aud");
+    }
+  });
 });
