@@ -19,7 +19,9 @@ import {
 import {
   PERSON_EVAL_GUARD,
   PERSON_EVAL_SAFETY,
+  PERSON_EVAL_RECENCY,
   PERSON_DD_MAX_TOKENS,
+  PERSON_DD_MAX_CONTINUATIONS,
   PERSON_DD_TIMEOUT_MS,
   PERSON_DD_PURPOSE_PREFIX,
   buildPersonEvalUserMessage,
@@ -75,6 +77,7 @@ export function buildSystemPrompt(template: string, ddType: DdType, locale: stri
     base,
     PERSON_EVAL_SAFETY,
     PERSON_EVAL_GUARD,
+    PERSON_EVAL_RECENCY,
     "上の「出力形式」の節に散文・表形式の指定があっても、それより次の JSON 出力指示を優先してください。",
     buildOutputInstruction(ddType),
   ].join("\n\n");
@@ -205,8 +208,9 @@ export async function runPersonDd(
   emit({ type: "step_started", runId: run.id, stepKey: "evaluate" });
 
   const system = buildSystemPrompt(prompt.body, ddType, locale);
-  // profileHint (同姓同名の特定メモ) があれば接地し、別人との混同を防ぐ
-  const base = buildPersonEvalUserMessage(subject.name, subject.profileHint);
+  // profileHint (同姓同名の特定メモ) があれば接地し、別人との混同を防ぐ。
+  // 今日の日付を接地し、直近情報を重視した「いま時点の像」を返させる。
+  const base = buildPersonEvalUserMessage(subject.name, subject.profileHint, run.referenceDate);
   const userMessage = searchDigest ? `${base}\n\n${searchDigest}` : base;
 
   let text: string;
@@ -217,6 +221,8 @@ export async function runPersonDd(
       userMessage,
       maxTokens: PERSON_DD_MAX_TOKENS,
       timeoutMs: PERSON_DD_TIMEOUT_MS,
+      // 長い JSON 評価が max_tokens で切れても続きを繋いで完成させる (途中停止対策)
+      maxContinuations: PERSON_DD_MAX_CONTINUATIONS,
     });
     text = gen.text;
     // コスト記録 (月次キャップの集計元)。canonical alias で計上する。

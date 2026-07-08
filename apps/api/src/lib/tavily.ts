@@ -17,6 +17,9 @@ export function buildTavilySearch(): SearchFn | null {
         query,
         max_results: 5,
         search_depth: "basic",
+        // 直近の動きを優先して拾う (この評価は日々更新される前提)
+        topic: "news",
+        days: 365,
       }),
       signal: AbortSignal.timeout(20000),
     });
@@ -39,14 +42,15 @@ export function personSearchQueries(name: string, profileHint?: string | null): 
   // 同姓同名の特定メモがあるときは、先頭のクエリにだけ短い識別語を添えて
   // 別人の記事を拾いにくくする (長すぎる語は検索精度を落とすため 40 文字まで)。
   const hint = (profileHint ?? "").trim().slice(0, 40);
-  const first = hint ? `${name} ${hint}` : `${name}`;
-  return [first, `${name} 経歴 実績`, `${name} 批判 問題点`];
+  const first = hint ? `${name} ${hint} 最新` : `${name} 最新`;
+  // 直近の動き・評価の変化を優先しつつ、経歴と批判の観点も押さえる
+  return [first, `${name} 最近 発言 動向`, `${name} 経歴 実績`, `${name} 批判 問題点`];
 }
 
 /** 検索結果を evaluate へ渡す参考情報ダイジェストにする。出典 URL を必ず添える。 */
 export function buildSearchDigest(results: Array<{ query: string; items: SearchResult[] }>): string {
   const lines: string[] = [
-    "参考情報 (Web 検索の抜粋。事実かどうかの確からしさは自分で判定し、evidence の certainty に反映すること):",
+    "参考情報 (Web 検索の抜粋。直近の公開情報を優先的に集めたもの。あなたの記憶より新しければこちらを最新の事実として優先し、事実かどうかの確からしさは自分で判定して evidence の certainty に反映すること):",
   ];
   for (const r of results) {
     for (const item of r.items.slice(0, 3)) {

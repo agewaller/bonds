@@ -82,4 +82,10 @@ describe("buildPersonEvalUserMessage", () => {
     // 空白だけのメモは無いものとして扱う
     expect(buildPersonEvalUserMessage("山田太郎", "   ")).not.toContain("対象の特定");
   });
+
+  it("今日の日付を接地し、直近重視を明示する (リアルタイム更新の思想)", () => {
+    const m = buildPersonEvalUserMessage("渋沢栄一", null, new Date("2026-07-08T00:00:00Z"));
+    expect(m).toContain("今日の日付: 2026-07-08");
+    expect(m).toContain("直近を重視");
+  });
 });
