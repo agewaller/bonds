@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { t, currentLocale, type Locale } from "../lib/i18n";
 import { LanguageSelector } from "../components/LanguageSelector";
+import { AuthBar } from "../components/AuthBar";
 
 export default function Home() {
   // cookie はクライアントでしか読めないため、初回描画後に反映する
@@ -11,7 +12,10 @@ export default function Home() {
   useEffect(() => setLocale(currentLocale()), []);
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "48px 16px" }}>
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      {/* サインイン/サインアウトの導線 (未ログインなら「サインイン」→/login)。
+          登録・ログイン導線は摩擦を減らすため、ホームからも到達できるようにする。 */}
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 16 }}>
+        <AuthBar />
         <LanguageSelector />
       </div>
       <h1>bonds</h1>
