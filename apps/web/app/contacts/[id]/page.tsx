@@ -21,7 +21,30 @@ type Contact = {
   notes: string | null;
   profileDigest: string | null;
   profileDigestAt: string | null;
+  profileFacets: string | null;
+  profileFacetsAt: string | null;
 };
+type Facets = {
+  summary?: string; contact?: string; status?: string; work?: string; family?: string; health?: string; values?: string;
+  skills?: string[]; concerns?: string[]; goals?: string[]; likes?: string[]; cautions?: string[]; opportunities?: string[];
+};
+// 論点の表示順とラベル (連絡先・状況・スキル・悩み・家族構成 … を一望できるように)
+const FACET_TEXT: { key: keyof Facets; label: string }[] = [
+  { key: "contact", label: "連絡の取り方" },
+  { key: "status", label: "いまの状況" },
+  { key: "work", label: "仕事・役割" },
+  { key: "family", label: "家族・大切な人" },
+  { key: "health", label: "健康で気にかけること" },
+  { key: "values", label: "価値観" },
+];
+const FACET_LIST: { key: keyof Facets; label: string }[] = [
+  { key: "skills", label: "得意なこと" },
+  { key: "concerns", label: "悩み・課題" },
+  { key: "goals", label: "目標・夢" },
+  { key: "likes", label: "好きなもの・関心" },
+  { key: "cautions", label: "気をつけたいこと" },
+  { key: "opportunities", label: "こちらから貢献できそうなこと" },
+];
 type Interaction = { id: string; type: string; occurredAt: string; notes: string | null };
 type Gift = { id: string; occasion: string; direction: string; item: string; givenAt: string };
 type LinkedSubject = { linkId: string; slug: string; name: string };
@@ -143,6 +166,15 @@ export default function ContactDetailPage() {
           ? "記録からまとめ直しました (公開情報はいまは調べられませんでした)"
           : "この方のまとめを最新にしました",
       );
+      await load();
+    }
+  };
+
+  const generateFacets = async () => {
+    if (!contact) return;
+    const body = await call(`contacts/${contact.id}/facets`, { method: "POST", body: "{}" });
+    if (body?.facets) {
+      setNotice("この方の論点を整理しました");
       await load();
     }
   };
@@ -280,6 +312,60 @@ export default function ContactDetailPage() {
           </button>
         </div>
       </section>
+
+      {(() => {
+        let facets: Facets | null = null;
+        try {
+          facets = contact.profileFacets ? (JSON.parse(contact.profileFacets) as Facets) : null;
+        } catch {
+          facets = null;
+        }
+        const hasAny =
+          facets &&
+          [...FACET_TEXT, ...FACET_LIST].some((f) => {
+            const v = facets![f.key];
+            return Array.isArray(v) ? v.length > 0 : !!v;
+          });
+        return (
+          <section style={{ marginTop: 24, border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <h2 style={{ fontSize: 18, margin: 0 }}>この方の論点</h2>
+              {contact.profileFacetsAt && (
+                <small style={{ color: "#64748b" }}>{new Date(contact.profileFacetsAt).toLocaleDateString("ja-JP")} 更新</small>
+              )}
+            </div>
+            {hasAny ? (
+              <div style={{ marginTop: 8 }}>
+                {facets!.summary && <p style={{ color: "#0f172a", fontWeight: 600, margin: "4px 0 10px" }}>{facets!.summary}</p>}
+                {FACET_TEXT.map((f) =>
+                  facets![f.key] ? (
+                    <div key={f.key} style={{ margin: "6px 0" }}>
+                      <span style={{ color: "#64748b", fontSize: 13 }}>{f.label}</span>
+                      <p style={{ margin: "2px 0", color: "#334155", lineHeight: 1.8 }}>{facets![f.key] as string}</p>
+                    </div>
+                  ) : null,
+                )}
+                {FACET_LIST.map((f) => {
+                  const arr = (facets![f.key] as string[] | undefined) ?? [];
+                  return arr.length ? (
+                    <div key={f.key} style={{ margin: "6px 0" }}>
+                      <span style={{ color: "#64748b", fontSize: 13 }}>{f.label}</span>
+                      <p style={{ margin: "2px 0", color: "#334155", lineHeight: 1.8 }}>{arr.join(" / ")}</p>
+                    </div>
+                  ) : null;
+                })}
+              </div>
+            ) : (
+              <p style={{ margin: "8px 0", color: "#64748b" }}>
+                記録がたまってきたら、この方の状況・スキル・悩み・ご家族・目標などを、いくつもの観点に整理できます。
+              </p>
+            )}
+            <button style={btn(false)} onClick={() => void generateFacets()} disabled={!!busy}>
+              {hasAny ? "論点を整理し直す" : "記録から論点を整理する"}
+            </button>
+          </section>
+        );
+      })()}
 
       <section style={{ marginTop: 24 }}>
         <h2 style={{ fontSize: 18 }}>この方のこと</h2>
