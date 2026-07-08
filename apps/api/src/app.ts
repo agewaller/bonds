@@ -61,6 +61,21 @@ import {
   parseDiscoveredTargets,
   validatePartnerDraft,
 } from "./lib/partners.js";
+import {
+  buildGoogleClient,
+  collectGooglePeople,
+  signState,
+  verifyState,
+  GOOGLE_SCOPES,
+  GMAIL_MAX_MESSAGES,
+  DRIVE_MAX_FILES,
+  CALENDAR_LOOKBACK_DAYS,
+  CALENDAR_LOOKAHEAD_DAYS,
+  type GoogleClient,
+  type CalendarEvent,
+  type GmailHeaderMessage,
+  type DriveFile,
+} from "./lib/google.js";
 
 export type AppDeps = {
   prisma: ExtendedPrismaClient;
@@ -69,6 +84,7 @@ export type AppDeps = {
   verifyIdToken?: VerifyIdTokenFn | null;
   fetchText?: ((url: string) => Promise<string>) | null;
   search?: SearchFn | null;
+  google?: GoogleClient | null;
 };
 
 const SUBJECT_TYPES = ["politician", "executive", "other"] as const;
@@ -81,6 +97,8 @@ export function createApp(deps: AppDeps) {
   const mailer = deps.mailer !== undefined ? deps.mailer : buildSendGridMailer();
   // 人物DD の検索器 (TAVILY_API_KEY 無しなら null = 知識ベースモード)
   const ddSearch = deps.search !== undefined ? deps.search : buildTavilySearch();
+  // Google 連携 (env 未設定なら null = 「準備中」に縮退)
+  const google = deps.google !== undefined ? deps.google : buildGoogleClient();
   // ICS 購読 URL の取得器 (既定は素の fetch + 15 秒タイムアウト)
   const fetchText =
     deps.fetchText !== undefined
@@ -174,6 +192,10 @@ export function createApp(deps: AppDeps) {
   app.use("/api/relationship/*", requireUser);
   app.use("/api/outreach/*", requireUser);
   app.use("/api/outreach", requireUser);
+  // Google 連携: callback (OAuth リダイレクト受け) だけは未認証 (state 署名で本人性を担保)
+  app.use("/api/google/status", requireUser);
+  app.use("/api/google/auth-url", requireUser);
+  app.use("/api/google/sync", requireUser);
 
   // ---------------- 管理: モデル設定 (cares person-eval-config と同形) ----------------
 
@@ -1929,6 +1951,213 @@ export function createApp(deps: AppDeps) {
       if (r.status === "rate_limited") break; // 上限到達: 以降は次回に回す
     }
     return c.json({ picked: due.length, sent, held, failed });
+  });
+
+  // ---------------- Google 連携 (Calendar / Gmail / Drive → 人物データの受動収集) ----------------
+  // 読み取り専用の最小権限 (Gmail はヘッダのみ)。refresh token は暗号化保存。
+  // env (GOOGLE_OAUTH_CLIENT_ID/SECRET) 未設定なら「準備中」に縮退する。
+
+  const googleRedirectUri = () =>
+    process.env.GOOGLE_OAUTH_REDIRECT_URL ?? "http://localhost:8080/api/google/callback";
+  const webBaseUrl = () => allowedOrigins[0] ?? "http://localhost:3000";
+
+  // 1 ユーザーぶんの同期。Calendar 90日+30日 / Gmail 送受信 各50通のヘッダ / Drive 共有50件。
+  const runGoogleSync = async (
+    ownerUid: string,
+  ): Promise<
+    | { ok: true; imported: number; skipped: number; interactionsAdded: number; people: number; sameName: string[] }
+    | { ok: false; detail: string }
+  > => {
+    if (!google) return { ok: false, detail: "Google 連携は準備中です" };
+    const conn = await prisma.googleConnection.findUnique({ where: { ownerUid } });
+    if (!conn) return { ok: false, detail: "まだ Google とつながっていません" };
+    const accessToken = await google.refreshAccessToken(conn.refreshToken);
+
+    const now = Date.now();
+    const timeMin = new Date(now - CALENDAR_LOOKBACK_DAYS * 86400_000).toISOString();
+    const timeMax = new Date(now + CALENDAR_LOOKAHEAD_DAYS * 86400_000).toISOString();
+
+    // Calendar
+    const cal = (await google
+      .apiGet(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&maxResults=250&fields=items(start,attendees)&timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`,
+        accessToken,
+      )
+      .catch(() => ({}))) as { items?: Array<{ start?: { date?: string; dateTime?: string }; attendees?: CalendarEvent["attendees"] }> };
+    const calendarEvents: CalendarEvent[] = (cal.items ?? []).map((ev) => ({
+      startDate: (ev.start?.dateTime ?? ev.start?.date ?? "").slice(0, 10) || undefined,
+      attendees: ev.attendees,
+    }));
+
+    // Gmail (ヘッダのみ)。SENT = 自分が書いた相手 (強い信号)、INBOX = 受信相手。
+    const gmailMessages: GmailHeaderMessage[] = [];
+    for (const label of ["SENT", "INBOX"] as const) {
+      const list = (await google
+        .apiGet(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${GMAIL_MAX_MESSAGES}&labelIds=${label}`,
+          accessToken,
+        )
+        .catch(() => ({}))) as { messages?: Array<{ id: string }> };
+      for (const m of list.messages ?? []) {
+        const detail = (await google
+          .apiGet(
+            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc`,
+            accessToken,
+          )
+          .catch(() => null)) as {
+          internalDate?: string;
+          payload?: { headers?: Array<{ name: string; value: string }> };
+        } | null;
+        if (!detail) continue;
+        const h = (name: string) =>
+          detail.payload?.headers?.find((x) => x.name.toLowerCase() === name.toLowerCase())?.value;
+        gmailMessages.push({
+          from: h("From"),
+          to: h("To"),
+          cc: h("Cc"),
+          dateMs: detail.internalDate ? Number(detail.internalDate) : undefined,
+          sent: label === "SENT",
+        });
+      }
+    }
+
+    // Drive (共有されているファイルの持ち主・最終更新者)
+    const drive = (await google
+      .apiGet(
+        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent("sharedWithMe=true")}&orderBy=modifiedTime%20desc&pageSize=${DRIVE_MAX_FILES}&fields=files(owners(displayName,emailAddress,me),lastModifyingUser(displayName,emailAddress,me))`,
+        accessToken,
+      )
+      .catch(() => ({}))) as { files?: DriveFile[] };
+
+    const collected = collectGooglePeople({
+      selfEmails: conn.email ? [conn.email] : [],
+      calendarEvents,
+      gmailMessages,
+      driveFiles: drive.files ?? [],
+    });
+
+    // 既存の連絡先とメールアドレスで突き合わせ、同一人物は既存のお名前に寄せる
+    // (表記ゆれで二重登録しない。applyImport は同名スキップの冪等)。
+    const existing = await prisma.contact.findMany({
+      where: { ownerUid, state: "active" },
+      select: { name: true, email: true },
+      take: 500,
+    });
+    const emailToExisting = new Map(
+      existing.filter((c2) => c2.email).map((c2) => [c2.email!.toLowerCase(), c2.name]),
+    );
+    for (const c2 of collected.contacts) {
+      const known = c2.email ? emailToExisting.get(c2.email.toLowerCase()) : undefined;
+      if (known && known !== c2.name) {
+        for (const i of collected.interactions) if (i.name === c2.name) i.name = known;
+        c2.name = known;
+      }
+    }
+
+    const result = await applyImport(ownerUid, collected);
+    const note = `連絡先${result.imported}件、やりとり${result.interactionsAdded}件を取り込み`;
+    await prisma.googleConnection.update({
+      where: { ownerUid },
+      data: { lastSyncAt: new Date(), lastSyncNote: note },
+    });
+    return { ok: true, ...result, people: collected.contacts.length };
+  };
+
+  app.get("/api/google/status", async (c) => {
+    if (!google) return c.json({ available: false, connected: false });
+    const conn = await prisma.googleConnection.findUnique({
+      where: { ownerUid: c.get("ownerUid") },
+      select: { email: true, lastSyncAt: true, lastSyncNote: true },
+    });
+    return c.json({
+      available: true,
+      connected: !!conn,
+      email: conn?.email ?? null,
+      lastSyncAt: conn?.lastSyncAt ?? null,
+      lastSyncNote: conn?.lastSyncNote ?? null,
+    });
+  });
+
+  app.get("/api/google/auth-url", async (c) => {
+    if (!google) {
+      return c.json({ error: "unavailable", detail: "Google 連携は準備中です" }, 503);
+    }
+    const state = signState(c.get("ownerUid"), Math.floor(Date.now() / 1000) + 600);
+    if (!state) {
+      return c.json({ error: "unavailable", detail: "サーバの設定が未完了です" }, 503);
+    }
+    return c.json({ url: google.authUrl(state, googleRedirectUri()) });
+  });
+
+  // OAuth コールバック (未認証)。state の署名で「誰の接続か」を確かめてから保存する。
+  app.get("/api/google/callback", async (c) => {
+    const back = (q: string) => c.redirect(`${webBaseUrl()}/contacts?google=${q}`, 302);
+    if (!google) return back("error");
+    const ownerUid = verifyState(c.req.query("state"), Math.floor(Date.now() / 1000));
+    const code = c.req.query("code");
+    if (!ownerUid || !code) return back("error");
+    try {
+      const t = await google.exchangeCode(code, googleRedirectUri());
+      const existing = await prisma.googleConnection.findUnique({ where: { ownerUid } });
+      const refreshToken = t.refreshToken ?? existing?.refreshToken;
+      if (!refreshToken) return back("error");
+      await prisma.googleConnection.upsert({
+        where: { ownerUid },
+        create: { ownerUid, email: t.email, refreshToken, scopes: GOOGLE_SCOPES.join(" ") },
+        update: { email: t.email ?? existing?.email, refreshToken, scopes: GOOGLE_SCOPES.join(" ") },
+      });
+      return back("connected");
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          event: "google_callback_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      return back("error");
+    }
+  });
+
+  app.post("/api/google/sync", async (c) => {
+    try {
+      const r = await runGoogleSync(c.get("ownerUid"));
+      if (!r.ok) return c.json({ error: "unavailable", detail: r.detail }, 503);
+      return c.json(r);
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          event: "google_sync_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      return c.json(
+        { error: "sync_failed", detail: "いまは取り込めませんでした。しばらくしてからお試しください" },
+        502,
+      );
+    }
+  });
+
+  // 毎時 sweep 用: つながっている人を古い順に少しずつ同期 (受動収集)
+  app.post("/api/admin/google/sync-all", async (c) => {
+    if (!google) return c.json({ picked: 0, synced: 0, failed: 0, note: "not_configured" });
+    const batch = Math.min(20, Math.max(1, Number(c.req.query("batch")) || 5));
+    const conns = await prisma.googleConnection.findMany({
+      orderBy: [{ lastSyncAt: { sort: "asc", nulls: "first" } }],
+      take: batch,
+      select: { ownerUid: true },
+    });
+    let synced = 0;
+    let failed = 0;
+    for (const conn of conns) {
+      try {
+        const r = await runGoogleSync(conn.ownerUid);
+        if (r.ok) synced++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+    }
+    return c.json({ picked: conns.length, synced, failed });
   });
 
   // 実行詳細 (ステップ含む)

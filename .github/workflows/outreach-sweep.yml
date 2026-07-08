@@ -28,3 +28,6 @@ jobs:
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
           curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/partners/process-queue?batch=10" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
+          # Google 連携: つながっている人を古い順に少しずつ同期 (受動収集)
+          curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/google/sync-all?batch=3" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
