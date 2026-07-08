@@ -105,26 +105,35 @@ export function buildAnthropicGenerate(): GenerateFn | null {
     let model_ = model;
     let inputTokens = 0;
     let outputTokens = 0;
-    // 初回 + 継続を回す。max_tokens で切れている間だけ、これまでの出力を assistant の
-    // 発話として渡して「続き」を生成させ、文字列として連結する (JSON もそのまま繋がる)。
+    // クリーンに終わった (end_turn / stop_sequence) 以外は「まだ途中」とみなして継続する。
+    // max_tokens だけでなく、接続断 (premature_close) や自前タイムアウトで救済した部分
+    // (incomplete) も続きを生成して繋ぐ — 長い評価 (社会価値創造) はこれで最後まで出る。
+    const CLEAN_STOPS = new Set(["end_turn", "stop_sequence"]);
     for (let attempt = 0; attempt <= maxContinuations; attempt++) {
-      const res = await createMessageResilient(
-        client,
-        {
-          model,
-          max_tokens: maxTokens,
-          system: systemBlocks,
-          // 継続時はこれまでの出力を assistant 発話として渡す。API は末尾空白を
-          // 許さないため trimEnd する (JSON の途中はトークン間空白が無意味なので安全)。
-          messages: full ? [...messages, { role: "assistant", content: full.trimEnd() }] : messages,
-        },
-        { signal: AbortSignal.timeout(timeoutMs) },
-      );
+      let res: Awaited<ReturnType<typeof createMessageResilient>>;
+      try {
+        res = await createMessageResilient(
+          client,
+          {
+            model,
+            max_tokens: maxTokens,
+            system: systemBlocks,
+            // 継続時はこれまでの出力を assistant 発話として渡す。API は末尾空白を
+            // 許さないため trimEnd する (JSON の途中はトークン間空白が無意味なので安全)。
+            messages: full ? [...messages, { role: "assistant", content: full.trimEnd() }] : messages,
+          },
+          { signal: AbortSignal.timeout(timeoutMs) },
+        );
+      } catch (err) {
+        // 継続中の失敗は、それまでに得た本文があれば打ち切って返す (全部失うより良い)
+        if (full.trim() && attempt > 0) break;
+        throw err;
+      }
       full += res.text;
       model_ = res.model;
       inputTokens += res.inputTokens;
       outputTokens += res.outputTokens;
-      if (res.stopReason !== "max_tokens") break; // 完了 (または継続不能な打ち切り)
+      if (res.stopReason == null || CLEAN_STOPS.has(res.stopReason)) break; // 完了
     }
     if (!full.trim()) throw new Error("empty_response");
     return { text: full, model: model_, inputTokens, outputTokens };

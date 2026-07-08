@@ -14,16 +14,17 @@ export const PERSON_DD_PURPOSE_PREFIX = "person_dd";
 // 入力 (人物名) の上限。肩書き併記を許す余裕 (cares と同値)。
 export const PERSON_DD_MAX_NAME_LENGTH = 100;
 
-// AI 呼び出しタイムアウト。評価は長文 JSON 1 本 (2 モジュール並列実行)。
-export const PERSON_DD_TIMEOUT_MS = 120_000;
+// AI 呼び出しタイムアウト (1 リクエストあたり)。評価は長文 JSON。継続ぶんも各回この予算。
+// 社会価値創造は特に長いので余裕を持たせる (2026-07-08 途中停止の根治)。
+export const PERSON_DD_TIMEOUT_MS = 180_000;
 
 // 出力トークン上限 (1 評価あたり)。JSON 構造化で散文より膨らむ。上限到達で JSON が
 // 途中で切れると invalid_output になるため、余裕を大きめに取る (2026-07-07 途中切れ対策)。
 // さらに切れても続きを繋ぐ継続機構 (maxContinuations) と併用する (2026-07-08)。
 export const PERSON_DD_MAX_TOKENS = 16000;
 
-// max_tokens で切れたときに続きを生成して繋ぐ最大回数 (人物DD の途中停止対策)。
-export const PERSON_DD_MAX_CONTINUATIONS = 3;
+// 途中で切れたとき (max_tokens / 接続断) に続きを生成して繋ぐ最大回数 (途中停止対策)。
+export const PERSON_DD_MAX_CONTINUATIONS = 4;
 
 // モデル設定: app_config のこのキーに canonical alias を保存し管理者が変更できる。
 export const PERSON_DD_MODEL_CONFIG_KEY = "person_eval_model";
