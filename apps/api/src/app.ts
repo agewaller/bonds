@@ -27,6 +27,7 @@ import { clampScore } from "./lib/dd-spec.js";
 import { clampDistance, calculateIsolationScore, todaySuggestions } from "./lib/relationship.js";
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
+import { identityKeys, normalizeName } from "./lib/identity.js";
 import { parseImportFile, MAX_IMPORT_FILE_BYTES } from "./lib/import-file.js";
 import { computeGiftOccasions, summarizeGiftLedger } from "./lib/gifts.js";
 import { parseIsoIntervals, meetingSlotProposals, toIso } from "./lib/timeslots.js";
@@ -692,6 +693,47 @@ export function createApp(deps: AppDeps) {
     return c.json({ exportedAt: new Date().toISOString(), contacts, interactions, gifts });
   });
 
+  // 名寄せ: 同じ人が二重に登録されていそうな組を検出する。メール/電話が一致する組は
+  // 確度が高く、名前だけ一致する組は候補 (同姓同名の別人もいる)。まとめるかはユーザーが決める。
+  // 注: /:id より前に定義する (でないと "duplicates" が :id として捕まる)。
+  app.get("/api/contacts/duplicates", async (c) => {
+    const rows = await prisma.contact.findMany({
+      where: { ownerUid: c.get("ownerUid"), state: "active" },
+      orderBy: { createdAt: "asc" },
+    });
+    type Row = (typeof rows)[number];
+    const view = (e: Row) => ({
+      id: e.id,
+      name: e.name,
+      company: e.company,
+      email: e.email,
+      phone: e.phone,
+      distance: e.distance,
+    });
+    const groups: Array<{ reason: string; strong: boolean; members: ReturnType<typeof view>[] }> = [];
+    const used = new Set<string>();
+    const groupBy = (keyFn: (e: Row) => string | undefined, reason: string, strong: boolean) => {
+      const m = new Map<string, Row[]>();
+      for (const e of rows) {
+        if (used.has(e.id)) continue;
+        const k = keyFn(e);
+        if (!k) continue;
+        const list = m.get(k);
+        if (list) list.push(e);
+        else m.set(k, [e]);
+      }
+      for (const members of m.values()) {
+        if (members.length < 2) continue;
+        members.forEach((x) => used.add(x.id));
+        groups.push({ reason, strong, members: members.map(view) });
+      }
+    };
+    groupBy((e) => identityKeys(e).email, "メールアドレスが同じ", true);
+    groupBy((e) => identityKeys(e).phone, "電話番号が同じ", true);
+    groupBy((e) => normalizeName(e.name) || undefined, "お名前が同じ", false);
+    return c.json({ groups });
+  });
+
   app.get("/api/contacts/:id", async (c) => {
     const contact = await prisma.contact.findFirst({
       where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
@@ -745,6 +787,74 @@ export function createApp(deps: AppDeps) {
     return c.json({ ok: true });
   });
 
+  // 名寄せの実行: others を primary に統合する。子レコード (やりとり・贈り物・発信・公人リンク) を
+  // 付け替え、空いている項目を補完し、プロフィール系は追記する。other はソフト削除 (元に戻せる)。
+  app.post("/api/contacts/merge", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const b = await c.req
+      .json<{ primaryId?: string; otherIds?: string[] }>()
+      .catch(() => ({}) as { primaryId?: string; otherIds?: string[] });
+    const primaryId = typeof b.primaryId === "string" ? b.primaryId : "";
+    const otherIds = Array.isArray(b.otherIds)
+      ? b.otherIds.filter((x): x is string => typeof x === "string" && x !== primaryId)
+      : [];
+    if (!primaryId || otherIds.length === 0) {
+      return c.json({ error: "invalid", detail: "まとめる相手を選んでください" }, 400);
+    }
+    const primary = await prisma.contact.findFirst({ where: { id: primaryId, ownerUid, state: "active" } });
+    if (!primary) return c.json({ error: "not_found" }, 404);
+    const others = await prisma.contact.findMany({
+      where: { id: { in: otherIds }, ownerUid, state: "active" },
+    });
+    if (others.length === 0) return c.json({ error: "not_found" }, 404);
+
+    const fill: Record<string, unknown> = {};
+    const appendKeys = ["notes", "personalProfile", "valuesProfile", "socialPosition"] as const;
+    const appended: Record<string, string[]> = { notes: [], personalProfile: [], valuesProfile: [], socialPosition: [] };
+    const primLinks = new Set(
+      (await prisma.personLink.findMany({ where: { ownerUid, contactId: primary.id }, select: { subjectId: true } })).map(
+        (l) => l.subjectId,
+      ),
+    );
+    let merged = 0;
+    for (const o of others) {
+      for (const f of ["furigana", "phone", "email", "address", "company", "title"] as const) {
+        if (!primary[f] && !fill[f] && o[f]) fill[f] = o[f];
+      }
+      if (!primary.birthday && !fill.birthday && o.birthday) fill.birthday = o.birthday;
+      if (!primary.anniversary && !fill.anniversary && o.anniversary) fill.anniversary = o.anniversary;
+      for (const f of appendKeys) if (o[f]) appended[f]!.push(o[f] as string);
+      // 子レコードの付け替え
+      await prisma.contactInteraction.updateMany({ where: { contactId: o.id }, data: { contactId: primary.id } });
+      await prisma.contactGift.updateMany({ where: { contactId: o.id }, data: { contactId: primary.id } });
+      await prisma.outreachMessage.updateMany({ where: { contactId: o.id }, data: { contactId: primary.id } });
+      // person_links は (ownerUid, contactId, subjectId) が一意。衝突する分は捨てる。
+      const oLinks = await prisma.personLink.findMany({ where: { ownerUid, contactId: o.id } });
+      for (const l of oLinks) {
+        if (primLinks.has(l.subjectId)) await prisma.personLink.delete({ where: { id: l.id } });
+        else {
+          await prisma.personLink.update({ where: { id: l.id }, data: { contactId: primary.id } });
+          primLinks.add(l.subjectId);
+        }
+      }
+      await prisma.contact.update({ where: { id: o.id }, data: { state: "archived" } });
+      merged++;
+    }
+    // 距離は最も近い (小さい) 値を採用
+    const minDistance = Math.min(primary.distance, ...others.map((o) => o.distance));
+    if (minDistance < primary.distance) fill.distance = minDistance;
+    // プロフィール系は primary の既存 + others を改行でつなぐ (重複はそのまま許容し上限で切る)
+    for (const f of appendKeys) {
+      if (appended[f]!.length === 0) continue;
+      const base = primary[f] ? [primary[f] as string] : [];
+      const fresh = appended[f]!.filter((v) => !base.some((x) => x.includes(v)));
+      if (fresh.length === 0) continue;
+      fill[f] = [...base, ...fresh].join("\n").slice(0, MAX_NOTES_CHARS);
+    }
+    if (Object.keys(fill).length > 0) await prisma.contact.update({ where: { id: primary.id }, data: fill });
+    return c.json({ merged, primaryId: primary.id });
+  });
+
   // 取込 (CSV / vCard / auto)。取り込み件数とスキップ件数を返す。
   // 取込結果を DB に反映する共通処理。同名の既存連絡先はスキップ (再取込で二重登録しない)、
   // トーク履歴由来の接触記録は同じ相手・同じ日の重複を登録しない (冪等)。
@@ -760,48 +870,80 @@ export function createApp(deps: AppDeps) {
     });
     const byName = new Map(existing.map((e) => [e.name, e.id]));
     const nameCount = new Map<string, number>();
-    for (const e of existing) nameCount.set(e.name, (nameCount.get(e.name) ?? 0) + 1);
+    // 名寄せ: メール/電話は「同じ人」を強く示すので、名前が違っても既存に結合する
+    // (表記ゆれや姓のみ登録での二重化を防ぐ)。名前だけの一致は従来どおり慎重に扱う
+    // (同姓同名の別人がいるため自動結合しない)。
+    type Row = (typeof existing)[number];
+    const byEmail = new Map<string, Row>();
+    const byPhone = new Map<string, Row>();
+    for (const e of existing) {
+      nameCount.set(e.name, (nameCount.get(e.name) ?? 0) + 1);
+      const k = identityKeys(e);
+      if (k.email && !byEmail.has(k.email)) byEmail.set(k.email, e);
+      if (k.phone && !byPhone.has(k.phone)) byPhone.set(k.phone, e);
+    }
     let imported = 0;
     let skipped = 0;
     let enriched = 0;
-    // 同姓同名で見送った名前。世の中には同じ名前の別人がいるため、黙って捨てず
-    // ユーザーに知らせ、「別の人」なら追加欄 (confirmNew) から特定して足してもらう。
     const sameName = new Set<string>();
+
+    // 既存の相手に、空いている項目の補完とメモの書き足しだけ行う (上書きしない)。
+    const enrichContact = async (target: Row, r: ParsedContact): Promise<boolean> => {
+      const fill: Record<string, unknown> = {};
+      const fields = ["furigana", "phone", "email", "address", "company", "title"] as const;
+      for (const f of fields) {
+        const v = (r as Record<string, unknown>)[f];
+        if (!target[f] && typeof v === "string" && v.trim()) fill[f] = v.trim();
+      }
+      if (!target.birthday && r.birthday) fill.birthday = parseBirthday(r.birthday);
+      const note = typeof r.notes === "string" ? r.notes.trim() : "";
+      if (note && !(target.notes ?? "").includes(note)) {
+        fill.notes = `${target.notes ? `${target.notes}\n` : ""}${note}`.slice(0, MAX_NOTES_CHARS);
+      }
+      if (Object.keys(fill).length === 0) return false;
+      await prisma.contact.update({ where: { id: target.id }, data: fill });
+      Object.assign(target, fill);
+      const k = identityKeys(target);
+      if (k.email) byEmail.set(k.email, target);
+      if (k.phone) byPhone.set(k.phone, target);
+      return true;
+    };
+
     for (const r of parsed.contacts) {
       const name = clampName(r.name);
-      if (!name || byName.has(name)) {
-        if (name) {
-          sameName.add(name);
-          // 同名が 1 人だけなら同一人物とみなし、空欄の補完とメモの書き足しだけ行う
-          if (nameCount.get(name) === 1) {
-            const target = existing.find((e) => e.name === name)!;
-            const fill: Record<string, unknown> = {};
-            const fields = ["furigana", "phone", "email", "address", "company", "title"] as const;
-            for (const f of fields) {
-              const v = (r as Record<string, unknown>)[f];
-              if (!target[f] && typeof v === "string" && v.trim()) fill[f] = v.trim();
-            }
-            if (!target.birthday && r.birthday) fill.birthday = parseBirthday(r.birthday);
-            const note = typeof r.notes === "string" ? r.notes.trim() : "";
-            if (note && !(target.notes ?? "").includes(note)) {
-              fill.notes = `${target.notes ? `${target.notes}\n` : ""}${note}`.slice(0, MAX_NOTES_CHARS);
-            }
-            if (Object.keys(fill).length > 0) {
-              await prisma.contact.update({ where: { id: target.id }, data: fill });
-              Object.assign(target, fill);
-              enriched++;
-            }
-          }
+      if (!name) {
+        skipped++;
+        continue;
+      }
+      const rk = identityKeys(r);
+      // 1) メール/電話が既存と一致 = 同一人物。名前が違っても結合する。
+      const strong = (rk.email && byEmail.get(rk.email)) || (rk.phone && byPhone.get(rk.phone));
+      if (strong) {
+        if (await enrichContact(strong, r)) enriched++;
+        else skipped++;
+        byName.set(name, strong.id); // この名前で来た接触記録は結合先にひもづける
+        continue;
+      }
+      // 2) 同名の既存 — 1 人だけなら育てる、複数なら別人の恐れがあるので sameName で知らせる。
+      if (byName.has(name)) {
+        sameName.add(name);
+        if (nameCount.get(name) === 1) {
+          const target = existing.find((e) => e.name === name);
+          if (target && (await enrichContact(target, r))) enriched++;
         }
         skipped++;
         continue;
       }
+      // 3) 新規作成。
       const created = await prisma.contact.create({
         data: { ownerUid, name, source: r.source ?? "import", ...contactData(r as Record<string, unknown>) },
       });
       byName.set(name, created.id);
       nameCount.set(name, 1);
       existing.push(created);
+      // キーは平文の取込値から作る (created は暗号化列を含む可能性があるため)
+      if (rk.email) byEmail.set(rk.email, created);
+      if (rk.phone) byPhone.set(rk.phone, created);
       imported++;
     }
     let interactionsAdded = 0;

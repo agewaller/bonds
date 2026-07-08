@@ -86,19 +86,48 @@ export default function ContactsPage() {
   const [giftOccasions, setGiftOccasions] = useState<
     { kind: string; contactId: string | null; contactName: string | null; label: string; daysUntil: number; note: string }[]
   >([]);
+  // 名寄せ: 同じ人が二重登録されていそうな組
+  type DupeMember = { id: string; name: string; company: string | null; email: string | null; phone: string | null };
+  type DupeGroup = { reason: string; strong: boolean; members: DupeMember[] };
+  const [dupeGroups, setDupeGroups] = useState<DupeGroup[]>([]);
 
   const load = useCallback(async () => {
-    const [cRes, sRes, pRes, gRes] = await Promise.all([
+    const [cRes, sRes, pRes, gRes, dRes] = await Promise.all([
       apiFetch("contacts"),
       apiFetch("relationship/summary"),
       apiFetch("relationship/progress"),
       apiFetch("gifts/occasions"),
+      apiFetch("contacts/duplicates"),
     ]);
     if (cRes.ok) setContacts((await cRes.json()).contacts);
     if (sRes.ok) setSummary(await sRes.json());
     if (pRes.ok) setProgress(await pRes.json());
     if (gRes.ok) setGiftOccasions((await gRes.json()).occasions ?? []);
+    if (dRes.ok) setDupeGroups((await dRes.json()).groups ?? []);
   }, []);
+
+  // 一組を先頭の人にまとめる (残りを統合)。まとめたら再読み込み。
+  const mergeGroup = async (g: DupeGroup) => {
+    if (busy || g.members.length < 2) return;
+    setBusy(true);
+    setError("");
+    try {
+      const res = await apiFetch("contacts/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ primaryId: g.members[0]!.id, otherIds: g.members.slice(1).map((m) => m.id) }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.detail ?? "まとめられませんでした");
+        return;
+      }
+      setNotice(`${g.members.length}件を1件にまとめました`);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -511,6 +540,40 @@ export default function ContactsPage() {
         <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>
           {error}
         </p>
+      )}
+
+      {dupeGroups.length > 0 && (
+        <section style={{ margin: "16px 0", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: "12px 16px" }}>
+          <h2 style={{ fontSize: 17, marginTop: 0 }}>同じ方が二重に登録されているかもしれません</h2>
+          <p style={{ color: "#475569", fontSize: 13, margin: "0 0 10px" }}>
+            まとめると、やりとりや贈り物の記録も1件に集まります。別の方なら、そのままにしておいて大丈夫です。
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 10 }}>
+            {dupeGroups.slice(0, 20).map((g, i) => (
+              <li key={i} style={{ border: "1px solid #dbeafe", borderRadius: 10, padding: "10px 12px", background: "#fff" }}>
+                <div style={{ fontSize: 13, color: "#64748b", marginBottom: 4 }}>
+                  {g.reason}
+                  {!g.strong && "（念のためご確認ください）"}
+                </div>
+                <div style={{ fontSize: 14 }}>
+                  {g.members.map((m) => (
+                    <span key={m.id} style={{ marginRight: 12 }}>
+                      {m.name}
+                      {m.company && <span style={{ color: "#94a3b8" }}> ({m.company})</span>}
+                    </span>
+                  ))}
+                </div>
+                <button
+                  onClick={() => void mergeGroup(g)}
+                  disabled={busy}
+                  style={{ marginTop: 8, padding: "6px 14px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+                >
+                  1件にまとめる
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       <section style={{ margin: "24px 0" }}>
