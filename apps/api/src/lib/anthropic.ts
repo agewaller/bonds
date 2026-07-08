@@ -3,6 +3,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 // ランナーが依存する生成関数の抽象。テストではこれを差し替えて実 AI を呼ばずに検証する。
+// 画像入力 (Vision)。名刺・名簿・スクショから人物を読み取るときに渡す。
+export type ImageInput = { base64: string; mediaType: string };
+
 export type GenerateArgs = {
   model: string;
   system: string;
@@ -12,7 +15,15 @@ export type GenerateArgs = {
   // 出力が max_tokens で途中で切れたとき、続きを最大この回数まで生成して繋ぐ。
   // 長い JSON 評価 (人物DD) の途中停止対策。既定 0 (継続しない)。
   maxContinuations?: number;
+  // Vision: 与えると user メッセージに画像ブロックを添えて送る (名刺・名簿の読み取り)。
+  images?: ImageInput[];
 };
+
+// Anthropic 画像 media_type は jpeg/png/webp/gif のみ。未知は jpeg に倒す (cares と同方針)。
+function normalizeMediaType(mime: string): "image/jpeg" | "image/png" | "image/webp" | "image/gif" {
+  if (mime === "image/png" || mime === "image/webp" || mime === "image/gif") return mime;
+  return "image/jpeg";
+}
 export type GenerateResult = {
   text: string;
   model: string;
@@ -76,9 +87,20 @@ export function buildAnthropicGenerate(): GenerateFn | null {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
   const client = new Anthropic({ apiKey });
-  return async ({ model, system, userMessage, maxTokens, timeoutMs, maxContinuations = 0 }) => {
+  return async ({ model, system, userMessage, maxTokens, timeoutMs, maxContinuations = 0, images }) => {
     const systemBlocks = [{ type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } }];
-    const messages: Anthropic.MessageParam[] = [{ role: "user", content: userMessage }];
+    // 画像があれば user メッセージを画像ブロック + テキストの配列にする (Vision)。
+    const userContent: Anthropic.MessageParam["content"] =
+      images && images.length > 0
+        ? [
+            ...images.map((img) => ({
+              type: "image" as const,
+              source: { type: "base64" as const, media_type: normalizeMediaType(img.mediaType), data: img.base64 },
+            })),
+            { type: "text" as const, text: userMessage },
+          ]
+        : userMessage;
+    const messages: Anthropic.MessageParam[] = [{ role: "user", content: userContent }];
     let full = "";
     let model_ = model;
     let inputTokens = 0;

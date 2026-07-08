@@ -65,11 +65,13 @@ import {
 import {
   buildGoogleClient,
   collectGooglePeople,
+  parseGoogleConnections,
   signState,
   verifyState,
   GOOGLE_SCOPES,
   GMAIL_MAX_MESSAGES,
   DRIVE_MAX_FILES,
+  CONTACTS_MAX,
   CALENDAR_LOOKBACK_DAYS,
   CALENDAR_LOOKAHEAD_DAYS,
   type GoogleClient,
@@ -752,16 +754,28 @@ export function createApp(deps: AppDeps) {
     }
     const filename = c.req.query("filename") ?? c.req.header("x-filename") ?? undefined;
     const parsed = parseImportFile(new Uint8Array(buf), filename);
-    let ai: { contacts: ParsedContact[]; interactions: ParsedInteraction[] } | null = null;
+    const locale = normalizeLocale(c.req.query("locale"));
+    const aiContacts: ParsedContact[] = [];
+    const aiInteractions: ParsedInteraction[] = [];
     let aiUnavailable = false;
+    // 文字の書類は本文抽出 → AI、名刺・名簿・スクショの画像は Vision で読み取る
     if (parsed.texts.length > 0) {
-      const r = await extractPeopleFromTexts(parsed.texts, normalizeLocale(c.req.query("locale")));
-      if (r.ok) ai = r;
-      else aiUnavailable = true;
+      const r = await extractPeopleFromTexts(parsed.texts, locale);
+      if (r.ok) {
+        aiContacts.push(...r.contacts);
+        aiInteractions.push(...r.interactions);
+      } else aiUnavailable = true;
+    }
+    if (parsed.images.length > 0) {
+      const r = await extractPeopleFromImages(parsed.images, locale);
+      if (r.ok) {
+        aiContacts.push(...r.contacts);
+        aiInteractions.push(...r.interactions);
+      } else aiUnavailable = true;
     }
     const merged = {
-      contacts: [...parsed.contacts, ...(ai?.contacts ?? [])],
-      interactions: [...parsed.interactions, ...(ai?.interactions ?? [])],
+      contacts: [...parsed.contacts, ...aiContacts],
+      interactions: [...parsed.interactions, ...aiInteractions],
     };
     if (merged.contacts.length === 0) {
       if (aiUnavailable) {
@@ -777,13 +791,13 @@ export function createApp(deps: AppDeps) {
         {
           error: "no_contacts_found",
           detail:
-            "このファイルからは人物にまつわる情報を見つけられませんでした。文字の入った書類 (Word・Excel・PDF・メール・テキスト・CSV・vCard・SNS のダウンロード ZIP など) ならたいてい読み取れます",
+            "このファイルからは人物にまつわる情報を見つけられませんでした。名刺や名簿の写真、文字の入った書類 (Word・Excel・PDF・メール・テキスト・CSV・vCard・SNS のダウンロード ZIP など) ならたいてい読み取れます",
         },
         422,
       );
     }
     const result = await applyImport(c.get("ownerUid"), merged);
-    return c.json({ ...result, foundIn: parsed.foundIn, aiPeople: ai?.contacts.length ?? 0 });
+    return c.json({ ...result, foundIn: parsed.foundIn, aiPeople: aiContacts.length });
   });
 
   // 接触記録 (連絡済み)。距離スコアの検証還流。
@@ -1075,13 +1089,15 @@ export function createApp(deps: AppDeps) {
     return { contact, context: lines.join("\n") };
   };
 
-  // AI 実行の共通ラッパ (キャップ確認 → 生成 → 使用記録)
+  // AI 実行の共通ラッパ (キャップ確認 → 生成 → 使用記録)。
+  // images を渡すと Vision (名刺・名簿の読み取り) になる。
   const runRelationshipAi = async (
     promptKey: string,
     extraSystem: string,
     userMessage: string,
     purpose: string,
     locale: string,
+    opts?: { images?: Array<{ base64: string; mediaType: string }>; maxContinuations?: number },
   ): Promise<{ ok: true; text: string } | { ok: false; status: 422 | 503 | 502; body: unknown }> => {
     if (!generate) {
       return { ok: false, status: 503, body: { error: "unavailable", detail: "いまは文章の下書きを作れません" } };
@@ -1108,6 +1124,8 @@ export function createApp(deps: AppDeps) {
         userMessage,
         maxTokens: PERSON_DD_MAX_TOKENS,
         timeoutMs: PERSON_DD_TIMEOUT_MS,
+        images: opts?.images,
+        maxContinuations: opts?.maxContinuations,
       });
       const canonical = canonicalizeModelId(gen.model) ?? model;
       await prisma.aiUsageLog.create({
@@ -1138,26 +1156,12 @@ export function createApp(deps: AppDeps) {
   const IMPORT_EXTRACT_INSTRUCTION =
     '出力は JSON オブジェクト 1 個だけ: {"people": [{"name": "人物名", "furigana": "よみがな (無ければ空)", "email": "", "phone": "", "company": "所属 (無ければ空)", "title": "役職 (無ければ空)", "address": "", "birthday": "YYYY-MM-DD (無ければ空)", "relationship": "family か friend か work か community か other", "note": "その人について分かったことの短い散文 (無ければ空)", "dates": [{"date": "YYYY-MM-DD", "type": "meeting か message か call か other", "summary": "その日のできごとの短い一文 (無ければ空)"}]}]}';
 
-  const extractPeopleFromTexts = async (
-    texts: Array<{ file: string; kind: string; text: string }>,
-    locale: string,
-  ): Promise<
-    | { ok: true; contacts: ParsedContact[]; interactions: ParsedInteraction[] }
-    | { ok: false; status: 422 | 503 | 502; body: unknown }
-  > => {
-    const joined = texts
-      .map((t) => `ファイル ${t.file} (${t.kind}) の内容:\n${t.text}`)
-      .join("\n\n----\n\n")
-      .slice(0, MAX_EXTRACT_TEXT_CHARS);
-    const r = await runRelationshipAi(
-      "import_extract",
-      IMPORT_EXTRACT_INSTRUCTION,
-      joined,
-      "import_extract",
-      locale,
-    );
-    if (!r.ok) return r;
-    const parsed = extractJson(r.text) as { people?: unknown } | null;
+  // AI の people JSON を検証・サニタイズして applyImport 形へ (テキスト/画像で共用)。
+  const parseExtractedPeople = (
+    text: string,
+    source: string,
+  ): { contacts: ParsedContact[]; interactions: ParsedInteraction[] } => {
+    const parsed = extractJson(text) as { people?: unknown } | null;
     const raw = Array.isArray(parsed?.people) ? (parsed.people as Array<Record<string, unknown>>) : [];
     const str = (v: unknown, max = 200) =>
       typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
@@ -1183,7 +1187,7 @@ export function createApp(deps: AppDeps) {
           ? (p.relationship as string)
           : undefined,
         notes: note || undefined,
-        source: "file",
+        source,
       });
       const dates = Array.isArray(p.dates) ? (p.dates as Array<Record<string, unknown>>) : [];
       for (const d of dates.slice(0, 30)) {
@@ -1197,7 +1201,47 @@ export function createApp(deps: AppDeps) {
         });
       }
     }
-    return { ok: true, contacts, interactions };
+    return { contacts, interactions };
+  };
+
+  const extractPeopleFromTexts = async (
+    texts: Array<{ file: string; kind: string; text: string }>,
+    locale: string,
+  ): Promise<
+    | { ok: true; contacts: ParsedContact[]; interactions: ParsedInteraction[] }
+    | { ok: false; status: 422 | 503 | 502; body: unknown }
+  > => {
+    const joined = texts
+      .map((t) => `ファイル ${t.file} (${t.kind}) の内容:\n${t.text}`)
+      .join("\n\n----\n\n")
+      .slice(0, MAX_EXTRACT_TEXT_CHARS);
+    const r = await runRelationshipAi("import_extract", IMPORT_EXTRACT_INSTRUCTION, joined, "import_extract", locale, {
+      maxContinuations: 2,
+    });
+    if (!r.ok) return r;
+    return { ok: true, ...parseExtractedPeople(r.text, "file") };
+  };
+
+  // 画像 (名刺・名簿・スクショ) から Vision で人物を読み取る。
+  const IMPORT_VISION_HINT =
+    "これは名刺・名簿・年賀状・住所録・連絡先やトーク画面のスクリーンショットなど、人物の情報が写った画像です。写っている人物 (差出人・登録者・参加者) を一人ずつ読み取り、次の指示どおり整理してください。手書きや小さな文字も丁寧に読み、判読できない項目は空にしてください。写っていない情報は創作しないでください。";
+  const extractPeopleFromImages = async (
+    images: Array<{ file: string; base64: string; mediaType: string }>,
+    locale: string,
+  ): Promise<
+    | { ok: true; contacts: ParsedContact[]; interactions: ParsedInteraction[] }
+    | { ok: false; status: 422 | 503 | 502; body: unknown }
+  > => {
+    const r = await runRelationshipAi(
+      "import_extract",
+      `${IMPORT_VISION_HINT}\n\n${IMPORT_EXTRACT_INSTRUCTION}`,
+      "添えた画像から人物を読み取って JSON で返してください。",
+      "import_extract_vision",
+      locale,
+      { images: images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })), maxContinuations: 2 },
+    );
+    if (!r.ok) return r;
+    return { ok: true, ...parseExtractedPeople(r.text, "photo") };
   };
 
   // 価値観プロフィールの下書き (AI 下書き → ユーザーが編集して PUT で確定 = 自動保存しない)
@@ -2156,12 +2200,23 @@ export function createApp(deps: AppDeps) {
       )
       .catch(() => ({}))) as { files?: DriveFile[] };
 
+    // Google 連絡先 (アドレス帳) — 最も確実な取込元。氏名・メール・電話・所属を直接持つ。
+    const connectionsResp = await google
+      .apiGet(
+        `https://people.googleapis.com/v1/people/me/connections?personFields=names,emailAddresses,phoneNumbers,organizations&pageSize=${CONTACTS_MAX}`,
+        accessToken,
+      )
+      .catch(() => ({}));
+    const addressBook = parseGoogleConnections(connectionsResp);
+
     const collected = collectGooglePeople({
       selfEmails: conn.email ? [conn.email] : [],
       calendarEvents,
       gmailMessages,
       driveFiles: drive.files ?? [],
     });
+    // アドレス帳の連絡先を先頭に足す (applyImport は同名スキップの冪等なので重複しない)
+    collected.contacts.unshift(...addressBook);
 
     // 既存の連絡先とメールアドレスで突き合わせ、同一人物は既存のお名前に寄せる
     // (表記ゆれで二重登録しない。applyImport は同名スキップの冪等)。

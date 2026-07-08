@@ -20,7 +20,12 @@ export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/gmail.metadata",
   "https://www.googleapis.com/auth/drive.metadata.readonly",
+  // 連絡先 (アドレス帳) の読み取り = 最も確実な取込元。読み取り専用。
+  "https://www.googleapis.com/auth/contacts.readonly",
 ];
+
+// People API から取り込む連絡先の上限 (1 同期あたり)。
+export const CONTACTS_MAX = 2000;
 
 // 同期の範囲 (広すぎるとノイズ・API 負荷が増える)
 export const CALENDAR_LOOKBACK_DAYS = 90;
@@ -242,6 +247,38 @@ export function collectGooglePeople(input: {
     .filter((i) => emailToName.has(i.name))
     .map((i) => ({ ...i, name: emailToName.get(i.name)! }));
   return { contacts, interactions: kept };
+}
+
+// ---------------- Google 連絡先 (People API) ----------------
+
+// People API connections.list の応答から連絡先を組み立てる。氏名・メール・電話・所属を
+// 直接持つ最も確実な取込元。表示名が無い相手は最初のメールのローカル部を仮名にする。
+export function parseGoogleConnections(response: unknown): ParsedContact[] {
+  const conns = (response as { connections?: unknown } | null)?.connections;
+  if (!Array.isArray(conns)) return [];
+  const out: ParsedContact[] = [];
+  for (const p of conns as Array<Record<string, unknown>>) {
+    const names = Array.isArray(p.names) ? (p.names as Array<Record<string, unknown>>) : [];
+    const emails = Array.isArray(p.emailAddresses) ? (p.emailAddresses as Array<Record<string, unknown>>) : [];
+    const phones = Array.isArray(p.phoneNumbers) ? (p.phoneNumbers as Array<Record<string, unknown>>) : [];
+    const orgs = Array.isArray(p.organizations) ? (p.organizations as Array<Record<string, unknown>>) : [];
+    const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+    const email = str(emails[0]?.value);
+    let name = str(names[0]?.displayName);
+    if (!name && email) name = email.split("@")[0];
+    if (!name) continue;
+    const org = orgs[0] ?? {};
+    out.push({
+      name,
+      email,
+      phone: str(phones[0]?.value),
+      company: str(org.name),
+      title: str(org.title),
+      source: "google_contacts",
+      distance: 4,
+    });
+  }
+  return out;
 }
 
 // ---------------- ネットワーク層 (注入可能) ----------------

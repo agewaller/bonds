@@ -13,6 +13,7 @@ import {
   emlToText,
   decodeMimeWord,
   extractFileText,
+  detectImageMediaType,
 } from "../../src/lib/file-text.js";
 import { parseImportFile } from "../../src/lib/import-file.js";
 
@@ -170,7 +171,34 @@ describe("extractFileText (入口の振り分け)", () => {
   });
 });
 
+describe("detectImageMediaType (名刺・名簿の写真を Vision へ回す判定)", () => {
+  it("マジックバイトで JPEG/PNG/GIF/WEBP を見分ける", () => {
+    expect(detectImageMediaType(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), "card")).toBe("image/jpeg");
+    expect(detectImageMediaType(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), "card")).toBe("image/png");
+    expect(detectImageMediaType(new Uint8Array([0x47, 0x49, 0x46, 0x38]), "card")).toBe("image/gif");
+    const webp = new Uint8Array(12);
+    webp.set([0x52, 0x49, 0x46, 0x46], 0);
+    webp.set([0x57, 0x45, 0x42, 0x50], 8);
+    expect(detectImageMediaType(webp, "card")).toBe("image/webp");
+  });
+  it("拡張子が画像ならマジックバイトが無くても JPEG 扱い (HEIC 変換等)", () => {
+    expect(detectImageMediaType(new Uint8Array([0x00, 0x01]), "meishi.jpg")).toBe("image/jpeg");
+  });
+  it("画像でないものは null", () => {
+    expect(detectImageMediaType(new TextEncoder().encode("name,email"), "list.csv")).toBeNull();
+  });
+});
+
 describe("parseImportFile と AI 経路の橋渡し", () => {
+  it("画像ファイル (名刺の写真) は images に base64 で入る (Vision へ)", () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+    const r = parseImportFile(jpeg, "meishi.jpg");
+    expect(r.contacts).toHaveLength(0);
+    expect(r.images).toHaveLength(1);
+    expect(r.images[0]!.mediaType).toBe("image/jpeg");
+    expect(r.images[0]!.base64.length).toBeGreaterThan(0);
+  });
+
   it("既知形式 (CSV) は従来どおり構造化で拾い、texts は空", () => {
     const csv = strToU8("name,email\n山田 太郎,taro@example.com\n");
     const r = parseImportFile(csv, "contacts.csv");
