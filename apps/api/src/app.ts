@@ -120,6 +120,16 @@ export function createApp(deps: AppDeps) {
   // isOwner: オーナー本人か (AI 月次上限をオーナーは無制限、それ以外は設定値で効かせる)
   const app = new Hono<{ Variables: { ownerUid: string; isOwner: boolean } }>();
 
+  // 例外は必ず JSON で返す (本文なしの 500 を出さない = 画面で必ず理由が出せる)。
+  // 原因はサーバログに残し、ユーザーには簡潔な文言を返す。
+  app.onError((err, c) => {
+    console.error(JSON.stringify({ event: "unhandled_error", path: c.req.path, detail: err instanceof Error ? err.message : String(err) }));
+    return c.json(
+      { error: "internal_error", detail: "処理中に問題が起きました。時間をおいてもう一度お試しください" },
+      500,
+    );
+  });
+
   // CORS: 許可 Origin は env で制御。
   const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000")
     .split(",")

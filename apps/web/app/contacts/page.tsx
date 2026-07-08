@@ -182,26 +182,48 @@ export default function ContactsPage() {
     if (!importText.trim() || busy) return;
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       const res = await apiFetch("contacts/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: importText }),
       });
-      const body = await res.json().catch(() => ({}));
+      // JSON でない応答 (プロキシ/サーバエラー等) も本文を拾ってエラーに出す
+      const raw = await res.text();
+      let body: Record<string, unknown> = {};
+      try {
+        body = raw ? JSON.parse(raw) : {};
+      } catch {
+        body = {};
+      }
       if (!res.ok) {
-        setError(body.detail ?? "取り込めませんでした");
+        const detail = (body.detail as string) || (body.error as string) || raw.slice(0, 200);
+        setError(`取り込めませんでした (エラー ${res.status})${detail ? `: ${detail}` : ""}`);
         return;
       }
-      const sameName: string[] = Array.isArray(body.sameName) ? body.sameName : [];
+      const imported = Number(body.imported ?? 0);
+      const enriched = Number(body.enriched ?? 0);
+      const sameName: string[] = Array.isArray(body.sameName) ? (body.sameName as string[]) : [];
+      // 0 件のときも黙って終わらせない (何が起きたかを必ず出す)
+      if (imported === 0 && enriched === 0) {
+        setError(
+          sameName.length > 0
+            ? `新しく取り込めた方はいませんでした。同じお名前の方がすでに連絡帳にいます (${sameName.join("、")})`
+            : "この内容からは連絡先を読み取れませんでした。氏名や連絡先の列がある表・vCard・名簿の文面をお試しください",
+        );
+        return;
+      }
       setNotice(
         sameName.length > 0
-          ? `${body.imported}件の連絡先を取り込みました。同じお名前の方がすでにいるため見送った分があります (${sameName.join("、")})。別の方でしたら、上の追加欄からもう一度お名前を入れてください`
-          : `${body.imported}件の連絡先を取り込みました`,
+          ? `${imported}件を取り込み、${enriched}件に書き足しました。同じお名前で見送った分があります (${sameName.join("、")})`
+          : `${imported}件を取り込みました${enriched > 0 ? `。${enriched}件に書き足しました` : ""}`,
       );
       setImportText("");
       setShowImport(false);
       await load();
+    } catch (e) {
+      setError(`取り込み中にエラーが起きました: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -281,16 +303,25 @@ export default function ContactsPage() {
           headers: { "Content-Type": "application/octet-stream" },
           body: await file.arrayBuffer(),
         });
-        const body = await res.json().catch(() => ({}));
+        const raw = await res.text();
+        let body: Record<string, unknown> = {};
+        try {
+          body = raw ? JSON.parse(raw) : {};
+        } catch {
+          body = {};
+        }
         if (!res.ok) {
           if (body.error === "no_contacts_found") unreadable++;
-          else problems.push(`${path}: ${body.detail ?? "取り込めませんでした"}`);
+          else {
+            const detail = (body.detail as string) || (body.error as string) || raw.slice(0, 120);
+            problems.push(`${path}: エラー ${res.status}${detail ? ` ${detail}` : ""}`);
+          }
           continue;
         }
-        imported += body.imported ?? 0;
-        interactions += body.interactionsAdded ?? 0;
-        enriched += body.enriched ?? 0;
-        if (Array.isArray(body.sameName)) body.sameName.forEach((n: string) => sameNames.add(n));
+        imported += Number(body.imported ?? 0);
+        interactions += Number(body.interactionsAdded ?? 0);
+        enriched += Number(body.enriched ?? 0);
+        if (Array.isArray(body.sameName)) (body.sameName as string[]).forEach((n) => sameNames.add(n));
       }
       const parts: string[] = [];
       if (imported > 0) parts.push(`${imported}件の連絡先を取り込みました`);
@@ -311,10 +342,16 @@ export default function ContactsPage() {
             : `${unreadable}件のファイルからは人物にまつわる情報を見つけられませんでした`,
         );
         setNotice("");
+      } else if (problems.length === 0) {
+        // 何も取り込めず、はっきりした失敗も無い = 黙って終わらせない
+        setNotice("");
+        setError("取り込めませんでした。ファイルの中身をご確認のうえ、もう一度お試しください");
       } else {
         setNotice("");
       }
       if (problems.length > 0) setError(problems.slice(0, 5).join(" / ") + (problems.length > 5 ? ` ほか${problems.length - 5}件` : ""));
+    } catch (e) {
+      setError(`取り込み中にエラーが起きました: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
