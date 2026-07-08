@@ -172,41 +172,112 @@ export default function ContactsPage() {
     }
   };
 
-  // ファイル/ZIP の取り込み — SNS の「データをダウンロード」をそのまま放り込める
+  // ファイル/ZIP/フォルダの取り込み — SNS の「データをダウンロード」も、Word・Excel・PDF・
+  // メールなどの書類も、フォルダごとでもそのまま放り込める。
+  const MAX_UPLOAD_FILES = 200;
+  const MEDIA_SKIP =
+    /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?|svg|mp4|mov|avi|mkv|webm|mp3|m4a|wav|aac|flac|ogg|exe|dll|dmg|apk|iso|woff2?|ttf|otf)$/i;
+
+  // ドロップされたフォルダを再帰的にたどってファイルを集める (対応ブラウザのみ。
+  // 非対応なら dataTransfer.files にフォールバック)
+  const collectDropped = async (dt: DataTransfer): Promise<File[]> => {
+    type FsEntry = {
+      isFile: boolean;
+      isDirectory: boolean;
+      name: string;
+      file: (ok: (f: File) => void, ng: (e: unknown) => void) => void;
+      createReader: () => { readEntries: (ok: (es: FsEntry[]) => void, ng: (e: unknown) => void) => void };
+    };
+    const out: File[] = [];
+    const walk = async (entry: FsEntry, path: string): Promise<void> => {
+      if (out.length >= MAX_UPLOAD_FILES) return;
+      if (entry.isFile) {
+        if (entry.name.startsWith(".")) return;
+        const file = await new Promise<File>((ok, ng) => entry.file(ok, ng)).catch(() => null);
+        if (!file || file.size === 0 || file.size > 30 * 1024 * 1024 || MEDIA_SKIP.test(file.name)) return;
+        out.push(new File([file], `${path}${file.name}`, { type: file.type }));
+        return;
+      }
+      if (entry.isDirectory) {
+        if (entry.name.startsWith(".") || entry.name === "__MACOSX") return;
+        const reader = entry.createReader();
+        for (;;) {
+          const batch = await new Promise<FsEntry[]>((ok, ng) => reader.readEntries(ok, ng)).catch(() => []);
+          if (batch.length === 0) break;
+          for (const e of batch) await walk(e, `${path}${entry.name}/`);
+        }
+      }
+    };
+    const items = Array.from(dt.items ?? []);
+    const entries = items
+      .map((it) => (it.webkitGetAsEntry ? (it.webkitGetAsEntry() as FsEntry | null) : null))
+      .filter((e): e is FsEntry => e !== null);
+    if (entries.length === 0) return Array.from(dt.files);
+    for (const e of entries) await walk(e, "");
+    return out;
+  };
+
   const uploadFiles = async (files: FileList | File[]) => {
     if (busy) return;
+    const list = Array.from(files)
+      .filter((f) => f.size > 0 && !MEDIA_SKIP.test(f.name))
+      .slice(0, MAX_UPLOAD_FILES);
+    if (list.length === 0) {
+      setError("読み取れるファイルが見つかりませんでした (写真や動画はまだ取り込めません)");
+      return;
+    }
     setBusy(true);
     setError("");
     let imported = 0;
     let interactions = 0;
+    let enriched = 0;
     const sameNames = new Set<string>();
     const problems: string[] = [];
+    let unreadable = 0;
     try {
-      for (const file of Array.from(files)) {
-        const res = await apiFetch(`contacts/import-file?filename=${encodeURIComponent(file.name)}`, {
+      for (let i = 0; i < list.length; i++) {
+        const file = list[i]!;
+        const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+        if (list.length > 1) setNotice(`読み取っています (${i + 1}/${list.length}件目): ${path}`);
+        const res = await apiFetch(`contacts/import-file?filename=${encodeURIComponent(path)}`, {
           method: "POST",
           headers: { "Content-Type": "application/octet-stream" },
           body: await file.arrayBuffer(),
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) {
-          problems.push(`${file.name}: ${body.detail ?? "取り込めませんでした"}`);
+          if (body.error === "no_contacts_found") unreadable++;
+          else problems.push(`${path}: ${body.detail ?? "取り込めませんでした"}`);
           continue;
         }
         imported += body.imported ?? 0;
         interactions += body.interactionsAdded ?? 0;
+        enriched += body.enriched ?? 0;
         if (Array.isArray(body.sameName)) body.sameName.forEach((n: string) => sameNames.add(n));
       }
-      if (imported > 0 || interactions > 0) {
-        const talk = interactions > 0 ? ` (やりとりの記録も${interactions}件)` : "";
+      const parts: string[] = [];
+      if (imported > 0) parts.push(`${imported}件の連絡先を取り込みました`);
+      if (enriched > 0) parts.push(`すでにいる${enriched}名の記録に、分かったことを書き足しました`);
+      if (interactions > 0) parts.push(`やりとりの記録を${interactions}件残しました`);
+      if (unreadable > 0 && parts.length > 0) parts.push(`人物情報の見つからないファイルが${unreadable}件ありました`);
+      if (parts.length > 0) {
         const dup =
-          sameNames.size > 0
+          sameNames.size > 0 && enriched === 0
             ? `。同じお名前の方がすでにいるため見送った分があります (${[...sameNames].slice(0, 10).join("、")})。別の方でしたら追加欄からお名前を入れてください`
             : "";
-        setNotice(`${imported}件の連絡先を取り込みました${talk}${dup}`);
+        setNotice(`${parts.join("。")}${dup}`);
         await load();
+      } else if (unreadable > 0 && problems.length === 0) {
+        setError(
+          unreadable === 1
+            ? "このファイルからは人物にまつわる情報を見つけられませんでした"
+            : `${unreadable}件のファイルからは人物にまつわる情報を見つけられませんでした`,
+        );
+        setNotice("");
+      } else {
+        setNotice("");
       }
-      if (problems.length > 0) setError(problems.join(" / "));
+      if (problems.length > 0) setError(problems.slice(0, 5).join(" / ") + (problems.length > 5 ? ` ほか${problems.length - 5}件` : ""));
     } finally {
       setBusy(false);
     }
@@ -529,7 +600,9 @@ export default function ContactsPage() {
               onDrop={(e) => {
                 e.preventDefault();
                 setDragOver(false);
-                if (e.dataTransfer.files.length > 0) void uploadFiles(e.dataTransfer.files);
+                void collectDropped(e.dataTransfer).then((files) => {
+                  if (files.length > 0) void uploadFiles(files);
+                });
               }}
               style={{
                 display: "block",
@@ -543,10 +616,10 @@ export default function ContactsPage() {
                 marginBottom: 8,
               }}
             >
-              ここにファイルを置くか、押して選んでください
+              ここにファイルやフォルダを置くか、押して選んでください
               <br />
               <small style={{ color: "#64748b" }}>
-                ダウンロードした ZIP はそのままで大丈夫です。中から友達リストを自動で見つけます
+                どんな形式でも大丈夫です。ZIP・Word・Excel・PDF・メール・メモから、お相手の情報を読み取って整理します
               </small>
               <input
                 type="file"
@@ -559,6 +632,22 @@ export default function ContactsPage() {
                 style={{ display: "none" }}
               />
             </label>
+            <p style={{ margin: "0 0 8px", textAlign: "center" }}>
+              <label style={{ color: "#2563eb", cursor: "pointer", fontSize: 14 }}>
+                フォルダごと選んで取り込む
+                <input
+                  type="file"
+                  multiple
+                  aria-label="取り込みフォルダ"
+                  {...({ webkitdirectory: "" } as Record<string, string>)}
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) void uploadFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                  style={{ display: "none" }}
+                />
+              </label>
+            </p>
             <details style={{ margin: "8px 0", color: "#334155" }}>
               <summary style={{ cursor: "pointer", color: "#2563eb" }}>各サービスからの取り出し方 (かんたん手順)</summary>
               <div style={{ padding: "8px 4px", display: "grid", gap: 10, fontSize: 14 }}>
@@ -597,6 +686,13 @@ export default function ContactsPage() {
                 <div>
                   <strong>名刺 (Eight)・年賀状リスト・ほかの管理表</strong> — CSV のままで大丈夫です。lms
                   の「データを書き出す」で作ったファイルもそのまま取り込めます。
+                </div>
+                <div>
+                  <strong>そのほかの書類・フォルダ</strong> — 名簿の Excel、案内状の
+                  Word、議事録の PDF、いただいたメール (.eml)、自由なメモまで、文字の入った書類なら
+                  たいてい読み取れます。フォルダごと置けば、中の書類をまとめて確かめ、お名前・連絡先・
+                  所属・近況・お会いした日を整理して連絡帳に足します。すでにいる方は、空いている項目の
+                  補完とメモの書き足しだけ行い、あなたが書いた内容は上書きしません。
                 </div>
               </div>
             </details>

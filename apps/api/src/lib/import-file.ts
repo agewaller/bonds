@@ -2,6 +2,7 @@
 // 解凍せずそのまま受け取り、中の友だち/つながりファイルを自動で見つけて解析する。
 // ユーザーに ZIP の中身を探させない (取り込みを圧倒的に楽にする) ための心臓部。
 import { unzipSync } from "fflate";
+import { extractFileText, MAX_EXTRACT_TEXT_CHARS } from "./file-text.js";
 import {
   parseFacebookFriends,
   parseInstagramFollowing,
@@ -73,35 +74,71 @@ function parseZipEntry(path: string, bytes: Uint8Array): ParsedImport | null {
   return null;
 }
 
+export type ExtractedFileText = { file: string; kind: string; text: string };
+
 export type FileImportResult = ParsedImport & {
   // どのファイル/形式から何名拾えたか (画面のフィードバック用)
   foundIn: Array<{ file: string; contacts: number }>;
+  // 構造化パーサで拾えなかったが本文テキストは読めたもの — AI の人物抽出に回す
+  texts: ExtractedFileText[];
 };
 
-// 生バイト列 (ZIP またはテキスト) を解析する入口。
+const MAX_TEXT_FILES = 30; // 1 取込 (ZIP) から AI に回すファイル数の上限
+
+// OOXML (docx/xlsx/pptx) も ZIP 容器のため、SNS アーカイブ ZIP と取り違えない。
+// [Content_Types].xml は OOXML に必ずある。
+function looksLikeOoxml(entries: Record<string, Uint8Array>): boolean {
+  return "[Content_Types].xml" in entries;
+}
+
+// 生バイト列 (ZIP・Office 文書・PDF・メール・テキスト全般) を解析する入口。
+// まず既知の構造化形式 (SNS/CSV/vCard/トーク履歴) を試し、拾えないファイルは
+// 本文テキストとして返して呼び出し側の AI 人物抽出へつなぐ。
 export function parseImportFile(bytes: Uint8Array, filename?: string): FileImportResult {
+  const name = filename ?? "file";
   if (isZip(bytes)) {
     let entries: Record<string, Uint8Array>;
     try {
       entries = unzipSync(bytes, {
-        filter: (f) => /\.(json|js|csv|vcf|txt)$/i.test(f.name) && f.originalSize <= MAX_ZIP_ENTRY_BYTES,
+        filter: (f) => f.originalSize <= MAX_ZIP_ENTRY_BYTES && !/(^|\/)(__MACOSX|\.)/.test(f.name),
       });
     } catch {
-      return { contacts: [], interactions: [], foundIn: [] };
+      return { contacts: [], interactions: [], foundIn: [], texts: [] };
+    }
+    // docx/xlsx/pptx がそのまま置かれたケース: ZIP としてではなく 1 文書として読む
+    if (looksLikeOoxml(entries)) {
+      const t = extractFileText(bytes, name);
+      return { contacts: [], interactions: [], foundIn: [], texts: t ? [{ file: name, kind: t.kind, text: t.text }] : [] };
     }
     const contacts: ParsedContact[] = [];
     const interactions: ParsedImport["interactions"] = [];
     const foundIn: FileImportResult["foundIn"] = [];
+    const texts: ExtractedFileText[] = [];
+    let textChars = 0;
     for (const [path, data] of Object.entries(entries)) {
       const r = parseZipEntry(path, data);
       if (r && r.contacts.length > 0) {
         contacts.push(...r.contacts);
         interactions.push(...r.interactions);
         foundIn.push({ file: path, contacts: r.contacts.length });
+        continue;
+      }
+      // 既知形式でなくても本文が読めれば AI 抽出へ (ファイル数と総量に上限)
+      if (texts.length >= MAX_TEXT_FILES || textChars >= MAX_EXTRACT_TEXT_CHARS) continue;
+      const t = extractFileText(data, path);
+      if (t) {
+        texts.push({ file: path, kind: t.kind, text: t.text });
+        textChars += t.text.length;
       }
     }
-    return { contacts, interactions, foundIn };
+    return { contacts, interactions, foundIn, texts };
   }
-  const r = parseImportText(decode(bytes), filename);
-  return { ...r, foundIn: r.contacts.length > 0 ? [{ file: filename ?? "text", contacts: r.contacts.length }] : [] };
+  const t = extractFileText(bytes, name);
+  // Office 文書・PDF・メールなど「テキスト化してから判定」する形式は抽出後の本文でも構造化を試す
+  const structured = t && (t.kind === "excel" || t.kind === "text") ? parseImportText(t.text, filename) : null;
+  const r = structured && structured.contacts.length > 0 ? structured : parseImportText(decode(bytes), filename);
+  if (r.contacts.length > 0) {
+    return { ...r, foundIn: [{ file: name, contacts: r.contacts.length }], texts: [] };
+  }
+  return { contacts: [], interactions: [], foundIn: [], texts: t ? [{ file: name, kind: t.kind, text: t.text }] : [] };
 }

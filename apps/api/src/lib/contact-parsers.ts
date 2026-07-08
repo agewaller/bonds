@@ -212,6 +212,7 @@ export type ParsedInteraction = {
   name: string; // 接触相手 (contacts.name に一致させる)
   occurredAt: string; // YYYY-MM-DD
   type: string; // message など
+  note?: string; // その日のやりとりの短いメモ (AI 抽出由来など)
 };
 
 export type ParsedImport = {

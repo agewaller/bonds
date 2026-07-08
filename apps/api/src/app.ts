@@ -25,6 +25,7 @@ import { clampDistance, calculateIsolationScore, todaySuggestions } from "./lib/
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { parseImportFile, MAX_IMPORT_FILE_BYTES } from "./lib/import-file.js";
+import { MAX_EXTRACT_TEXT_CHARS } from "./lib/file-text.js";
 import { parseIsoIntervals, meetingSlotProposals, toIso } from "./lib/timeslots.js";
 import { parseIcsBusy, looksLikeIcs, buildMeetingInviteIcs } from "./lib/ics.js";
 import {
@@ -622,24 +623,51 @@ export function createApp(deps: AppDeps) {
   // 取込 (CSV / vCard / auto)。取り込み件数とスキップ件数を返す。
   // 取込結果を DB に反映する共通処理。同名の既存連絡先はスキップ (再取込で二重登録しない)、
   // トーク履歴由来の接触記録は同じ相手・同じ日の重複を登録しない (冪等)。
+  // 既存の方 (同名が 1 人だけ) には、空いている項目の補完とメモの書き足しで情報を「育てる」
+  // — 上書きはしない (ユーザーが書いた値が常に勝つ)。
+  const MAX_NOTES_CHARS = 6000;
   const applyImport = async (
     ownerUid: string,
     parsed: { contacts: ParsedContact[]; interactions: ParsedInteraction[] },
   ) => {
     const existing = await prisma.contact.findMany({
       where: { ownerUid, state: "active" },
-      select: { id: true, name: true },
     });
     const byName = new Map(existing.map((e) => [e.name, e.id]));
+    const nameCount = new Map<string, number>();
+    for (const e of existing) nameCount.set(e.name, (nameCount.get(e.name) ?? 0) + 1);
     let imported = 0;
     let skipped = 0;
+    let enriched = 0;
     // 同姓同名で見送った名前。世の中には同じ名前の別人がいるため、黙って捨てず
     // ユーザーに知らせ、「別の人」なら追加欄 (confirmNew) から特定して足してもらう。
     const sameName = new Set<string>();
     for (const r of parsed.contacts) {
       const name = clampName(r.name);
       if (!name || byName.has(name)) {
-        if (name) sameName.add(name);
+        if (name) {
+          sameName.add(name);
+          // 同名が 1 人だけなら同一人物とみなし、空欄の補完とメモの書き足しだけ行う
+          if (nameCount.get(name) === 1) {
+            const target = existing.find((e) => e.name === name)!;
+            const fill: Record<string, unknown> = {};
+            const fields = ["furigana", "phone", "email", "address", "company", "title"] as const;
+            for (const f of fields) {
+              const v = (r as Record<string, unknown>)[f];
+              if (!target[f] && typeof v === "string" && v.trim()) fill[f] = v.trim();
+            }
+            if (!target.birthday && r.birthday) fill.birthday = parseBirthday(r.birthday);
+            const note = typeof r.notes === "string" ? r.notes.trim() : "";
+            if (note && !(target.notes ?? "").includes(note)) {
+              fill.notes = `${target.notes ? `${target.notes}\n` : ""}${note}`.slice(0, MAX_NOTES_CHARS);
+            }
+            if (Object.keys(fill).length > 0) {
+              await prisma.contact.update({ where: { id: target.id }, data: fill });
+              Object.assign(target, fill);
+              enriched++;
+            }
+          }
+        }
         skipped++;
         continue;
       }
@@ -647,6 +675,8 @@ export function createApp(deps: AppDeps) {
         data: { ownerUid, name, source: r.source ?? "import", ...contactData(r as Record<string, unknown>) },
       });
       byName.set(name, created.id);
+      nameCount.set(name, 1);
+      existing.push(created);
       imported++;
     }
     let interactionsAdded = 0;
@@ -664,7 +694,12 @@ export function createApp(deps: AppDeps) {
       const seen = daysByContact.get(contactId)!;
       if (seen.has(it.occurredAt)) continue;
       await prisma.contactInteraction.create({
-        data: { contactId, type: it.type, occurredAt: new Date(`${it.occurredAt}T12:00:00Z`) },
+        data: {
+          contactId,
+          type: it.type,
+          occurredAt: new Date(`${it.occurredAt}T12:00:00Z`),
+          notes: typeof it.note === "string" && it.note.trim() ? it.note.trim().slice(0, 1000) : null,
+        },
       });
       seen.add(it.occurredAt);
       interactionsAdded++;
@@ -672,6 +707,7 @@ export function createApp(deps: AppDeps) {
     return {
       imported,
       skipped,
+      enriched,
       parsed: parsed.contacts.length,
       interactionsAdded,
       sameName: [...sameName].slice(0, 20),
@@ -696,6 +732,9 @@ export function createApp(deps: AppDeps) {
 
   // ファイル/ZIP まるごと取込。SNS の「データをダウンロード」の ZIP をそのまま受け、
   // 中の友だち/つながりファイルを自動発見する (ユーザーに中身を探させない)。
+  // 既知の構造化形式で拾えないファイル (Word・Excel・PDF・メール・議事録・自由なメモなど)
+  // は本文テキストに落とし、AI の人物抽出 (import_extract) で名前・連絡先・所属・
+  // 近況メモ・会った日を読み取って、同じ冪等取込 (applyImport) で連絡帳へ整理する。
   app.post("/api/contacts/import-file", async (c) => {
     const buf = await c.req.arrayBuffer();
     if (buf.byteLength === 0) {
@@ -713,18 +752,38 @@ export function createApp(deps: AppDeps) {
     }
     const filename = c.req.query("filename") ?? c.req.header("x-filename") ?? undefined;
     const parsed = parseImportFile(new Uint8Array(buf), filename);
-    if (parsed.contacts.length === 0) {
+    let ai: { contacts: ParsedContact[]; interactions: ParsedInteraction[] } | null = null;
+    let aiUnavailable = false;
+    if (parsed.texts.length > 0) {
+      const r = await extractPeopleFromTexts(parsed.texts, normalizeLocale(c.req.query("locale")));
+      if (r.ok) ai = r;
+      else aiUnavailable = true;
+    }
+    const merged = {
+      contacts: [...parsed.contacts, ...(ai?.contacts ?? [])],
+      interactions: [...parsed.interactions, ...(ai?.interactions ?? [])],
+    };
+    if (merged.contacts.length === 0) {
+      if (aiUnavailable) {
+        return c.json(
+          {
+            error: "extract_unavailable",
+            detail: "内容は読めましたが、いまは人物の読み取りができません。しばらくしてからもう一度お試しください",
+          },
+          422,
+        );
+      }
       return c.json(
         {
           error: "no_contacts_found",
           detail:
-            "このファイルからは連絡先を見つけられませんでした。対応しているのは LinkedIn・Facebook・Instagram・X のダウンロードデータ (ZIPのまま可)、Google 連絡先、LINE のトーク履歴、CSV や vCard です",
+            "このファイルからは人物にまつわる情報を見つけられませんでした。文字の入った書類 (Word・Excel・PDF・メール・テキスト・CSV・vCard・SNS のダウンロード ZIP など) ならたいてい読み取れます",
         },
         422,
       );
     }
-    const result = await applyImport(c.get("ownerUid"), parsed);
-    return c.json({ ...result, foundIn: parsed.foundIn });
+    const result = await applyImport(c.get("ownerUid"), merged);
+    return c.json({ ...result, foundIn: parsed.foundIn, aiPeople: ai?.contacts.length ?? 0 });
   });
 
   // 接触記録 (連絡済み)。距離スコアの検証還流。
@@ -1071,6 +1130,74 @@ export function createApp(deps: AppDeps) {
         body: { error: "ai_failed", detail: "下書きづくりに失敗しました。しばらくしてからお試しください" },
       };
     }
+  };
+
+  // ファイル本文からの人物抽出 — 名前だけでなく連絡先・所属・近況・会った日まで
+  // 整理された形で拾い、applyImport (冪等・既存の方は補完) に渡せる形に検証して返す。
+  // 出力は必ずここで検証・サニタイズし、AI の申告のまま DB に入れない。
+  const IMPORT_EXTRACT_INSTRUCTION =
+    '出力は JSON オブジェクト 1 個だけ: {"people": [{"name": "人物名", "furigana": "よみがな (無ければ空)", "email": "", "phone": "", "company": "所属 (無ければ空)", "title": "役職 (無ければ空)", "address": "", "birthday": "YYYY-MM-DD (無ければ空)", "relationship": "family か friend か work か community か other", "note": "その人について分かったことの短い散文 (無ければ空)", "dates": [{"date": "YYYY-MM-DD", "type": "meeting か message か call か other", "summary": "その日のできごとの短い一文 (無ければ空)"}]}]}';
+
+  const extractPeopleFromTexts = async (
+    texts: Array<{ file: string; kind: string; text: string }>,
+    locale: string,
+  ): Promise<
+    | { ok: true; contacts: ParsedContact[]; interactions: ParsedInteraction[] }
+    | { ok: false; status: 422 | 503 | 502; body: unknown }
+  > => {
+    const joined = texts
+      .map((t) => `ファイル ${t.file} (${t.kind}) の内容:\n${t.text}`)
+      .join("\n\n----\n\n")
+      .slice(0, MAX_EXTRACT_TEXT_CHARS);
+    const r = await runRelationshipAi(
+      "import_extract",
+      IMPORT_EXTRACT_INSTRUCTION,
+      joined,
+      "import_extract",
+      locale,
+    );
+    if (!r.ok) return r;
+    const parsed = extractJson(r.text) as { people?: unknown } | null;
+    const raw = Array.isArray(parsed?.people) ? (parsed.people as Array<Record<string, unknown>>) : [];
+    const str = (v: unknown, max = 200) =>
+      typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
+    const isoDay = (v: unknown) =>
+      typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim()) ? v.trim() : undefined;
+    const today = new Date().toISOString().slice(0, 10);
+    const contacts: ParsedContact[] = [];
+    const interactions: ParsedInteraction[] = [];
+    for (const p of raw.slice(0, 30)) {
+      const name = clampName(p?.name);
+      if (!name) continue;
+      const note = sanitizeProse(typeof p.note === "string" ? p.note : "").trim().slice(0, 1000);
+      contacts.push({
+        name,
+        furigana: str(p.furigana, 100),
+        email: str(p.email, 200),
+        phone: str(p.phone, 50),
+        company: str(p.company, 200),
+        title: str(p.title, 200),
+        address: str(p.address, 300),
+        birthday: isoDay(p.birthday),
+        relationship: ["family", "friend", "work", "community"].includes(p.relationship as string)
+          ? (p.relationship as string)
+          : undefined,
+        notes: note || undefined,
+        source: "file",
+      });
+      const dates = Array.isArray(p.dates) ? (p.dates as Array<Record<string, unknown>>) : [];
+      for (const d of dates.slice(0, 30)) {
+        const date = isoDay(d?.date);
+        if (!date || date > today) continue; // 未来日は接触記録にしない
+        interactions.push({
+          name,
+          occurredAt: date,
+          type: ["meeting", "message", "call"].includes(d.type as string) ? (d.type as string) : "other",
+          note: sanitizeProse(typeof d.summary === "string" ? d.summary : "").trim().slice(0, 300) || undefined,
+        });
+      }
+    }
+    return { ok: true, contacts, interactions };
   };
 
   // 価値観プロフィールの下書き (AI 下書き → ユーザーが編集して PUT で確定 = 自動保存しない)
