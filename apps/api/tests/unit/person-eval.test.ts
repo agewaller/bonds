@@ -6,6 +6,8 @@ import {
   PERSON_EVAL_GUARD,
   PERSON_EVAL_SAFETY,
   buildPersonEvalUserMessage,
+  resolveUserCapJpy,
+  AI_USER_CAP_DEFAULT_JPY,
 } from "../../src/lib/person-eval.js";
 import { canonicalizeModelId, calcCostJpy, USD_JPY_RATE } from "../../src/lib/cost.js";
 import { buildSystemPrompt } from "../../src/dd/runner.js";
@@ -87,5 +89,25 @@ describe("buildPersonEvalUserMessage", () => {
     const m = buildPersonEvalUserMessage("渋沢栄一", null, new Date("2026-07-08T00:00:00Z"));
     expect(m).toContain("今日の日付: 2026-07-08");
     expect(m).toContain("直近を重視");
+  });
+});
+
+describe("resolveUserCapJpy (あなた以外の利用者の月次上限)", () => {
+  it("未設定・空文字・不正・負数は既定額", () => {
+    expect(resolveUserCapJpy(undefined)).toBe(AI_USER_CAP_DEFAULT_JPY);
+    expect(resolveUserCapJpy(null)).toBe(AI_USER_CAP_DEFAULT_JPY);
+    expect(resolveUserCapJpy("")).toBe(AI_USER_CAP_DEFAULT_JPY);
+    expect(resolveUserCapJpy("  ")).toBe(AI_USER_CAP_DEFAULT_JPY);
+    expect(resolveUserCapJpy("abc")).toBe(AI_USER_CAP_DEFAULT_JPY);
+    expect(resolveUserCapJpy("-100")).toBe(AI_USER_CAP_DEFAULT_JPY);
+  });
+
+  it("0 は無制限 (Infinity)", () => {
+    expect(resolveUserCapJpy("0")).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("正の数はその額を上限にする", () => {
+    expect(resolveUserCapJpy("500")).toBe(500);
+    expect(resolveUserCapJpy("3000")).toBe(3000);
   });
 });

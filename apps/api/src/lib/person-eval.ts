@@ -22,6 +22,22 @@ export const PERSON_DD_MONTHLY_CAP_JPY =
 // ai_usage_logs.purpose の接頭辞。月次コスト集計をこの接頭辞で絞る。
 export const PERSON_DD_PURPOSE_PREFIX = "person_dd";
 
+// あなた (オーナー) 以外の利用者にかける月次コスト上限 (円)。app_config のこのキーに
+// 管理画面から保存する。未設定なら既定値。オーナー本人は常に上限なし (上の 0=無制限)。
+export const AI_USER_CAP_CONFIG_KEY = "ai_monthly_cap_user_jpy";
+export const AI_USER_CAP_DEFAULT_JPY = 500;
+
+// app_config の保存値 (文字列) を月次上限 (円) に解決する。
+//   "0"      = 上限なし
+//   正の数    = その額
+//   未設定/不正 = 既定
+export function resolveUserCapJpy(value: string | null | undefined): number {
+  if (value == null || value.trim() === "") return AI_USER_CAP_DEFAULT_JPY;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return AI_USER_CAP_DEFAULT_JPY;
+  return n === 0 ? Number.POSITIVE_INFINITY : n;
+}
+
 // 入力 (人物名) の上限。肩書き併記を許す余裕 (cares と同値)。
 export const PERSON_DD_MAX_NAME_LENGTH = 100;
 

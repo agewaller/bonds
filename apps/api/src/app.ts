@@ -16,9 +16,12 @@ import {
   PERSON_DD_MONTHLY_CAP_JPY,
   PERSON_DD_MODEL_CONFIG_KEY,
   PERSON_DD_DEFAULT_MODEL_ID,
+  AI_USER_CAP_CONFIG_KEY,
+  AI_USER_CAP_DEFAULT_JPY,
+  resolveUserCapJpy,
 } from "./lib/person-eval.js";
 import { canonicalizeModelId, isValidModelId, type ModelId } from "./lib/cost.js";
-import { runPersonDd, getMonthlyCostJpy, type DdRunEvent } from "./dd/runner.js";
+import { runPersonDd, getMonthlyCostJpy, getMonthlyCostJpyForUser, type DdRunEvent } from "./dd/runner.js";
 import { normalizeLocale } from "./lib/locale.js";
 import { clampScore } from "./lib/dd-spec.js";
 import { clampDistance, calculateIsolationScore, todaySuggestions } from "./lib/relationship.js";
@@ -114,7 +117,8 @@ export function createApp(deps: AppDeps) {
         };
 
   // ownerUid: 認可済みユーザーのデータスコープ (Firebase uid / break-glass は "owner")
-  const app = new Hono<{ Variables: { ownerUid: string } }>();
+  // isOwner: オーナー本人か (AI 月次上限をオーナーは無制限、それ以外は設定値で効かせる)
+  const app = new Hono<{ Variables: { ownerUid: string; isOwner: boolean } }>();
 
   // CORS: 許可 Origin は env で制御。
   const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000")
@@ -181,6 +185,7 @@ export function createApp(deps: AppDeps) {
       return c.json({ error: result.error, detail: result.detail }, result.status);
     }
     c.set("ownerUid", result.ownerUid);
+    c.set("isOwner", result.isOwner);
     await next();
     auditWrite(c, result.actor);
   };
@@ -221,6 +226,67 @@ export function createApp(deps: AppDeps) {
       create: { key: PERSON_DD_MODEL_CONFIG_KEY, value: model },
     });
     return c.json({ model });
+  });
+
+  // ---------------- 管理: AI コスト上限 (あなた以外の利用者) ----------------
+  // オーナー本人は無制限 (PERSON_DD_MONTHLY_CAP_JPY)。それ以外の利用者に月次上限を設ける。
+  // 0 = 上限なし、正の数 = その額 (円)、未設定 = 既定 AI_USER_CAP_DEFAULT_JPY。
+
+  app.get("/api/admin/ai-cost-config", async (c) => {
+    const row = await prisma.appConfig.findUnique({ where: { key: AI_USER_CAP_CONFIG_KEY } });
+    const cap = resolveUserCapJpy(row?.value);
+    return c.json({
+      // 保存されている生の値 (未設定なら既定額を返して UI の初期表示に使う)
+      userCapJpy: row?.value ?? String(AI_USER_CAP_DEFAULT_JPY),
+      unlimited: !Number.isFinite(cap),
+      isDefault: !row,
+      defaultJpy: AI_USER_CAP_DEFAULT_JPY,
+    });
+  });
+
+  app.put("/api/admin/ai-cost-config", async (c) => {
+    const body = await c.req.json<{ userCapJpy?: string | number }>().catch(() => ({}) as { userCapJpy?: string });
+    const raw = body.userCapJpy;
+    if (raw === undefined || raw === null || String(raw).trim() === "") {
+      return c.json({ error: "value_required", detail: "上限額を入力してください (0 で無制限)" }, 400);
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+      return c.json({ error: "invalid_value", detail: "0 以上の整数 (円) を入力してください" }, 400);
+    }
+    const value = String(n);
+    await prisma.appConfig.upsert({
+      where: { key: AI_USER_CAP_CONFIG_KEY },
+      update: { value },
+      create: { key: AI_USER_CAP_CONFIG_KEY, value },
+    });
+    return c.json({ userCapJpy: value, unlimited: n === 0 });
+  });
+
+  // 当月の利用状況 (オーナー全体 + 利用者ごと)。管理画面に見せてコストの透明性を保つ。
+  app.get("/api/admin/ai-usage", async (c) => {
+    const monthStart = new Date();
+    monthStart.setUTCDate(1);
+    monthStart.setUTCHours(0, 0, 0, 0);
+    const grouped = await prisma.aiUsageLog.groupBy({
+      by: ["ownerUid"],
+      where: { createdAt: { gte: monthStart } },
+      _sum: { costJpy: true },
+    });
+    const capRow = await prisma.appConfig.findUnique({ where: { key: AI_USER_CAP_CONFIG_KEY } });
+    const userCap = resolveUserCapJpy(capRow?.value);
+    const perUser = grouped
+      .map((g) => ({ ownerUid: g.ownerUid ?? "(不明)", costJpy: g._sum.costJpy ?? 0 }))
+      .sort((a, b) => b.costJpy - a.costJpy);
+    const totalJpy = perUser.reduce((s, u) => s + u.costJpy, 0);
+    return c.json({
+      monthStart: monthStart.toISOString().slice(0, 10),
+      totalJpy,
+      ownerCapUnlimited: !Number.isFinite(PERSON_DD_MONTHLY_CAP_JPY),
+      userCapJpy: Number.isFinite(userCap) ? userCap : 0,
+      userCapUnlimited: !Number.isFinite(userCap),
+      perUser,
+    });
   });
 
   // ---------------- 管理: プロンプト版管理 (DB 駆動プロンプトの編集 UI 用) ----------------
@@ -319,6 +385,7 @@ export function createApp(deps: AppDeps) {
       const canonical = canonicalizeModelId(gen.model) ?? model;
       await prisma.aiUsageLog.create({
         data: {
+          ownerUid: "owner", // 人物DD は管理系 (requireAdmin = オーナー専用)
           provider: "anthropic",
           model: canonical,
           purpose: "person_dd_identify",
@@ -761,15 +828,16 @@ export function createApp(deps: AppDeps) {
     const aiInteractions: ParsedInteraction[] = [];
     let aiUnavailable = false;
     // 文字の書類は本文抽出 → AI、名刺・名簿・スクショの画像は Vision で読み取る
+    const actor = actorOf(c);
     if (parsed.texts.length > 0) {
-      const r = await extractPeopleFromTexts(parsed.texts, locale);
+      const r = await extractPeopleFromTexts(parsed.texts, locale, actor);
       if (r.ok) {
         aiContacts.push(...r.contacts);
         aiInteractions.push(...r.interactions);
       } else aiUnavailable = true;
     }
     if (parsed.images.length > 0) {
-      const r = await extractPeopleFromImages(parsed.images, locale);
+      const r = await extractPeopleFromImages(parsed.images, locale, actor);
       if (r.ok) {
         aiContacts.push(...r.contacts);
         aiInteractions.push(...r.interactions);
@@ -1140,19 +1208,36 @@ export function createApp(deps: AppDeps) {
 
   // AI 実行の共通ラッパ (キャップ確認 → 生成 → 使用記録)。
   // images を渡すと Vision (名刺・名簿の読み取り) になる。
+  // 利用者にかける月次上限 (円)。オーナー本人は全体で無制限 (PERSON_DD_MONTHLY_CAP_JPY)、
+  // それ以外は app_config の設定値 (既定 AI_USER_CAP_DEFAULT_JPY) を各自の消費に効かせる。
+  const resolveUserCap = async (): Promise<number> => {
+    const row = await prisma.appConfig.findUnique({ where: { key: AI_USER_CAP_CONFIG_KEY } });
+    return resolveUserCapJpy(row?.value);
+  };
+
   const runRelationshipAi = async (
     promptKey: string,
     extraSystem: string,
     userMessage: string,
     purpose: string,
     locale: string,
-    opts?: { images?: Array<{ base64: string; mediaType: string }>; maxContinuations?: number },
+    opts?: {
+      images?: Array<{ base64: string; mediaType: string }>;
+      maxContinuations?: number;
+      // 消費の帰属先。未指定 = オーナー (管理系・sweep からの呼び出しは無制限)。
+      actor?: { ownerUid: string; isOwner: boolean };
+    },
   ): Promise<{ ok: true; text: string } | { ok: false; status: 422 | 503 | 502; body: unknown }> => {
     if (!generate) {
       return { ok: false, status: 503, body: { error: "unavailable", detail: "いまは文章の下書きを作れません" } };
     }
-    const cost = await getMonthlyCostJpy(prisma);
-    if (cost >= PERSON_DD_MONTHLY_CAP_JPY) {
+    const actor = opts?.actor ?? { ownerUid: "owner", isOwner: true };
+    // オーナーは全体合計に無制限キャップ、それ以外は本人の当月消費に設定値のキャップ。
+    const cost = actor.isOwner
+      ? await getMonthlyCostJpy(prisma)
+      : await getMonthlyCostJpyForUser(prisma, actor.ownerUid);
+    const cap = actor.isOwner ? PERSON_DD_MONTHLY_CAP_JPY : await resolveUserCap();
+    if (cost >= cap) {
       return { ok: false, status: 422, body: { error: "quota_exceeded", detail: "今月の利用枠は終了しました" } };
     }
     const prompt = await getPromptText(prisma, promptKey);
@@ -1179,6 +1264,7 @@ export function createApp(deps: AppDeps) {
       const canonical = canonicalizeModelId(gen.model) ?? model;
       await prisma.aiUsageLog.create({
         data: {
+          ownerUid: actor.ownerUid,
           provider: "anthropic",
           model: canonical,
           purpose,
@@ -1253,9 +1339,14 @@ export function createApp(deps: AppDeps) {
     return { contacts, interactions };
   };
 
+  type AiActor = { ownerUid: string; isOwner: boolean };
+  // requireUser を通ったリクエストの消費主体。オーナーは無制限、それ以外は設定値の月次上限。
+  const actorOf = (c: Context): AiActor => ({ ownerUid: c.get("ownerUid"), isOwner: c.get("isOwner") });
+
   const extractPeopleFromTexts = async (
     texts: Array<{ file: string; kind: string; text: string }>,
     locale: string,
+    actor: AiActor,
   ): Promise<
     | { ok: true; contacts: ParsedContact[]; interactions: ParsedInteraction[] }
     | { ok: false; status: 422 | 503 | 502; body: unknown }
@@ -1266,6 +1357,7 @@ export function createApp(deps: AppDeps) {
       .slice(0, MAX_EXTRACT_TEXT_CHARS);
     const r = await runRelationshipAi("import_extract", IMPORT_EXTRACT_INSTRUCTION, joined, "import_extract", locale, {
       maxContinuations: 2,
+      actor,
     });
     if (!r.ok) return r;
     return { ok: true, ...parseExtractedPeople(r.text, "file") };
@@ -1277,6 +1369,7 @@ export function createApp(deps: AppDeps) {
   const extractPeopleFromImages = async (
     images: Array<{ file: string; base64: string; mediaType: string }>,
     locale: string,
+    actor: AiActor,
   ): Promise<
     | { ok: true; contacts: ParsedContact[]; interactions: ParsedInteraction[] }
     | { ok: false; status: 422 | 503 | 502; body: unknown }
@@ -1287,7 +1380,7 @@ export function createApp(deps: AppDeps) {
       "添えた画像から人物を読み取って JSON で返してください。",
       "import_extract_vision",
       locale,
-      { images: images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })), maxContinuations: 2 },
+      { images: images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })), maxContinuations: 2, actor },
     );
     if (!r.ok) return r;
     return { ok: true, ...parseExtractedPeople(r.text, "photo") };
@@ -1304,6 +1397,7 @@ export function createApp(deps: AppDeps) {
       ctx.context,
       "values_enrich",
       normalizeLocale(b.locale),
+      { actor: actorOf(c) },
     );
     if (!r.ok) return c.json(r.body as never, r.status);
     const parsed = extractJson(r.text) as { draft?: unknown } | null;
@@ -1334,6 +1428,7 @@ export function createApp(deps: AppDeps) {
       userMessage,
       "gift_suggest",
       normalizeLocale(b.locale),
+      { actor: actorOf(c) },
     );
     if (!r.ok) return c.json(r.body as never, r.status);
     const parsed = extractJson(r.text) as { suggestions?: unknown; note?: unknown } | null;
@@ -1361,6 +1456,7 @@ export function createApp(deps: AppDeps) {
     context: string,
     includePublic: boolean,
     locale: string,
+    actor: AiActor,
   ): Promise<{ ok: true; digest: string; searched: boolean } | { ok: false; status: 422 | 503 | 502; body: unknown }> => {
     let searchNote = "";
     let searched = false;
@@ -1392,6 +1488,7 @@ export function createApp(deps: AppDeps) {
       userMessage,
       "profile_digest",
       locale,
+      { actor },
     );
     if (!r.ok) return r;
     const parsed = extractJson(r.text) as { digest?: unknown } | null;
@@ -1409,7 +1506,13 @@ export function createApp(deps: AppDeps) {
     const b = await c.req
       .json<{ includePublic?: boolean; locale?: string }>()
       .catch(() => ({}) as { includePublic?: boolean; locale?: string });
-    const r = await generateDigest(ctx.contact, ctx.context, b.includePublic === true, normalizeLocale(b.locale));
+    const r = await generateDigest(
+      ctx.contact,
+      ctx.context,
+      b.includePublic === true,
+      normalizeLocale(b.locale),
+      actorOf(c),
+    );
     if (!r.ok) return c.json(r.body as never, r.status);
     const updated = await prisma.contact.update({
       where: { id: ctx.contact.id },
@@ -1445,7 +1548,11 @@ export function createApp(deps: AppDeps) {
     for (const t of targets) {
       const ctx = await buildContactContext(t.ownerUid, t.id);
       if (!ctx) continue;
-      const r = await generateDigest(ctx.contact, ctx.context, false, "ja");
+      // 毎時 sweep はオーナー運用のバッチ。無制限 (isOwner) で回し、消費は各データ主に計上する。
+      const r = await generateDigest(ctx.contact, ctx.context, false, "ja", {
+        ownerUid: t.ownerUid,
+        isOwner: true,
+      });
       if (!r.ok) {
         failures.push(t.id);
         if (r.status === 422) break; // 月次キャップ到達: これ以上回さない
@@ -1476,6 +1583,7 @@ export function createApp(deps: AppDeps) {
       `会話の記録:\n${text.slice(0, 20000)}`,
       "conversation_extract",
       normalizeLocale(b.locale),
+      { actor: actorOf(c) },
     );
     if (!r.ok) return c.json(r.body as never, r.status);
     const parsed = extractJson(r.text) as { people?: unknown } | null;
@@ -1539,6 +1647,7 @@ export function createApp(deps: AppDeps) {
       userMessage,
       "outreach_gen",
       normalizeLocale(b.locale),
+      { actor: actorOf(c) },
     );
     if (!r.ok) return c.json(r.body as never, r.status);
     const validated = validateOutreachCandidates(extractJson(r.text));

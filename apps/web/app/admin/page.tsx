@@ -7,12 +7,17 @@ import Link from "next/link";
 import { apiFetch } from "../../lib/client-api";
 
 type PromptRow = { key: string; version: number; body: string; active: boolean; versions: number };
+type UsageRow = { ownerUid: string; costJpy: number };
+type Usage = { monthStart: string; totalJpy: number; perUser: UsageRow[] };
 
 const input = { width: "100%", padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8 } as const;
+const yen = (n: number) => `${Math.round(n).toLocaleString("ja-JP")}円`;
 
 export default function AdminPage() {
   const [prompts, setPrompts] = useState<PromptRow[]>([]);
   const [model, setModel] = useState("");
+  const [userCap, setUserCap] = useState(""); // あなた以外の利用者の月次上限 (円。0 = 無制限)
+  const [usage, setUsage] = useState<Usage | null>(null);
   const [editingKey, setEditingKey] = useState("");
   const [editBody, setEditBody] = useState("");
   const [denied, setDenied] = useState(false);
@@ -20,9 +25,11 @@ export default function AdminPage() {
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const [pRes, mRes] = await Promise.all([
+    const [pRes, mRes, cRes, uRes] = await Promise.all([
       apiFetch("admin/prompts"),
       apiFetch("admin/person-eval-config"),
+      apiFetch("admin/ai-cost-config"),
+      apiFetch("admin/ai-usage"),
     ]);
     if (pRes.status === 401 || pRes.status === 503) {
       setDenied(true);
@@ -30,6 +37,8 @@ export default function AdminPage() {
     }
     if (pRes.ok) setPrompts((await pRes.json()).prompts);
     if (mRes.ok) setModel((await mRes.json()).model);
+    if (cRes.ok) setUserCap((await cRes.json()).userCapJpy);
+    if (uRes.ok) setUsage(await uRes.json());
   }, []);
 
   useEffect(() => {
@@ -63,6 +72,21 @@ export default function AdminPage() {
       return;
     }
     setNotice("使用する種類を保存しました");
+  };
+
+  const saveUserCap = async () => {
+    setError("");
+    const res = await apiFetch("admin/ai-cost-config", {
+      method: "PUT",
+      body: JSON.stringify({ userCapJpy: userCap.trim() }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(body.detail ?? "保存できませんでした");
+      return;
+    }
+    setNotice(body.unlimited ? "あなた以外の利用者を無制限にしました" : `あなた以外の利用者の上限を ${yen(Number(userCap))}/月 にしました`);
+    await load();
   };
 
   if (denied) {
@@ -101,6 +125,51 @@ export default function AdminPage() {
             保存
           </button>
         </div>
+      </section>
+
+      <section style={{ margin: "24px 0" }}>
+        <h2 style={{ fontSize: 18 }}>利用の上限 (あなた以外の利用者)</h2>
+        <p style={{ color: "#475569", fontSize: 14, margin: "4px 0 10px" }}>
+          あなた自身は上限なくお使いいただけます。ほかの利用者には、月ごとの上限額を設けられます。0 を入れると、ほかの利用者も上限なしになります。
+        </p>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="number"
+            min={0}
+            step={100}
+            value={userCap}
+            onChange={(e) => setUserCap(e.target.value)}
+            aria-label="ほかの利用者の月ごとの上限 (円)"
+            style={{ ...input, width: 140 }}
+          />
+          <span style={{ color: "#475569" }}>円 / 月</span>
+          <button
+            onClick={() => void saveUserCap()}
+            style={{ padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
+          >
+            保存
+          </button>
+        </div>
+        {usage && (
+          <div style={{ marginTop: 14, border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 14px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+              <strong>今月の利用 ({usage.monthStart} 以降)</strong>
+              <span style={{ color: "#0f172a" }}>合計 {yen(usage.totalJpy)}</span>
+            </div>
+            {usage.perUser.length === 0 ? (
+              <p style={{ color: "#64748b", margin: "8px 0 0" }}>今月の利用はまだありません。</p>
+            ) : (
+              <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0", display: "grid", gap: 4 }}>
+                {usage.perUser.map((u) => (
+                  <li key={u.ownerUid} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+                    <span style={{ color: "#475569" }}>{u.ownerUid === "owner" ? "あなた" : u.ownerUid}</span>
+                    <span>{yen(u.costJpy)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </section>
 
       <section>

@@ -110,6 +110,7 @@ model PersonDdStep {
 /// AI 利用記録。月次円建てキャップ (BR-20 相当) の集計元。
 model AiUsageLog {
   id           String   @id @default(uuid())
+  ownerUid     String?  @map("owner_uid") // どの利用者の消費か (月次上限を利用者ごとに効かせる)。旧行は null
   provider     String
   model        String
   purpose      String // person_dd_consciousness_7d / person_dd_social_value_creation など
@@ -119,6 +120,7 @@ model AiUsageLog {
   createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([purpose, createdAt])
+  @@index([ownerUid, createdAt])
   @@map("ai_usage_logs")
 }
 
