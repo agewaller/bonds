@@ -6,6 +6,7 @@ import {
   parseAddressList,
   isNoisePerson,
   collectGooglePeople,
+  parseGoogleConnections,
   buildGoogleClient,
   MAX_EVENT_ATTENDEES,
 } from "../../src/lib/google.js";
@@ -13,6 +14,38 @@ import {
 beforeAll(() => {
   process.env.DATA_ENCRYPTION_KEY =
     "4e107972818fcee63f3c91de6ed6f7143edab3f4169bcfe9abc95034c5e1996f";
+});
+
+describe("parseGoogleConnections (People API アドレス帳)", () => {
+  it("氏名・メール・電話・所属を連絡先に組み立てる", () => {
+    const resp = {
+      connections: [
+        {
+          names: [{ displayName: "山田 太郎" }],
+          emailAddresses: [{ value: "taro@example.com" }],
+          phoneNumbers: [{ value: "090-1234-5678" }],
+          organizations: [{ name: "ヤマダ商事", title: "部長" }],
+        },
+        { emailAddresses: [{ value: "hanako@example.com" }] }, // 表示名なし → ローカル部を仮名に
+        { phoneNumbers: [{ value: "080-0000-0000" }] }, // 名前もメールも無い → 除外
+      ],
+    };
+    const contacts = parseGoogleConnections(resp);
+    expect(contacts).toHaveLength(2);
+    expect(contacts[0]).toMatchObject({
+      name: "山田 太郎",
+      email: "taro@example.com",
+      phone: "090-1234-5678",
+      company: "ヤマダ商事",
+      title: "部長",
+      source: "google_contacts",
+    });
+    expect(contacts[1]!.name).toBe("hanako");
+  });
+  it("connections が無い応答は空配列", () => {
+    expect(parseGoogleConnections({})).toEqual([]);
+    expect(parseGoogleConnections(null)).toEqual([]);
+  });
 });
 
 describe("OAuth state (署名つき ownerUid)", () => {

@@ -82,12 +82,13 @@ describe("ファイル/ZIP 取込 (import-file)", () => {
     expect(interactions.every((i) => i.type === "message")).toBe(true);
   });
 
-  it("読み取れないバイナリは 422 で対応形式を案内する", async () => {
+  it("読み取れないバイナリ (画像でも書類でもない) は 422 で対応形式を案内する", async () => {
     const app = createApp({ prisma, generate: null });
     const res = await app.request("/api/contacts/import-file", {
       method: "POST",
       headers: BIN,
-      body: new Uint8Array([0xff, 0xd8, 0xff, 0x00, 0x01, 0x02, 0x03]).buffer as ArrayBuffer,
+      // GZIP マジック — 画像でも既知書類でもテキストでもない
+      body: new Uint8Array([0x1f, 0x8b, 0x08, 0x00, 0x99, 0x01]).buffer as ArrayBuffer,
     });
     expect(res.status).toBe(422);
     const body = await res.json();

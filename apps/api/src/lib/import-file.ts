@@ -2,7 +2,7 @@
 // 解凍せずそのまま受け取り、中の友だち/つながりファイルを自動で見つけて解析する。
 // ユーザーに ZIP の中身を探させない (取り込みを圧倒的に楽にする) ための心臓部。
 import { unzipSync } from "fflate";
-import { extractFileText, MAX_EXTRACT_TEXT_CHARS } from "./file-text.js";
+import { extractFileText, MAX_EXTRACT_TEXT_CHARS, detectImageMediaType, MAX_IMAGE_BYTES } from "./file-text.js";
 import {
   parseFacebookFriends,
   parseInstagramFollowing,
@@ -75,15 +75,20 @@ function parseZipEntry(path: string, bytes: Uint8Array): ParsedImport | null {
 }
 
 export type ExtractedFileText = { file: string; kind: string; text: string };
+// 名刺・名簿・スクショなどの画像。Vision で人物を読み取るため base64 で持つ。
+export type ExtractedFileImage = { file: string; base64: string; mediaType: string };
 
 export type FileImportResult = ParsedImport & {
   // どのファイル/形式から何名拾えたか (画面のフィードバック用)
   foundIn: Array<{ file: string; contacts: number }>;
   // 構造化パーサで拾えなかったが本文テキストは読めたもの — AI の人物抽出に回す
   texts: ExtractedFileText[];
+  // 画像 (名刺・名簿・スクショ) — Vision で人物を読み取る
+  images: ExtractedFileImage[];
 };
 
 const MAX_TEXT_FILES = 30; // 1 取込 (ZIP) から AI に回すファイル数の上限
+const MAX_IMAGE_FILES = 10; // 1 取込から Vision に回す画像数の上限 (コスト保護)
 
 // OOXML (docx/xlsx/pptx) も ZIP 容器のため、SNS アーカイブ ZIP と取り違えない。
 // [Content_Types].xml は OOXML に必ずある。
@@ -103,17 +108,21 @@ export function parseImportFile(bytes: Uint8Array, filename?: string): FileImpor
         filter: (f) => f.originalSize <= MAX_ZIP_ENTRY_BYTES && !/(^|\/)(__MACOSX|\.)/.test(f.name),
       });
     } catch {
-      return { contacts: [], interactions: [], foundIn: [], texts: [] };
+      return { contacts: [], interactions: [], foundIn: [], texts: [], images: [] };
     }
     // docx/xlsx/pptx がそのまま置かれたケース: ZIP としてではなく 1 文書として読む
     if (looksLikeOoxml(entries)) {
       const t = extractFileText(bytes, name);
-      return { contacts: [], interactions: [], foundIn: [], texts: t ? [{ file: name, kind: t.kind, text: t.text }] : [] };
+      return {
+        contacts: [], interactions: [], foundIn: [],
+        texts: t ? [{ file: name, kind: t.kind, text: t.text }] : [], images: [],
+      };
     }
     const contacts: ParsedContact[] = [];
     const interactions: ParsedImport["interactions"] = [];
     const foundIn: FileImportResult["foundIn"] = [];
     const texts: ExtractedFileText[] = [];
+    const images: ExtractedFileImage[] = [];
     let textChars = 0;
     for (const [path, data] of Object.entries(entries)) {
       const r = parseZipEntry(path, data);
@@ -121,6 +130,12 @@ export function parseImportFile(bytes: Uint8Array, filename?: string): FileImpor
         contacts.push(...r.contacts);
         interactions.push(...r.interactions);
         foundIn.push({ file: path, contacts: r.contacts.length });
+        continue;
+      }
+      // 画像 (名刺・名簿・スクショ) は Vision へ
+      const mediaType = detectImageMediaType(data, path);
+      if (mediaType && data.length <= MAX_IMAGE_BYTES) {
+        if (images.length < MAX_IMAGE_FILES) images.push({ file: path, base64: toBase64(data), mediaType });
         continue;
       }
       // 既知形式でなくても本文が読めれば AI 抽出へ (ファイル数と総量に上限)
@@ -131,14 +146,28 @@ export function parseImportFile(bytes: Uint8Array, filename?: string): FileImpor
         textChars += t.text.length;
       }
     }
-    return { contacts, interactions, foundIn, texts };
+    return { contacts, interactions, foundIn, texts, images };
+  }
+  // 単一の画像ファイル (名刺・名簿・スクショの写真) は Vision へ
+  const mediaType = detectImageMediaType(bytes, name);
+  if (mediaType) {
+    const images = bytes.length <= MAX_IMAGE_BYTES ? [{ file: name, base64: toBase64(bytes), mediaType }] : [];
+    return { contacts: [], interactions: [], foundIn: [], texts: [], images };
   }
   const t = extractFileText(bytes, name);
   // Office 文書・PDF・メールなど「テキスト化してから判定」する形式は抽出後の本文でも構造化を試す
   const structured = t && (t.kind === "excel" || t.kind === "text") ? parseImportText(t.text, filename) : null;
   const r = structured && structured.contacts.length > 0 ? structured : parseImportText(decode(bytes), filename);
   if (r.contacts.length > 0) {
-    return { ...r, foundIn: [{ file: name, contacts: r.contacts.length }], texts: [] };
+    return { ...r, foundIn: [{ file: name, contacts: r.contacts.length }], texts: [], images: [] };
   }
-  return { contacts: [], interactions: [], foundIn: [], texts: t ? [{ file: name, kind: t.kind, text: t.text }] : [] };
+  return {
+    contacts: [], interactions: [], foundIn: [],
+    texts: t ? [{ file: name, kind: t.kind, text: t.text }] : [], images: [],
+  };
+}
+
+// Uint8Array → base64 (Node Buffer)。画像を Anthropic に渡す形式。
+function toBase64(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64");
 }

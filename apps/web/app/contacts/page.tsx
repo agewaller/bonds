@@ -175,8 +175,10 @@ export default function ContactsPage() {
   // ファイル/ZIP/フォルダの取り込み — SNS の「データをダウンロード」も、Word・Excel・PDF・
   // メールなどの書類も、フォルダごとでもそのまま放り込める。
   const MAX_UPLOAD_FILES = 200;
+  // 動画・音声・実行ファイルなどは取り込めない。画像 (名刺・名簿・スクショ) は
+  // Vision で読み取るので除外しない。
   const MEDIA_SKIP =
-    /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?|svg|mp4|mov|avi|mkv|webm|mp3|m4a|wav|aac|flac|ogg|exe|dll|dmg|apk|iso|woff2?|ttf|otf)$/i;
+    /\.(mp4|mov|avi|mkv|webm|mp3|m4a|wav|aac|flac|ogg|exe|dll|dmg|apk|iso|woff2?|ttf|otf)$/i;
 
   // ドロップされたフォルダを再帰的にたどってファイルを集める (対応ブラウザのみ。
   // 非対応なら dataTransfer.files にフォールバック)
@@ -586,7 +588,7 @@ export default function ContactsPage() {
             onClick={() => setShowImport(!showImport)}
             style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", padding: 0 }}
           >
-            {showImport ? "取り込みを閉じる" : "ファイルからまとめて取り込む (SNSのダウンロードデータ・連絡先・トーク履歴)"}
+            {showImport ? "取り込みを閉じる" : "ファイルや写真からまとめて取り込む (名刺・名簿の写真・SNSのダウンロードデータ・連絡先・トーク履歴)"}
           </button>
         </p>
         {showImport && (
@@ -616,10 +618,10 @@ export default function ContactsPage() {
                 marginBottom: 8,
               }}
             >
-              ここにファイルやフォルダを置くか、押して選んでください
+              ここにファイルや写真、フォルダを置くか、押して選んでください
               <br />
               <small style={{ color: "#64748b" }}>
-                どんな形式でも大丈夫です。ZIP・Word・Excel・PDF・メール・メモから、お相手の情報を読み取って整理します
+                名刺や名簿の写真、ZIP・Word・Excel・PDF・メール・メモまで、どんな形でも大丈夫です。お相手の情報を読み取って整理します
               </small>
               <input
                 type="file"
@@ -632,7 +634,22 @@ export default function ContactsPage() {
                 style={{ display: "none" }}
               />
             </label>
-            <p style={{ margin: "0 0 8px", textAlign: "center" }}>
+            <p style={{ margin: "0 0 8px", textAlign: "center", display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
+              <label style={{ color: "#2563eb", cursor: "pointer", fontSize: 14 }}>
+                名刺や名簿を撮って取り込む
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  aria-label="写真をとって取り込む"
+                  {...({ capture: "environment" } as Record<string, string>)}
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) void uploadFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                  style={{ display: "none" }}
+                />
+              </label>
               <label style={{ color: "#2563eb", cursor: "pointer", fontSize: 14 }}>
                 フォルダごと選んで取り込む
                 <input
@@ -651,6 +668,11 @@ export default function ContactsPage() {
             <details style={{ margin: "8px 0", color: "#334155" }}>
               <summary style={{ cursor: "pointer", color: "#2563eb" }}>各サービスからの取り出し方 (かんたん手順)</summary>
               <div style={{ padding: "8px 4px", display: "grid", gap: 10, fontSize: 14 }}>
+                <div>
+                  <strong>名刺・名簿・年賀状の写真</strong> — スマホなら「名刺や名簿を撮って取り込む」から、その場で
+                  撮って取り込めます。手元の写真やスクリーンショット (連絡先アプリ・LINE の友だち一覧など) も、
+                  ここに置けば写っているお名前・連絡先・ご所属を読み取って整理します。何枚かまとめてでも大丈夫です。
+                </div>
                 <div>
                   <strong>LINE</strong> — トーク画面の右上メニュー → 設定 → トーク履歴を送信、で作られる
                   テキストファイルをここに置いてください。お相手の登録と、やりとりの記録が一度に入ります。
@@ -839,8 +861,8 @@ export default function ContactsPage() {
       <section style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
         <h2 style={{ fontSize: 18, marginTop: 0 }}>Google とつなぐ</h2>
         <p style={{ color: "#64748b", margin: "4px 0 10px", fontSize: 14 }}>
-          カレンダーの同席者、メールのやりとりの相手、共有ファイルの仲間を、連絡帳へ自動で取り込みます。
-          読み取りだけの最小限の権限で、メールの本文は読みません。
+          Google の連絡先 (アドレス帳) はもちろん、カレンダーの同席者、メールのやりとりの相手、共有ファイルの仲間まで、
+          連絡帳へ自動で取り込みます。読み取りだけの最小限の権限で、メールの本文は読みません。
         </p>
         {googleStatus === null && <p style={{ color: "#64748b" }}>確認しています…</p>}
         {googleStatus?.available === false && (

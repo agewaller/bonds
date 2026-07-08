@@ -23,28 +23,25 @@ function buildDocx(paragraphs: string[]): Uint8Array {
   });
 }
 
-// 偽 AI: 渡された本文に応じて人物 JSON を返す (実 API は呼ばない)
+// 偽 AI: 本文なら佐藤 花子、画像 (images) が来たら名刺の人物を返す (実 API は呼ばない)
 const fakeExtract: GenerateFn = async (args) => {
-  const people =
-    args.userMessage.includes("佐藤 花子") || args.userMessage.includes("面談メモ")
-      ? [
-          {
-            name: "佐藤 花子",
-            email: "hanako@example.com",
-            company: "サトウ企画",
-            title: "代表",
-            relationship: "work",
-            note: "四月に独立されたとのこと。展示会の準備でお忙しいようです。",
-            dates: [{ date: "2026-06-20", type: "meeting", summary: "新宿で面談。協業の相談。" }],
-          },
-        ]
-      : [];
-  return {
-    text: JSON.stringify({ people }),
-    model: "claude-sonnet-5",
-    inputTokens: 100,
-    outputTokens: 50,
-  };
+  let people: unknown[] = [];
+  if (args.images && args.images.length > 0) {
+    people = [{ name: "名刺 三郎", email: "saburo@example.com", company: "メイシ株式会社", title: "課長", relationship: "work" }];
+  } else if (args.userMessage.includes("佐藤 花子") || args.userMessage.includes("面談メモ")) {
+    people = [
+      {
+        name: "佐藤 花子",
+        email: "hanako@example.com",
+        company: "サトウ企画",
+        title: "代表",
+        relationship: "work",
+        note: "四月に独立されたとのこと。展示会の準備でお忙しいようです。",
+        dates: [{ date: "2026-06-20", type: "meeting", summary: "新宿で面談。協業の相談。" }],
+      },
+    ];
+  }
+  return { text: JSON.stringify({ people }), model: "claude-sonnet-5", inputTokens: 100, outputTokens: 50 };
 };
 
 beforeAll(() => {
@@ -133,9 +130,34 @@ describe("あらゆるファイルからの人物抽出 → 整理格納", () =>
     expect(ok.imported).toBe(1);
   });
 
-  it("読み取れないバイナリは 422 (no_contacts_found)", async () => {
+  it("名刺の写真 (画像) から Vision で人物を読み取り連絡帳に入れる", async () => {
     const app = createApp({ prisma, generate: fakeExtract });
-    const res = await upload(app, new Uint8Array([0xff, 0xd8, 0xff, 0x00, 0x01, 0x02]), "photo.bin");
+    // 最小の JPEG マジックバイト (中身は問わない。偽 AI は images の有無だけ見る)
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+    const res = await upload(app, jpeg, "meishi.jpg");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.imported).toBe(1);
+    expect(body.aiPeople).toBe(1);
+    const list = await (await app.request("/api/contacts", { headers: H })).json();
+    const saburo = list.contacts.find((c: { name: string }) => c.name === "名刺 三郎");
+    expect(saburo.email).toBe("saburo@example.com");
+    expect(saburo.company).toBe("メイシ株式会社");
+    expect(await prisma.aiUsageLog.count({ where: { purpose: "import_extract_vision" } })).toBe(1);
+  });
+
+  it("画像だが AI 未設定なら 422 extract_unavailable に縮退", async () => {
+    const app = createApp({ prisma, generate: null });
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+    const res = await upload(app, jpeg, "meishi.jpg");
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("extract_unavailable");
+  });
+
+  it("読み取れないバイナリ (画像でも書類でもない) は 422 (no_contacts_found)", async () => {
+    const app = createApp({ prisma, generate: fakeExtract });
+    // GZIP マジック — 画像でも既知書類でもテキストでもない
+    const res = await upload(app, new Uint8Array([0x1f, 0x8b, 0x08, 0x00, 0x99, 0x01]), "blob.gz");
     expect(res.status).toBe(422);
     expect((await res.json()).error).toBe("no_contacts_found");
   });

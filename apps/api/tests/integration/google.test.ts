@@ -55,6 +55,17 @@ const fakeGoogle: GoogleClient = {
         ],
       };
     }
+    if (url.includes("people.googleapis.com")) {
+      return {
+        connections: [
+          {
+            names: [{ displayName: "田中 一郎" }],
+            emailAddresses: [{ value: "ichiro@example.com" }],
+            organizations: [{ name: "タナカ工業" }],
+          },
+        ],
+      };
+    }
     return {};
   },
 };
@@ -135,15 +146,19 @@ describe("同期 (人物データの取込)", () => {
     const res = await app.request("/api/google/sync", { method: "POST", headers: H, body: "{}" });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.imported).toBe(2); // 山田 太郎 (calendar+drive で 1 人) + 鈴木 花子
+    // 田中 一郎 (アドレス帳) + 山田 太郎 (calendar+drive で 1 人) + 鈴木 花子
+    expect(body.imported).toBe(3);
     expect(body.interactionsAdded).toBe(2); // meeting 7/1 + email 7/2
 
     const list = await (await app.request("/api/contacts", { headers: H })).json();
     const names = list.contacts.map((c: { name: string }) => c.name).sort();
-    expect(names).toEqual(["山田 太郎", "鈴木 花子"]);
+    expect(names).toEqual(["山田 太郎", "田中 一郎", "鈴木 花子"].sort());
     // メールアドレスも保存されている (暗号化列 → API は復号済み)
     const taro = list.contacts.find((c: { name: string }) => c.name === "山田 太郎");
     expect(taro.email).toBe("taro@example.com");
+    // アドレス帳から所属も取り込まれる
+    const ichiro = list.contacts.find((c: { name: string }) => c.name === "田中 一郎");
+    expect(ichiro.company).toBe("タナカ工業");
 
     // 再同期しても増えない (同名スキップ + 同日重複なし)
     const again = await (
@@ -171,11 +186,11 @@ describe("同期 (人物データの取込)", () => {
     const body = await (
       await app.request("/api/google/sync", { method: "POST", headers: H, body: "{}" })
     ).json();
-    expect(body.imported).toBe(1); // 鈴木 花子 だけ新規
+    expect(body.imported).toBe(2); // 鈴木 花子 + 田中 一郎 (アドレス帳)。山田さんは寄せて二重登録しない
 
     const list = await (await app.request("/api/contacts", { headers: H })).json();
     const names = list.contacts.map((c: { name: string }) => c.name).sort();
-    expect(names).toEqual(["山田さん (太郎)", "鈴木 花子"]); // 二重登録なし
+    expect(names).toEqual(["山田さん (太郎)", "田中 一郎", "鈴木 花子"].sort()); // 二重登録なし
     // meeting の記録は既存の山田さんに付く
     const yamada = list.contacts.find((c: { name: string }) => c.name === "山田さん (太郎)");
     const detail = await (await app.request(`/api/contacts/${yamada.id}`, { headers: H })).json();
