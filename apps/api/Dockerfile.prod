@@ -1,19 +1,40 @@
-# bonds API — 本番イメージ (Cloud Run)。cares 方式: pnpm deploy で api だけを取り出す。
-FROM node:22-alpine AS build
-RUN corepack enable
+# bonds API — 本番イメージ (Cloud Run)。tsx で TypeScript を直接実行 (build step なし)。
+# cares 方式に統一: pnpm deploy は prisma の生成クライアント (node_modules/.prisma) を
+# 取り出せず、起動時に落ちて PORT 8080 を開けない (実障害 2026-07-08、初回デプロイ失敗)。
+# そのため workspace 全体を node_modules ごと copy する。
+# Cloud Run 想定: PORT=8080、リスナーは 0.0.0.0:8080
+
+FROM node:22-alpine AS builder
+RUN apk add --no-cache libc6-compat openssl && corepack enable
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
-COPY packages ./packages
-COPY apps/api ./apps/api
-RUN pnpm install --frozen-lockfile --filter @bonds/api... \
- && pnpm --filter @bonds/db exec prisma generate \
- && pnpm --filter @bonds/api deploy --prod /out
-# prisma engine と生成クライアントを持ち出す
+
+# lockfile + 全 package.json で deps install のキャッシュを効かせる
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc tsconfig.base.json ./
+COPY apps/api/package.json apps/api/
+COPY apps/web/package.json apps/web/
+COPY packages/db/package.json packages/db/
+COPY packages/db/prisma packages/db/prisma
+
+RUN pnpm install --frozen-lockfile
+
+# ソース投入 + prisma client 明示生成
+COPY apps/api apps/api
+COPY packages/db packages/db
+RUN pnpm --filter @bonds/db exec prisma generate
+
+# ---- runtime ----
 FROM node:22-alpine
-RUN corepack enable
+RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
-COPY --from=build /out .
-COPY --from=build /app/packages/db/prisma ./prisma
 ENV NODE_ENV=production PORT=8080
+
+# 非 root
+RUN addgroup -g 1001 nodejs && adduser -S -u 1001 -G nodejs bonds
+
+# workspace 全体を copy (node_modules 含む = pnpm symlink + prisma generated を保持)
+COPY --from=builder --chown=bonds:nodejs /app /app
+
+USER bonds
+WORKDIR /app/apps/api
 EXPOSE 8080
 CMD ["node_modules/.bin/tsx", "src/index.ts"]
