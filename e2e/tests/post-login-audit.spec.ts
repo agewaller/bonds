@@ -152,14 +152,16 @@ test("連絡先詳細: 贈り物・公人プロフィール・届け方の選択
   await page.getByLabel("お名前").fill(name);
   await page.getByRole("button", { name: "追加" }).click();
   await page.getByRole("link", { name: new RegExp(name) }).click();
+  await expect(page.getByRole("heading", { name: "贈り物を選ぶ" })).toBeVisible(); // Gift: 提案
   await expect(page.getByRole("heading", { name: "贈り物の記録" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "公人プロフィール" })).toBeVisible();
   await expect(page.getByLabel("届け方")).toBeVisible();
-  // 贈り物を記録 → 一覧とやりとりに反映
-  await page.getByLabel("贈り物").fill("季節の花");
+  // 「いただいた」贈り物を記録 → 一覧とやりとりに反映 (お返し管理の素地)
+  await page.getByLabel("贈った・いただいた").selectOption("inbound");
+  await page.getByLabel("贈り物").fill("お菓子の詰め合わせ");
   await page.getByRole("button", { name: "記録する" }).click();
   await expect(page.getByText("贈り物を記録しました")).toBeVisible();
-  await expect(page.getByText(/贈った: 季節の花/)).toBeVisible();
+  await expect(page.getByText(/いただいた: お菓子の詰め合わせ/)).toBeVisible();
   expect(errors, errors.join("\n")).toHaveLength(0);
 });
 

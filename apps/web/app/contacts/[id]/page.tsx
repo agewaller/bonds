@@ -54,6 +54,12 @@ export default function ContactDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [giftItem, setGiftItem] = useState("");
   const [giftOccasion, setGiftOccasion] = useState("other");
+  const [giftDirection, setGiftDirection] = useState("outbound");
+  const [giftBudget, setGiftBudget] = useState("");
+  const [giftSuggestions, setGiftSuggestions] = useState<
+    { idea: string; why: string; priceRange: string; howToFind: string }[] | null
+  >(null);
+  const [giftNote, setGiftNote] = useState("");
   const [channel, setChannel] = useState("email");
   const [sendAt, setSendAt] = useState("");
   const [linkSlug, setLinkSlug] = useState("");
@@ -424,8 +430,81 @@ export default function ContactDetailPage() {
       </section>
 
       <section style={{ marginTop: 32 }}>
+        <h2 style={{ fontSize: 18 }}>贈り物を選ぶ</h2>
+        <p style={{ color: "#64748b", fontSize: 14, marginTop: 0 }}>
+          この方のことをふまえて、喜ばれそうな贈り物と、その探し方をご提案します。
+        </p>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+          <select value={giftOccasion} onChange={(e) => setGiftOccasion(e.target.value)} aria-label="贈る場面" style={{ ...input, width: "auto" }}>
+            <option value="other">ふだんの贈り物</option>
+            <option value="お誕生日">お誕生日</option>
+            <option value="記念日">記念日</option>
+            <option value="お中元">お中元</option>
+            <option value="お歳暮">お歳暮</option>
+            <option value="お祝い">お祝い</option>
+            <option value="お返し">お返し</option>
+          </select>
+          <input
+            style={{ ...input, width: 140 }}
+            placeholder="予算 (例: 5000円)"
+            aria-label="予算"
+            value={giftBudget}
+            onChange={(e) => setGiftBudget(e.target.value)}
+          />
+          <button
+            style={btn(false)}
+            disabled={!!busy}
+            onClick={async () => {
+              const body = await call(`contacts/${contact.id}/gift-suggest`, {
+                method: "POST",
+                body: JSON.stringify({
+                  occasion: giftOccasion === "other" ? "" : giftOccasion,
+                  budget: giftBudget,
+                }),
+              });
+              if (body?.suggestions) {
+                setGiftSuggestions(body.suggestions);
+                setGiftNote(body.note ?? "");
+              }
+            }}
+          >
+            {busy.includes("gift-suggest") ? "考えています…" : "提案してもらう"}
+          </button>
+        </div>
+        {giftSuggestions && (
+          <div style={{ display: "grid", gap: 10, marginBottom: 8 }}>
+            {giftSuggestions.map((s, i) => (
+              <div key={i} style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ fontWeight: 600 }}>{s.idea}{s.priceRange ? `（${s.priceRange}）` : ""}</div>
+                {s.why && <div style={{ fontSize: 14, marginTop: 4 }}>{s.why}</div>}
+                {s.howToFind && <div style={{ fontSize: 13, color: "#475569", marginTop: 4 }}>探し方: {s.howToFind}</div>}
+                <button
+                  style={{ ...btn(false), marginTop: 6, fontSize: 13, padding: "4px 10px" }}
+                  disabled={!!busy}
+                  onClick={async () => {
+                    const body = await call(`contacts/${contact.id}/gifts`, {
+                      method: "POST",
+                      body: JSON.stringify({ occasion: "other", item: s.idea }),
+                    }, "贈り物の予定として記録しました");
+                    if (body) await load();
+                  }}
+                >
+                  これを贈る予定にする
+                </button>
+              </div>
+            ))}
+            {giftNote && <p style={{ fontSize: 13, color: "#475569" }}>{giftNote}</p>}
+          </div>
+        )}
+      </section>
+
+      <section style={{ marginTop: 32 }}>
         <h2 style={{ fontSize: 18 }}>贈り物の記録</h2>
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+          <select value={giftDirection} onChange={(e) => setGiftDirection(e.target.value)} aria-label="贈った・いただいた" style={{ ...input, width: "auto" }}>
+            <option value="outbound">贈った</option>
+            <option value="inbound">いただいた</option>
+          </select>
           <select value={giftOccasion} onChange={(e) => setGiftOccasion(e.target.value)} aria-label="機会" style={{ ...input, width: "auto" }}>
             <option value="birthday">お誕生日</option>
             <option value="new_year">お年賀</option>
@@ -434,8 +513,8 @@ export default function ContactDetailPage() {
             <option value="other">その他</option>
           </select>
           <input
-            style={{ ...input, flex: 1 }}
-            placeholder="何を贈りましたか (例: 季節の花)"
+            style={{ ...input, flex: 1, minWidth: 160 }}
+            placeholder="品物 (例: 季節の花)"
             aria-label="贈り物"
             value={giftItem}
             onChange={(e) => setGiftItem(e.target.value)}
@@ -446,7 +525,7 @@ export default function ContactDetailPage() {
             onClick={async () => {
               const body = await call(`contacts/${contact.id}/gifts`, {
                 method: "POST",
-                body: JSON.stringify({ occasion: giftOccasion, item: giftItem }),
+                body: JSON.stringify({ occasion: giftOccasion, item: giftItem, direction: giftDirection }),
               }, "贈り物を記録しました");
               if (body) {
                 setGiftItem("");

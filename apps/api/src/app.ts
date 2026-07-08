@@ -26,6 +26,7 @@ import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { parseImportFile, MAX_IMPORT_FILE_BYTES } from "./lib/import-file.js";
 import { MAX_EXTRACT_TEXT_CHARS } from "./lib/file-text.js";
+import { computeGiftOccasions, summarizeGiftLedger } from "./lib/gifts.js";
 import { parseIsoIntervals, meetingSlotProposals, toIso } from "./lib/timeslots.js";
 import { parseIcsBusy, looksLikeIcs, buildMeetingInviteIcs } from "./lib/ics.js";
 import {
@@ -500,6 +501,7 @@ export function createApp(deps: AppDeps) {
     distance: clampDistance(b.distance),
     relationship: typeof b.relationship === "string" && b.relationship.trim() ? b.relationship.trim() : "other",
     birthday: parseBirthday(b.birthday),
+    anniversary: parseBirthday(b.anniversary),
     phone: typeof b.phone === "string" ? b.phone.trim() || null : null,
     email: typeof b.email === "string" ? b.email.trim() || null : null,
     address: typeof b.address === "string" ? b.address.trim() || null : null,
@@ -907,6 +909,53 @@ export function createApp(deps: AppDeps) {
     return c.json({ ok: true });
   });
 
+  // 贈り物 (Gift): いま贈るとよい方・行事。誕生日・記念日・季節の贈答・未返礼を算出する。
+  app.get("/api/gifts/occasions", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid, state: "active" },
+      select: { id: true, name: true, birthday: true, anniversary: true, distance: true },
+      take: 1000,
+    });
+    const gifts = await prisma.contactGift.findMany({
+      where: { contact: { ownerUid } },
+      select: { contactId: true, direction: true, occasion: true, givenAt: true },
+    });
+    const lookahead = clampScore(c.req.query("days"), 7, 120) ?? 45;
+    const occasions = computeGiftOccasions({ contacts, gifts, today: new Date() }, Math.round(lookahead));
+    return c.json({ occasions });
+  });
+
+  // 贈り物 (Gift): 贈答の履歴 (収支・お返し) の一覧。相手ごとの贈った/いただいたを集計する。
+  app.get("/api/gifts", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid, state: "active" },
+      select: { id: true, name: true },
+      take: 1000,
+    });
+    const nameById = new Map(contacts.map((c2) => [c2.id, c2.name]));
+    const gifts = await prisma.contactGift.findMany({
+      where: { contact: { ownerUid } },
+      orderBy: { givenAt: "desc" },
+      take: 500,
+    });
+    const byContact = new Map<string, typeof gifts>();
+    for (const g of gifts) {
+      if (!byContact.has(g.contactId)) byContact.set(g.contactId, []);
+      byContact.get(g.contactId)!.push(g);
+    }
+    const ledgers = [...byContact.entries()]
+      .map(([contactId, recs]) => ({
+        contactId,
+        contactName: nameById.get(contactId) ?? "",
+        ledger: summarizeGiftLedger(recs),
+      }))
+      .filter((l) => l.contactName)
+      .sort((a, b) => Number(b.ledger.needsReturn) - Number(a.ledger.needsReturn));
+    return c.json({ gifts, ledgers });
+  });
+
   // 面談招待 (.ics)。二者空き重なりの候補をそのままカレンダー取込用ファイルにする。
   app.get("/api/contacts/:id/meeting-invite", async (c) => {
     const contact = await prisma.contact.findFirst({
@@ -1260,6 +1309,49 @@ export function createApp(deps: AppDeps) {
     const parsed = extractJson(r.text) as { draft?: unknown } | null;
     const draft = typeof parsed?.draft === "string" ? parsed.draft.trim() : r.text.trim();
     return c.json({ draft });
+  });
+
+  // 贈り物 (Gift): 相手に合わせた贈り物の提案。人物像・関係・過去の贈答・行事・予算をふまえ、
+  // 具体的な候補と「どう探すか」を返す (実在しない店名は作らない。BR-09 記号なし)。
+  app.post("/api/contacts/:id/gift-suggest", async (c) => {
+    const ctx = await buildContactContext(c.get("ownerUid"), c.req.param("id"));
+    if (!ctx) return c.json({ error: "not_found" }, 404);
+    const b = await c.req
+      .json<{ occasion?: string; budget?: string; locale?: string }>()
+      .catch(() => ({}) as { occasion?: string; budget?: string; locale?: string });
+    const occasion = typeof b.occasion === "string" ? b.occasion.trim().slice(0, 40) : "";
+    const budget = typeof b.budget === "string" ? b.budget.trim().slice(0, 40) : "";
+    const userMessage = [
+      "相手の情報:",
+      ctx.context,
+      occasion ? `贈る場面: ${occasion}` : "贈る場面: 特に指定なし (関係を温める贈り物を)",
+      budget ? `予算の目安: ${budget}` : "予算の目安: 指定なし (関係の距離感に見合う範囲で)",
+      `今日の日付: ${new Date().toISOString().slice(0, 10)}`,
+    ].join("\n");
+    const r = await runRelationshipAi(
+      "gift_suggest",
+      '出力は JSON オブジェクト 1 個だけ: {"suggestions": [{"idea": "", "why": "", "priceRange": "", "howToFind": ""}], "note": ""}',
+      userMessage,
+      "gift_suggest",
+      normalizeLocale(b.locale),
+    );
+    if (!r.ok) return c.json(r.body as never, r.status);
+    const parsed = extractJson(r.text) as { suggestions?: unknown; note?: unknown } | null;
+    const rawList = Array.isArray(parsed?.suggestions) ? (parsed.suggestions as Array<Record<string, unknown>>) : [];
+    const clean = (v: unknown, max = 400) => sanitizeProse(typeof v === "string" ? v : "").trim().slice(0, max);
+    const suggestions = rawList
+      .slice(0, 5)
+      .map((s) => ({
+        idea: clean(s.idea, 120),
+        why: clean(s.why),
+        priceRange: clean(s.priceRange, 80),
+        howToFind: clean(s.howToFind),
+      }))
+      .filter((s) => s.idea);
+    if (suggestions.length === 0) {
+      return c.json({ error: "invalid_output", detail: "うまく提案を作れませんでした。もう一度お試しください" }, 502);
+    }
+    return c.json({ suggestions, note: clean(parsed?.note) });
   });
 
   // 相手ノート (見立て) の生成 — 蓄積した記録に根拠を置き、希望があれば公開情報の検索を足す。
