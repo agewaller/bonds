@@ -82,16 +82,22 @@ export default function ContactsPage() {
     email?: string | null;
     lastSyncNote?: string | null;
   } | null>(null);
+  // 贈り物の行事 (いま贈るとよい方)
+  const [giftOccasions, setGiftOccasions] = useState<
+    { kind: string; contactId: string | null; contactName: string | null; label: string; daysUntil: number; note: string }[]
+  >([]);
 
   const load = useCallback(async () => {
-    const [cRes, sRes, pRes] = await Promise.all([
+    const [cRes, sRes, pRes, gRes] = await Promise.all([
       apiFetch("contacts"),
       apiFetch("relationship/summary"),
       apiFetch("relationship/progress"),
+      apiFetch("gifts/occasions"),
     ]);
     if (cRes.ok) setContacts((await cRes.json()).contacts);
     if (sRes.ok) setSummary(await sRes.json());
     if (pRes.ok) setProgress(await pRes.json());
+    if (gRes.ok) setGiftOccasions((await gRes.json()).occasions ?? []);
   }, []);
 
   useEffect(() => {
@@ -478,6 +484,26 @@ export default function ContactsPage() {
       )}
       {summary && summary.today.length === 0 && contacts.length > 0 && (
         <p style={{ color: "#27ae60" }}>すべての方と適切な頻度でつながれています。素晴らしいですね。</p>
+      )}
+
+      {giftOccasions.length > 0 && (
+        <section style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
+          <h2 style={{ fontSize: 17, marginTop: 0 }}>いま贈るとよい方・行事</h2>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
+            {giftOccasions.slice(0, 8).map((o, i) => (
+              <li key={i} style={{ fontSize: 14 }}>
+                {o.contactId ? (
+                  <Link href={`/contacts/${o.contactId}`} style={{ color: "#b45309", fontWeight: 600 }}>
+                    {o.label}
+                  </Link>
+                ) : (
+                  <span style={{ fontWeight: 600 }}>{o.label}</span>
+                )}
+                <span style={{ color: "#78716c" }}> — {o.note}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {notice && <p style={{ color: "#166534", background: "#f0fdf4", padding: 8, borderRadius: 8 }}>{notice}</p>}

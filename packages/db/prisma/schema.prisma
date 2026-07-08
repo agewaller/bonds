@@ -132,6 +132,7 @@ model Contact {
   distance        Int       @default(4)
   relationship    String    @default("other") // family / friend / work / mentor / other など
   birthday        DateTime?
+  anniversary     DateTime? // 記念日 (結婚記念日・出会った日など)。贈り物リマインドに使う
   phone           String? // 暗号化
   email           String? // 暗号化
   address         String? // 暗号化
