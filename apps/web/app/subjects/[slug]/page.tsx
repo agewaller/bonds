@@ -206,6 +206,9 @@ function SectionSvc({ run }: { run: RunSummary }) {
   );
 }
 
+// だれでも試せる公開の入口 (GitHub Pages のプロトタイプ)。共有からの誘導先。
+const BONDS_PUBLIC_URL = "https://agewaller.github.io/bonds/";
+
 export default function SubjectDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -213,6 +216,7 @@ export default function SubjectDetailPage() {
   const [running, setRunning] = useState(false);
   const [waitMsg, setWaitMsg] = useState(WAIT_MESSAGES[0]);
   const [error, setError] = useState("");
+  const [shareMsg, setShareMsg] = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -254,6 +258,54 @@ export default function SubjectDetailPage() {
     } finally {
       if (timerRef.current) clearInterval(timerRef.current);
       setRunning(false);
+    }
+  };
+
+  // 評価結果を共有できるかたちにまとめる (公人評価なので個人情報は含まない)。
+  // bonds の公開の入口を添えて、受け取った人も試せるよう誘導する。
+  const buildShareText = (): string | null => {
+    if (!detail) return null;
+    const name = detail.subject.name;
+    const r7 = detail.latestByType.consciousness_7d;
+    const rS = detail.latestByType.social_value_creation;
+    const lines: string[] = [`${name} の人物評価（bonds）`];
+    if (r7?.status === "completed") {
+      const s = r7.scores as Scores7d | null;
+      if (typeof s?.publicValueScore === "number") {
+        lines.push(`公的社会価値創造スコア ${s.publicValueScore}/100${s.rank ? `（ランク${s.rank}）` : ""}`);
+      }
+    }
+    if (rS?.status === "completed") {
+      const s = rS.scores as ScoresSvc | null;
+      if (typeof s?.total100 === "number") lines.push(`社会価値創造 ${s.total100}/100`);
+    }
+    if (lines.length === 1) return null; // まだ完了した評価がない
+    lines.push("意識の七次元と社会価値創造の二つの視点で公人を評価します。");
+    lines.push(`あなたも試せます → ${BONDS_PUBLIC_URL}`);
+    return lines.join("\n");
+  };
+
+  const shareResult = async () => {
+    const text = buildShareText();
+    if (!text) {
+      setShareMsg("共有できる評価がまだありません。まず評価してください");
+      return;
+    }
+    setShareMsg("");
+    const nav = navigator as Navigator & { share?: (d: { title?: string; text?: string }) => Promise<void> };
+    if (typeof nav.share === "function") {
+      try {
+        await nav.share({ title: "bonds 人物評価", text });
+        return;
+      } catch {
+        // 共有をキャンセル/失敗したらコピーにフォールバック
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setShareMsg("結果とリンクをコピーしました。貼り付けて共有できます");
+    } catch {
+      setShareMsg("コピーできませんでした。文面を選択して共有してください");
     }
   };
 
@@ -305,7 +357,25 @@ export default function SubjectDetailPage() {
       >
         {running ? "評価しています…" : "二つの視点で評価する"}
       </button>
+      {(r7d?.status === "completed" || rSvc?.status === "completed") && (
+        <button
+          onClick={() => void shareResult()}
+          style={{
+            marginLeft: 12,
+            padding: "12px 20px",
+            background: "#fff",
+            color: "#2563eb",
+            border: "1px solid #2563eb",
+            borderRadius: 8,
+            cursor: "pointer",
+            fontSize: 16,
+          }}
+        >
+          この評価を共有する
+        </button>
+      )}
       {running && <p style={{ color: "#64748b" }}>{waitMsg} (1〜2 分ほどかかります)</p>}
+      {shareMsg && <p style={{ color: "#166534", background: "#f0fdf4", padding: 8, borderRadius: 8 }}>{shareMsg}</p>}
       {error && (
         <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>
           {error}

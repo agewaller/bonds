@@ -25,6 +25,11 @@ test.describe("人物評価 (実機)", () => {
     await expect(score7d.or(alert)).toBeVisible({ timeout: 200_000 });
     await expect(alert, "評価がエラーで終わった").toHaveCount(0);
     await expect(score7d).toBeVisible();
+    // 社会価値創造 (二つ目・長い方) も最後まで完了していること。途中停止の回帰を防ぐ。
     await expect(page.getByText(/総合 \d+/)).toBeVisible();
+    await expect(
+      page.getByText("前回の評価は完了しませんでした。もう一度お試しください。"),
+      "いずれかの評価が途中停止した",
+    ).toHaveCount(0);
   });
 });
