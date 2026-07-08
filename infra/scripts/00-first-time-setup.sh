@@ -75,13 +75,20 @@ DB_PW="$(openssl rand -hex 24)"
 ensure_secret "$SECRET_ENCRYPTION"  "$(openssl rand -hex 32)"
 ensure_secret "$SECRET_BREAKGLASS"  "$(openssl rand -hex 32)"
 ensure_secret "$SECRET_DB_PASSWORD" "$DB_PW"
-ensure_secret "$SECRET_SENDGRID"    "" || true   # 空で作成 (送信を使うとき差し替え)
+# 空文字は versions add が拒否する (Secret Payload cannot be empty)。Cloud Run の
+# --set-secrets 参照はバージョンが 1 つも無いと失敗するため、番兵値 "unset" を入れる。
+# 実キーに差し替えるまで送信は動かない (OUTREACH_FROM_EMAIL 未設定なら mailer 自体が無効 = 503 縮退)。
+ensure_secret "$SECRET_SENDGRID"    "unset"
 echo "  = ANTHROPIC_API_KEY: cares の既存シークレットを参照 (作成しない)"
 
 echo "=== 4) Cloud SQL (${SQL_INSTANCE}) ==="
 if ! gcloud sql instances describe "${SQL_INSTANCE}" --project="${PROJECT}" &>/dev/null; then
+  # --edition=enterprise を明示する (近年の gcloud は Postgres を既定で Enterprise Plus
+  # にし、共有コアの db-f1-micro を拒否する。実障害 2026-07-08: HTTPError 400
+  # "Use a predefined Tier like db-perf-optimized-N-*")
   gcloud sql instances create "${SQL_INSTANCE}" --project="${PROJECT}" \
-    --database-version=POSTGRES_16 --tier=db-f1-micro --region="${REGION}" \
+    --database-version=POSTGRES_16 --edition=enterprise --tier=db-f1-micro \
+    --region="${REGION}" \
     --storage-size=10GB --storage-auto-increase
 fi
 gcloud sql databases describe "${SQL_DB}" --instance="${SQL_INSTANCE}" --project="${PROJECT}" &>/dev/null || \
