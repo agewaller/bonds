@@ -104,4 +104,44 @@ describe("取り込みジョブ (ページを離れても続く)", () => {
     expect(list.jobs[0].status).toBe("error");
     expect(typeof list.jobs[0].detail).toBe("string");
   });
+
+  it("固まった processing のジョブは回収されて再処理される (永久に読み取り中を防ぐ)", async () => {
+    const app = createApp({ prisma, generate: noopGenerate });
+    const create = await app.request("/api/contacts/import-jobs", {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ content: "氏名,会社名\n佐藤太郎,佐藤商店" }),
+    });
+    const jobId = (await create.json()).job.id as string;
+    // 途中で打ち切られて processing のまま固まった状態を再現 (updatedAt を過去に)
+    await prisma.$executeRawUnsafe(
+      "UPDATE import_jobs SET status='processing', updated_at = now() - interval '10 minutes' WHERE id = $1",
+      jobId,
+    );
+    // run が固まった processing を queued に戻して再処理する
+    const run = await app.request("/api/contacts/import-jobs/run", { method: "POST", headers: H });
+    expect(run.status).toBe(200);
+    expect(await prisma.contact.count()).toBe(1);
+    const list = await (await app.request("/api/contacts/import-jobs", { headers: H })).json();
+    expect(list.jobs[0].status).toBe("done");
+  });
+
+  it("何度も固まる不良ジョブは上限で打ち切って error にする (無限ループ防止)", async () => {
+    const app = createApp({ prisma, generate: noopGenerate });
+    const create = await app.request("/api/contacts/import-jobs", {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ content: "氏名\n山田一郎" }),
+    });
+    const jobId = (await create.json()).job.id as string;
+    // すでに 3 回試して固まっている状態 → 回収は再挑戦せず error にする
+    await prisma.$executeRawUnsafe(
+      "UPDATE import_jobs SET status='processing', attempts=3, updated_at = now() - interval '10 minutes' WHERE id = $1",
+      jobId,
+    );
+    await app.request("/api/contacts/import-jobs/run", { method: "POST", headers: H });
+    const list = await (await app.request("/api/contacts/import-jobs", { headers: H })).json();
+    expect(list.jobs[0].status).toBe("error");
+    expect(list.jobs[0].detail).toContain("時間がかかりすぎ");
+  });
 });

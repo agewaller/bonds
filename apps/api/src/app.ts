@@ -1261,10 +1261,32 @@ export function createApp(deps: AppDeps) {
   const MAX_QUEUED_JOBS = 300;
 
   // 1 件のジョブを処理する。updateMany で queued を奪って二重処理を防ぐ。
+  // 停止した (processing のまま固まった) ジョブの扱い。Cloud Run のリクエストが処理の
+  // 途中で打ち切られる (大きな CSV が AI 経路に落ちて timeout 等) と、queued→processing に
+  // したまま done/error に到達せず「永久に読み取り中」になる。run と sweep は queued しか
+  // 拾わないため回収されない。そこで古い processing を queued に戻して再挑戦し、
+  // 何度も固まる不良ジョブは error として打ち切る (無限ループ防止)。
+  const STALE_PROCESSING_MS = 3 * 60 * 1000;
+  const MAX_IMPORT_ATTEMPTS = 3;
+  const IMPORT_JOB_TIMEOUT_MS = 150_000; // 1 ジョブの処理上限 (Cloud Run 打ち切り前に自分で error にする)
+  const reclaimStaleImportJobs = async (): Promise<void> => {
+    const cutoff = new Date(Date.now() - STALE_PROCESSING_MS);
+    // 上限に達したものは打ち切り
+    await prisma.importJob.updateMany({
+      where: { status: "processing", updatedAt: { lt: cutoff }, attempts: { gte: MAX_IMPORT_ATTEMPTS } },
+      data: { status: "error", detail: "読み取りに時間がかかりすぎたため中断しました。ファイルを分けるか、もう一度お試しください", payload: "" },
+    });
+    // まだ挑戦できるものは queued に戻す
+    await prisma.importJob.updateMany({
+      where: { status: "processing", updatedAt: { lt: cutoff }, attempts: { lt: MAX_IMPORT_ATTEMPTS } },
+      data: { status: "queued" },
+    });
+  };
+
   const processOneImportJob = async (jobId: string): Promise<boolean> => {
     const claimed = await prisma.importJob.updateMany({
       where: { id: jobId, status: "queued" },
-      data: { status: "processing" },
+      data: { status: "processing", attempts: { increment: 1 } },
     });
     if (claimed.count === 0) return false;
     const job = await prisma.importJob.findUnique({ where: { id: jobId } });
@@ -1272,16 +1294,24 @@ export function createApp(deps: AppDeps) {
     // 取り込みはオーナー運用のデータ取り込み。無制限 (isOwner) で回し、消費は本人に計上。
     const actor: AiActor = { ownerUid: job.ownerUid, isOwner: true };
     try {
-      const out =
+      // 1 ジョブに時間の上限を設ける。これを超えたら「読み取り中」で固まる前に error にする
+      // (Cloud Run にリクエストごと打ち切られると processing のまま孤児になるため、その前に自分で止める)。
+      const work =
         job.kind === "text"
-          ? await importPastedText(job.ownerUid, job.payload, "auto", job.filename ?? undefined, job.locale, actor)
-          : await importFileBytes(
+          ? importPastedText(job.ownerUid, job.payload, "auto", job.filename ?? undefined, job.locale, actor)
+          : importFileBytes(
               job.ownerUid,
               new Uint8Array(Buffer.from(job.payload, "base64")),
               job.filename ?? undefined,
               job.locale,
               actor,
             );
+      const out = await Promise.race([
+        work,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("import_timeout")), IMPORT_JOB_TIMEOUT_MS),
+        ),
+      ]);
       if (out.ok) {
         await prisma.importJob.update({
           where: { id: job.id },
@@ -1303,9 +1333,14 @@ export function createApp(deps: AppDeps) {
       }
       return true;
     } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e);
+      const detail =
+        raw === "import_timeout"
+          ? "読み取りに時間がかかりすぎました。件数が多い場合はファイルを分けると入りやすくなります"
+          : raw.slice(0, 300);
       await prisma.importJob.update({
         where: { id: job.id },
-        data: { status: "error", detail: (e instanceof Error ? e.message : String(e)).slice(0, 300), payload: "" },
+        data: { status: "error", detail, payload: "" },
       });
       return true;
     }
@@ -1355,6 +1390,7 @@ export function createApp(deps: AppDeps) {
   // 待ち行列を処理する。サーバ側で進むのでクライアントが離れても続く (残りは sweep が拾う)。
   app.post("/api/contacts/import-jobs/run", async (c) => {
     const ownerUid = c.get("ownerUid");
+    await reclaimStaleImportJobs(); // 固まった processing を先に回収する
     const jobs = await prisma.importJob.findMany({
       where: { ownerUid, status: "queued" },
       orderBy: { createdAt: "asc" },
@@ -1379,6 +1415,7 @@ export function createApp(deps: AppDeps) {
   // ユーザーがすべて閉じても、ここが拾って最後まで取り込む。
   app.post("/api/admin/contacts/process-import-jobs", async (c) => {
     const batch = Math.min(Math.max(parseInt(c.req.query("batch") ?? "20", 10) || 20, 1), 100);
+    await reclaimStaleImportJobs(); // 固まった processing を先に回収する
     const jobs = await prisma.importJob.findMany({
       where: { status: "queued" },
       orderBy: { createdAt: "asc" },

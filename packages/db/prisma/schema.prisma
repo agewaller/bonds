@@ -134,6 +134,7 @@ model ImportJob {
   payload           String // 暗号化: テキスト本文 or base64(バイト列)
   locale            String   @default("ja")
   status            String   @default("queued") // queued / processing / done / error
+  attempts          Int      @default(0) // 処理を試みた回数 (停止した processing の回収と打ち切りに使う)
   imported          Int      @default(0)
   enriched          Int      @default(0)
   interactionsAdded Int      @default(0) @map("interactions_added")
