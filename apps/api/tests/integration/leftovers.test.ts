@@ -146,6 +146,40 @@ describe("A: 面談招待 (.ics)", () => {
   });
 });
 
+describe("空き時間の貼り付けテキスト (/api/contacts/:id/free-slots-text)", () => {
+  it("カレンダー未連携なら count 0 (勝手に全部空きにしない)", async () => {
+    const app = makeApp();
+    const c = await createContact(app);
+    const res = await app.request(`/api/contacts/${c.id}/free-slots-text`, { headers: H });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.hasMyCalendar).toBe(false);
+    expect(body.count).toBe(0);
+    expect(body.text).toBe("");
+  });
+
+  it("自分の予定を登録すると空き時間が日本語テキストで返る", async () => {
+    const app = makeApp();
+    const c = await createContact(app);
+    // 十分先の平日を busy に。営業時間内を一部埋めて空きが残るようにする
+    const put = await app.request("/api/relationship/my-busy", {
+      method: "PUT",
+      headers: H,
+      body: JSON.stringify({
+        busySlots: [{ start: "2030-01-01T00:00:00Z", end: "2030-01-01T00:30:00Z" }],
+      }),
+    });
+    expect(put.status).toBe(200);
+    const res = await app.request(`/api/contacts/${c.id}/free-slots-text?days=30`, { headers: H });
+    const body = await res.json();
+    expect(body.hasMyCalendar).toBe(true);
+    expect(body.basis).toBe("mine");
+    expect(typeof body.text).toBe("string");
+    // 記号 (BR-09) を含まない
+    expect(body.text).not.toMatch(/[・*＊#※]/);
+  });
+});
+
 describe("B: 前進の記録 (ゲーミフィケーション)", () => {
   it("接触を重ねるとバッジと次の節目が返る", async () => {
     const app = makeApp();
@@ -248,7 +282,7 @@ describe("E: プロンプト版管理 (管理 API)", () => {
   it("一覧が返り、編集は新しい版として積まれる (既存版は不変)", async () => {
     const app = makeApp();
     const list = await (await app.request("/api/admin/prompts", { headers: H })).json();
-    expect(list.prompts.length).toBe(12);
+    expect(list.prompts.length).toBe(13);
     const post = await app.request("/api/admin/prompts/person_eval_7d", {
       method: "POST", headers: H, body: JSON.stringify({ body: "改訂版プロンプト" }),
     });

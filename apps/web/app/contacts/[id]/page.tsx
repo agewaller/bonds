@@ -53,6 +53,13 @@ type RelationshipScore = {
   potentialBand: string;
   reason: string;
 };
+type Playbook = {
+  relationship: string;
+  intersections: { area: string; point: string }[];
+  actions: { title: string; detail: string; why: string }[];
+  somethingNew: string;
+  caution: string;
+};
 type Interaction = { id: string; type: string; occurredAt: string; notes: string | null };
 type Gift = { id: string; occasion: string; direction: string; item: string; givenAt: string };
 type Exchange = {
@@ -137,6 +144,7 @@ export default function ContactDetailPage() {
   const [gifts, setGifts] = useState<Gift[]>([]);
   const [linkedSubjects, setLinkedSubjects] = useState<LinkedSubject[]>([]);
   const [relScore, setRelScore] = useState<RelationshipScore | null>(null);
+  const [playbook, setPlaybook] = useState<Playbook | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [giftItem, setGiftItem] = useState("");
   const [giftOccasion, setGiftOccasion] = useState("other");
@@ -382,6 +390,60 @@ export default function ContactDetailPage() {
             距離感はやりとりの多さと新しさから、深さはこれまでの積み重ねから、のびしろは把握できている強みや目標とまだ縮められる間合いから、
             記録をもとに自動で見立てています。記録が増えるほど確かになります。
           </p>
+          <div style={{ marginTop: 12 }}>
+            <button
+              style={btn(true)}
+              disabled={!!busy}
+              onClick={async () => {
+                const body = await call(`contacts/${contact.id}/playbook`, { method: "POST", body: JSON.stringify({}) });
+                if (body?.actions || body?.relationship) setPlaybook(body);
+              }}
+            >
+              {busy.includes("playbook") ? "考えています…" : "この方への対応を考える"}
+            </button>
+            <p style={{ margin: "6px 0 0", color: "#64748b", fontSize: 13 }}>
+              二人の関係と、仕事や暮らしで噛み合いそうなところをふまえて、いまできる一手をご提案します。
+            </p>
+          </div>
+          {playbook && (
+            <div style={{ marginTop: 12, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 14px" }}>
+              {playbook.relationship && (
+                <p style={{ margin: "0 0 10px", color: "#334155", lineHeight: 1.9 }}>{playbook.relationship}</p>
+              )}
+              {playbook.intersections.length > 0 && (
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>噛み合いそうなところ</div>
+                  {playbook.intersections.map((x, i) => (
+                    <p key={i} style={{ margin: "3px 0", fontSize: 14, color: "#334155", lineHeight: 1.8 }}>
+                      {x.area ? <span style={{ color: "#0891b2", marginRight: 6 }}>{x.area}</span> : null}
+                      {x.point}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {playbook.actions.length > 0 && (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {playbook.actions.map((a, i) => (
+                    <div key={i} style={{ background: "#f8fafc", borderRadius: 10, padding: "9px 12px" }}>
+                      {a.title && <div style={{ fontWeight: 600 }}>{a.title}</div>}
+                      {a.detail && <div style={{ fontSize: 14, marginTop: 2, lineHeight: 1.8 }}>{a.detail}</div>}
+                      {a.why && <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>{a.why}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {playbook.somethingNew && (
+                <p style={{ marginTop: 10, fontSize: 14, color: "#334155", lineHeight: 1.8 }}>
+                  もう一つ、まだ試していない関わり方として。{playbook.somethingNew}
+                </p>
+              )}
+              {playbook.caution && (
+                <p style={{ marginTop: 8, fontSize: 13, color: "#92400e", background: "#fffbeb", borderRadius: 8, padding: "6px 10px" }}>
+                  {playbook.caution}
+                </p>
+              )}
+            </div>
+          )}
         </section>
       )}
 
@@ -659,6 +721,30 @@ export default function ContactDetailPage() {
               本文 (自由に直してください)
               <textarea style={input} rows={8} value={editBody} onChange={(e) => setEditBody(e.target.value)} aria-label="本文" />
             </label>
+            <div style={{ margin: "4px 0 8px" }}>
+              <button
+                style={{ ...btn(false), fontSize: 13, padding: "5px 12px" }}
+                disabled={!!busy}
+                onClick={async () => {
+                  const body = await call(`contacts/${contact.id}/free-slots-text?days=14`, { method: "GET" } as RequestInit);
+                  if (!body) return;
+                  if (!body.hasMyCalendar) {
+                    setNotice("先に予定表を連携すると、空いている日時をここに貼り付けられます。下の「お会いする日を探す」から連携できます。");
+                    return;
+                  }
+                  if (body.count === 0) {
+                    setNotice("これからの2週間に、お伝えできる空き時間が見つかりませんでした。");
+                    return;
+                  }
+                  const intro = body.basis === "overlap"
+                    ? "\n\nお会いできればと思っております。おふたりのご都合が合いそうなのは、次の日時です。\n"
+                    : "\n\nもしよろしければお会いできればと思っております。私のほうで空いておりますのは、次の日時です。\n";
+                  setEditBody((editBody + intro + body.text + "\nご都合に合う時間がありましたら、お知らせください。").trim());
+                }}
+              >
+                {busy.includes("free-slots-text") ? "調べています…" : "空いている日時を本文に貼り付ける"}
+              </button>
+            </div>
             {channel === "email" && (
               <label style={{ display: "block", margin: "8px 0", color: "#64748b", fontSize: 14 }}>
                 送る時間を予約する (空欄ならすぐに送ります)

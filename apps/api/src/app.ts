@@ -37,7 +37,7 @@ import {
   verifyExchangeChain,
   type ExchangeCore,
 } from "./lib/exchanges.js";
-import { parseIsoIntervals, meetingSlotProposals, toIso } from "./lib/timeslots.js";
+import { parseIsoIntervals, meetingSlotProposals, freeSlots, formatFreeSlotText, toIso } from "./lib/timeslots.js";
 import { parseSnsField, serializeSnsEntries, snsSearchQueries, snsPlatformLabel, type SnsEntry } from "./lib/sns.js";
 import { randomUUID } from "node:crypto";
 import { parseIcsBusy, looksLikeIcs, buildMeetingInviteIcs } from "./lib/ics.js";
@@ -2110,6 +2110,40 @@ export function createApp(deps: AppDeps) {
     });
   });
 
+  // 空き時間をメール本文に貼れるテキストで返す (発信のお便りに自分の候補日時をそのまま添える)。
+  // 相手のカレンダーもあれば双方の空き重なりを、無ければ自分の空きを、日本語の文面にして返す。
+  // カレンダー未連携なら空き根拠が無いので count 0 で返し、勝手に「全部空き」を出さない。
+  app.get("/api/contacts/:id/free-slots-text", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const days = Math.min(30, Math.max(1, Number(c.req.query("days")) || 14));
+    const max = Math.min(8, Math.max(1, Number(c.req.query("max")) || 5));
+    const [mine, theirs] = await Promise.all([
+      prisma.calendarLink.findUnique({
+        where: { ownerUid_contactId: { ownerUid: c.get("ownerUid"), contactId: SELF_CALENDAR } },
+      }),
+      prisma.calendarLink.findUnique({
+        where: { ownerUid_contactId: { ownerUid: c.get("ownerUid"), contactId: contact.id } },
+      }),
+    ]);
+    if (!mine) {
+      return c.json({ text: "", count: 0, basis: "none", hasMyCalendar: false });
+    }
+    const myBusy = parseIsoIntervals(mine.busySlots);
+    let slots;
+    let basis: "overlap" | "mine";
+    if (theirs) {
+      slots = meetingSlotProposals(myBusy, parseIsoIntervals(theirs.busySlots), { from: new Date(), days, maxProposals: max });
+      basis = "overlap";
+    } else {
+      slots = freeSlots(myBusy, { from: new Date(), days }).slice(0, max);
+      basis = "mine";
+    }
+    return c.json({ text: formatFreeSlotText(slots), count: slots.length, basis, hasMyCalendar: true });
+  });
+
   // AI 共通: 相手の文脈 (プロフィール + 直近のやりとり) を組み立てる
   const buildContactContext = async (ownerUid: string, contactId: string) => {
     const contact = await prisma.contact.findFirst({ where: { id: contactId, ownerUid } });
@@ -2448,6 +2482,82 @@ export function createApp(deps: AppDeps) {
       return c.json({ error: "invalid_output", detail: "うまく提案を作れませんでした。もう一度お試しください" }, 502);
     }
     return c.json({ suggestions, note: clean(parsed?.note) });
+  });
+
+  // 対応の提案 (playbook) — 相手の状況・二人の関係 (距離感/深さ/のびしろ)・仕事や私的な交点を
+  // ふまえ、いまできる具体的な対応と新しい関わり方を返す。3軸ミッションの「打ち手」の要。
+  // 関係スコアと論点整理 (facets) を AI に接地して、当人同士では見えにくい一手を示す。
+  app.post("/api/contacts/:id/playbook", async (c) => {
+    const ctx = await buildContactContext(c.get("ownerUid"), c.req.param("id"));
+    if (!ctx) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<{ locale?: string }>().catch(() => ({}) as { locale?: string });
+    const score = await computeRelationshipScore(ctx.contact.id, {
+      distance: ctx.contact.distance,
+      profileFacets: ctx.contact.profileFacets,
+      profileDigest: ctx.contact.profileDigest,
+    });
+    // 論点整理 (facets) を人が読める形で添える。交点の推論のもとになる。
+    const facetLines: string[] = [];
+    try {
+      const f = ctx.contact.profileFacets
+        ? (JSON.parse(ctx.contact.profileFacets) as Record<string, unknown>)
+        : null;
+      if (f) {
+        const strMap: Record<string, string> = {
+          work: "仕事・役割", status: "いまの状況", family: "家族・大切な人", values: "価値観",
+        };
+        for (const [k, label] of Object.entries(strMap)) {
+          if (typeof f[k] === "string" && (f[k] as string).trim()) facetLines.push(`${label}: ${f[k]}`);
+        }
+        const arrMap: Record<string, string> = {
+          skills: "得意なこと", concerns: "悩み・課題", goals: "目標・夢", opportunities: "こちらから貢献できそうなこと",
+        };
+        for (const [k, label] of Object.entries(arrMap)) {
+          if (Array.isArray(f[k]) && (f[k] as unknown[]).length) facetLines.push(`${label}: ${(f[k] as unknown[]).join("、")}`);
+        }
+      }
+    } catch {
+      // facets が壊れていても対応提案は出す
+    }
+    const userMessage = [
+      "相手の情報:",
+      ctx.context,
+      facetLines.length ? `整理された論点:\n${facetLines.join("\n")}` : "",
+      `二人の関係の見立て: 距離感 ${score.distance}(1=毎日会う親しさ〜5=年に一度) / これまでの深さ ${score.depth}点(100点満点・${score.depthBand}) / これから伸ばせる余地 ${score.potential}点(100点満点・${score.potentialBand})`,
+      `今日の日付: ${new Date().toISOString().slice(0, 10)}`,
+    ].filter(Boolean).join("\n");
+    const r = await runRelationshipAi(
+      "contact_playbook",
+      '出力は JSON オブジェクト 1 個だけ: {"relationship": "", "intersections": [{"area": "仕事 か 私的", "point": ""}], "actions": [{"title": "", "detail": "", "why": ""}], "somethingNew": "", "caution": ""}',
+      userMessage,
+      "contact_playbook",
+      normalizeLocale(b.locale),
+      { actor: actorOf(c) },
+    );
+    if (!r.ok) return c.json(r.body as never, r.status);
+    const parsed = extractJson(r.text) as {
+      relationship?: unknown; intersections?: unknown; actions?: unknown; somethingNew?: unknown; caution?: unknown;
+    } | null;
+    const clean = (v: unknown, max = 400) => sanitizeProse(typeof v === "string" ? v : "").trim().slice(0, max);
+    const intersections = (Array.isArray(parsed?.intersections) ? (parsed.intersections as Array<Record<string, unknown>>) : [])
+      .slice(0, 6)
+      .map((x) => ({ area: clean(x.area, 20), point: clean(x.point, 200) }))
+      .filter((x) => x.point);
+    const actions = (Array.isArray(parsed?.actions) ? (parsed.actions as Array<Record<string, unknown>>) : [])
+      .slice(0, 5)
+      .map((x) => ({ title: clean(x.title, 80), detail: clean(x.detail), why: clean(x.why, 200) }))
+      .filter((x) => x.title || x.detail);
+    if (actions.length === 0 && !clean(parsed?.relationship)) {
+      return c.json({ error: "invalid_output", detail: "うまく提案を作れませんでした。もう一度お試しください" }, 502);
+    }
+    return c.json({
+      relationship: clean(parsed?.relationship),
+      intersections,
+      actions,
+      somethingNew: clean(parsed?.somethingNew),
+      caution: clean(parsed?.caution),
+      score,
+    });
   });
 
   // 相手の論点整理 — 蓄積した記録から、その人を多面的な観点 (連絡先・状況・スキル・悩み・

@@ -111,3 +111,18 @@ export function meetingSlotProposals(
 export function toIso(intervals: Interval[]): IsoInterval[] {
   return intervals.map((x) => ({ start: x.start.toISOString(), end: x.end.toISOString() }));
 }
+
+const JP_WEEKDAY = ["日", "月", "火", "水", "木", "金", "土"];
+
+// 空きスロットを、メール本文にそのまま貼れる日本語テキストにする。
+// BR-09: 箇条書き記号や絵文字を使わず、1 行 1 枠のふつうの文章で並べる。
+// 分が 0 のときは「10時」、そうでなければ「10時30分」と読みやすく整える。
+export function formatFreeSlotText(intervals: Interval[]): string {
+  const hm = (d: Date) => (d.getMinutes() === 0 ? `${d.getHours()}時` : `${d.getHours()}時${d.getMinutes()}分`);
+  return intervals
+    .map((iv) => {
+      const s = iv.start;
+      return `${s.getMonth() + 1}月${s.getDate()}日(${JP_WEEKDAY[s.getDay()]}) ${hm(iv.start)}から${hm(iv.end)}`;
+    })
+    .join("\n");
+}
