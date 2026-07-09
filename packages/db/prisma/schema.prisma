@@ -124,6 +124,29 @@ model AiUsageLog {
   @@map("ai_usage_logs")
 }
 
+/// 取り込みジョブ。ファイル/貼り付けをサーバ側に預けて処理する = ページを離れても続く。
+/// payload は本文 (テキスト or base64 バイト列) で PII を含むため暗号化する。
+model ImportJob {
+  id                String   @id @default(uuid())
+  ownerUid          String   @map("owner_uid")
+  kind              String // "text" | "file"
+  filename          String?
+  payload           String // 暗号化: テキスト本文 or base64(バイト列)
+  locale            String   @default("ja")
+  status            String   @default("queued") // queued / processing / done / error
+  imported          Int      @default(0)
+  enriched          Int      @default(0)
+  interactionsAdded Int      @default(0) @map("interactions_added")
+  skipped           Int      @default(0)
+  detail            String? // 結果/エラーの短い説明 (名前などの PII は入れない)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([ownerUid, status])
+  @@index([ownerUid, createdAt])
+  @@map("import_jobs")
+}
+
 /// 連絡先 (ユーザーの人脈)。PII の塊 = ENCRYPTED_FIELDS で項目暗号化 (DESIGN-HANDOVER.md §4.1)。
 /// distance: 1(毎日)〜5(遠い)。1〜3 が接触間隔の監視対象 (lms 移植)。
 model Contact {

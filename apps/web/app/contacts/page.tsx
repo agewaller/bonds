@@ -1,7 +1,7 @@
 "use client";
 // 連絡帳 + つながりスコア + 「今日、連絡してみませんか」(lms の関係性ダッシュボードを移植)。
 // 文言は寄り添い基調・技術語なし・記号装飾なし (CLAUDE.md 共通プロダクト原則)。
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../../lib/client-api";
 import { AuthBar } from "../../components/AuthBar";
 import { LanguageSelector } from "../../components/LanguageSelector";
@@ -91,6 +91,22 @@ export default function ContactsPage() {
   type DupeMember = { id: string; name: string; company: string | null; email: string | null; phone: string | null };
   type DupeGroup = { reason: string; strong: boolean; members: DupeMember[] };
   const [dupeGroups, setDupeGroups] = useState<DupeGroup[]>([]);
+  // 取り込みジョブ (ページを離れても続く。状況を見せて安心してもらう)
+  type ImportJobRow = {
+    id: string;
+    kind: string;
+    filename: string | null;
+    status: string;
+    imported: number;
+    enriched: number;
+    interactionsAdded: number;
+    skipped: number;
+    detail: string | null;
+    updatedAt: string;
+  };
+  const [jobs, setJobs] = useState<ImportJobRow[]>([]);
+  const pumpingRef = useRef(false);
+  const jobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     const [cRes, sRes, pRes, gRes, dRes] = await Promise.all([
@@ -106,6 +122,37 @@ export default function ContactsPage() {
     if (gRes.ok) setGiftOccasions((await gRes.json()).occasions ?? []);
     if (dRes.ok) setDupeGroups((await dRes.json()).groups ?? []);
   }, []);
+
+  const loadJobs = useCallback(async (): Promise<number> => {
+    const res = await apiFetch("contacts/import-jobs");
+    if (!res.ok) return 0;
+    const b = await res.json().catch(() => ({ jobs: [], active: 0 }));
+    setJobs(b.jobs ?? []);
+    return Number(b.active ?? 0);
+  }, []);
+
+  // 待ち行列をサーバに処理させ、状況を更新し、残っていれば少し後にまた処理する。
+  // クライアントが離れても、走っている run はサーバ側で完了し、残りは毎時 sweep が拾う。
+  const pumpJobs = useCallback(async () => {
+    if (pumpingRef.current) return;
+    pumpingRef.current = true;
+    const step = async () => {
+      try {
+        await apiFetch("contacts/import-jobs/run", { method: "POST" });
+      } catch {
+        // 通信断でもサーバ側 sweep が最後まで処理する
+      }
+      const active = await loadJobs();
+      await load();
+      if (active > 0) {
+        jobTimerRef.current = setTimeout(() => void step(), 3000);
+      } else {
+        pumpingRef.current = false;
+        jobTimerRef.current = null;
+      }
+    };
+    await step();
+  }, [loadJobs, load]);
 
   // 一組を先頭の人にまとめる (残りを統合)。まとめたら再読み込み。
   const mergeGroup = async (g: DupeGroup) => {
@@ -136,6 +183,11 @@ export default function ContactsPage() {
       const res = await apiFetch("google/status");
       setGoogleStatus(res.ok ? await res.json() : { available: false, connected: false });
     })();
+    // 前回の取り込みが途中なら状況を出して再開する (ページを離れて戻ってきても続く)
+    void (async () => {
+      const active = await loadJobs();
+      if (active > 0) void pumpJobs();
+    })();
     // Google 同意画面から戻ってきたときの案内 (アドレスからは印を消す)
     const params = new URLSearchParams(window.location.search);
     const g = params.get("google");
@@ -146,7 +198,10 @@ export default function ContactsPage() {
       const qs = params.toString();
       window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
     }
-  }, [load]);
+    return () => {
+      if (jobTimerRef.current) clearTimeout(jobTimerRef.current);
+    };
+  }, [load, loadJobs, pumpJobs]);
 
   const add = async (confirmNew = false) => {
     const targetName = confirmNew ? pendingName : name.trim();
@@ -184,14 +239,13 @@ export default function ContactsPage() {
     setBusy(true);
     setError("");
     setNotice("");
-    setImportMsg("取り込んでいます。内容によっては少し時間がかかります…");
     try {
-      const res = await apiFetch("contacts/import", {
+      // サーバに取り込みを預ける (処理はサーバ側で進む = ページを離れても続く)
+      const res = await apiFetch("contacts/import-jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: importText }),
       });
-      // JSON でない応答 (プロキシ/サーバエラー等) も本文を拾ってエラーに出す
       const raw = await res.text();
       let body: Record<string, unknown> = {};
       try {
@@ -204,31 +258,15 @@ export default function ContactsPage() {
         setError(`取り込めませんでした (エラー ${res.status})${detail ? `: ${detail}` : ""}`);
         return;
       }
-      const imported = Number(body.imported ?? 0);
-      const enriched = Number(body.enriched ?? 0);
-      const sameName: string[] = Array.isArray(body.sameName) ? (body.sameName as string[]) : [];
-      // 0 件のときも黙って終わらせない (何が起きたかを必ず出す)
-      if (imported === 0 && enriched === 0) {
-        setError(
-          sameName.length > 0
-            ? `新しく取り込めた方はいませんでした。同じお名前の方がすでに連絡帳にいます (${sameName.join("、")})`
-            : "この内容からは連絡先を読み取れませんでした。氏名や連絡先の列がある表・vCard・名簿の文面をお試しください",
-        );
-        return;
-      }
-      setNotice(
-        sameName.length > 0
-          ? `${imported}件を取り込み、${enriched}件に書き足しました。同じお名前で見送った分があります (${sameName.join("、")})`
-          : `${imported}件を取り込みました${enriched > 0 ? `。${enriched}件に書き足しました` : ""}`,
-      );
       setImportText("");
       setShowImport(false);
-      await load();
+      setNotice("取り込みを受け付けました。このあとサーバで読み取りが進みます。ページを離れても大丈夫です");
+      await loadJobs();
+      void pumpJobs();
     } catch (e) {
       setError(`取り込み中にエラーが起きました: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
-      setImportMsg("");
     }
   };
 
@@ -290,79 +328,53 @@ export default function ContactsPage() {
     }
     setBusy(true);
     setError("");
-    let imported = 0;
-    let interactions = 0;
-    let enriched = 0;
-    const sameNames = new Set<string>();
+    setNotice("");
+    // 各ファイルをサーバに預ける (預けるだけなので速い)。読み取りはサーバ側で進むため、
+    // ここで預け終えればページを離れても取り込みは続く。
+    let queued = 0;
     const problems: string[] = [];
-    let unreadable = 0;
     try {
       for (let i = 0; i < list.length; i++) {
         const file = list[i]!;
         const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-        setImportMsg(
-          list.length > 1
-            ? `読み取っています (${i + 1}/${list.length}件目): ${path}`
-            : `「${path}」を読み取っています。内容によっては少し時間がかかります…`,
-        );
-        const res = await apiFetch(`contacts/import-file?filename=${encodeURIComponent(path)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/octet-stream" },
-          body: await file.arrayBuffer(),
-        });
-        const raw = await res.text();
-        let body: Record<string, unknown> = {};
+        setImportMsg(`受け付けています (${i + 1}/${list.length}件目): ${path}`);
         try {
-          body = raw ? JSON.parse(raw) : {};
-        } catch {
-          body = {};
-        }
-        if (!res.ok) {
-          if (body.error === "no_contacts_found") unreadable++;
+          const res = await apiFetch(`contacts/import-jobs?filename=${encodeURIComponent(path)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/octet-stream" },
+            body: await file.arrayBuffer(),
+          });
+          if (res.ok) queued++;
           else {
-            const detail = (body.detail as string) || (body.error as string) || raw.slice(0, 120);
-            problems.push(`${path}: エラー ${res.status}${detail ? ` ${detail}` : ""}`);
+            const b = await res.json().catch(() => ({}) as Record<string, unknown>);
+            problems.push(`${path}: エラー ${res.status}${b.detail ? ` ${b.detail}` : ""}`);
           }
-          continue;
+        } catch (e) {
+          problems.push(`${path}: ${e instanceof Error ? e.message : String(e)}`);
         }
-        imported += Number(body.imported ?? 0);
-        interactions += Number(body.interactionsAdded ?? 0);
-        enriched += Number(body.enriched ?? 0);
-        if (Array.isArray(body.sameName)) (body.sameName as string[]).forEach((n) => sameNames.add(n));
       }
-      const parts: string[] = [];
-      if (imported > 0) parts.push(`${imported}件の連絡先を取り込みました`);
-      if (enriched > 0) parts.push(`すでにいる${enriched}名の記録に、分かったことを書き足しました`);
-      if (interactions > 0) parts.push(`やりとりの記録を${interactions}件残しました`);
-      if (unreadable > 0 && parts.length > 0) parts.push(`人物情報の見つからないファイルが${unreadable}件ありました`);
-      if (parts.length > 0) {
-        const dup =
-          sameNames.size > 0 && enriched === 0
-            ? `。同じお名前の方がすでにいるため見送った分があります (${[...sameNames].slice(0, 10).join("、")})。別の方でしたら追加欄からお名前を入れてください`
-            : "";
-        setNotice(`${parts.join("。")}${dup}`);
-        await load();
-      } else if (unreadable > 0 && problems.length === 0) {
-        setError(
-          unreadable === 1
-            ? "このファイルからは人物にまつわる情報を見つけられませんでした"
-            : `${unreadable}件のファイルからは人物にまつわる情報を見つけられませんでした`,
+      if (queued > 0) {
+        setNotice(
+          `${queued}件を受け付けました。このあとサーバで読み取りが進みます。ページを離れたり、ほかのことをしていても大丈夫です`,
         );
-        setNotice("");
-      } else if (problems.length === 0) {
-        // 何も取り込めず、はっきりした失敗も無い = 黙って終わらせない
-        setNotice("");
-        setError("取り込めませんでした。ファイルの中身をご確認のうえ、もう一度お試しください");
-      } else {
-        setNotice("");
       }
-      if (problems.length > 0) setError(problems.slice(0, 5).join(" / ") + (problems.length > 5 ? ` ほか${problems.length - 5}件` : ""));
-    } catch (e) {
-      setError(`取り込み中にエラーが起きました: ${e instanceof Error ? e.message : String(e)}`);
+      if (problems.length > 0) {
+        setError(problems.slice(0, 5).join(" / ") + (problems.length > 5 ? ` ほか${problems.length - 5}件` : ""));
+      } else if (queued === 0) {
+        setError("取り込めませんでした。もう一度お試しください");
+      }
+      await loadJobs();
+      void pumpJobs();
     } finally {
       setBusy(false);
       setImportMsg("");
     }
+  };
+
+  // 状況表示を片付ける (完了/失敗の行を消す)
+  const clearJobs = async () => {
+    await apiFetch("contacts/import-jobs/clear", { method: "POST" });
+    await loadJobs();
   };
 
   // 会話やメモから登場人物と近況をさがす (提案どまり。反映はユーザーが選ぶ)
@@ -603,6 +615,54 @@ export default function ContactsPage() {
           {error}
         </p>
       )}
+
+      {jobs.length > 0 &&
+        (() => {
+          const active = jobs.filter((j) => j.status === "queued" || j.status === "processing").length;
+          const label = (s: string) =>
+            s === "queued" ? "待機中" : s === "processing" ? "読み取り中" : s === "done" ? "完了" : "読み取れませんでした";
+          const color = (s: string) =>
+            s === "done" ? "#166534" : s === "error" ? "#b91c1c" : "#1e40af";
+          return (
+            <section
+              aria-live="polite"
+              style={{ margin: "16px 0", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: "12px 16px" }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <h2 style={{ fontSize: 17, margin: 0 }}>取り込みの状況</h2>
+                {active === 0 && (
+                  <button
+                    onClick={() => void clearJobs()}
+                    style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontSize: 13 }}
+                  >
+                    表示を片付ける
+                  </button>
+                )}
+              </div>
+              <p style={{ color: "#475569", fontSize: 13, margin: "4px 0 10px" }}>
+                {active > 0
+                  ? "サーバで読み取りが進んでいます。ページを離れたり、ほかのことをしていても大丈夫です。"
+                  : "取り込みが終わりました。"}
+              </p>
+              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 6 }}>
+                {jobs.slice(0, 30).map((j) => (
+                  <li key={j.id} style={{ fontSize: 14, display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <span style={{ color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {j.filename || (j.kind === "text" ? "貼り付けた内容" : "ファイル")}
+                    </span>
+                    <span style={{ color: color(j.status), whiteSpace: "nowrap" }}>
+                      {label(j.status)}
+                      {j.status === "done" &&
+                        (j.imported > 0 || j.enriched > 0
+                          ? `（${j.imported > 0 ? `${j.imported}名を追加` : ""}${j.imported > 0 && j.enriched > 0 ? "・" : ""}${j.enriched > 0 ? `${j.enriched}名に追記` : ""}）`
+                          : "（新しい方はいませんでした）")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          );
+        })()}
 
       {dupeGroups.length > 0 && (
         <section style={{ margin: "16px 0", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: "12px 16px" }}>

@@ -744,6 +744,32 @@ export function createApp(deps: AppDeps) {
     return c.json({ groups });
   });
 
+  // 取り込みの状況 (待機中・読み取り中・完了・失敗)。ページを離れても戻れば見える。
+  // 注: /:id より前に定義する (でないと "import-jobs" が :id として捕まる)。
+  app.get("/api/contacts/import-jobs", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const jobs = await prisma.importJob.findMany({
+      where: { ownerUid },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      select: {
+        id: true,
+        kind: true,
+        filename: true,
+        status: true,
+        imported: true,
+        enriched: true,
+        interactionsAdded: true,
+        skipped: true,
+        detail: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    const active = jobs.filter((j) => j.status === "queued" || j.status === "processing").length;
+    return c.json({ jobs, active });
+  });
+
   app.get("/api/contacts/:id", async (c) => {
     const contact = await prisma.contact.findFirst({
       where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
@@ -991,72 +1017,72 @@ export function createApp(deps: AppDeps) {
     };
   };
 
-  app.post("/api/contacts/import", async (c) => {
-    const b = await c.req
-      .json<{ content?: string; format?: string; filename?: string; locale?: string }>()
-      .catch(() => ({}) as { content?: string; format?: string; filename?: string; locale?: string });
-    if (typeof b.content !== "string" || !b.content.trim()) {
-      return c.json({ error: "content_required", detail: "取り込む内容がありません" }, 400);
-    }
-    const format = b.format === "csv" || b.format === "vcard" ? b.format : "auto";
-    const parsed =
-      format === "auto"
-        ? parseImportText(b.content, typeof b.filename === "string" ? b.filename : undefined)
-        : { contacts: parseContacts(b.content, format), interactions: [] as ParsedInteraction[] };
-    // 構造化パーサで 1 件も拾えないときは AI 抽出に回す (Eight など未知の列並び・
-    // 名刺の姓/名分割・自由な名簿でも人物を拾う。ファイル取込と同じ方針)。
-    if (parsed.contacts.length === 0) {
-      const r = await extractPeopleFromTexts(
-        [{ file: "paste", kind: "text", text: b.content }],
-        normalizeLocale(b.locale),
-        actorOf(c),
-      );
-      if (!r.ok) return c.json(r.body as never, r.status);
-      if (r.contacts.length === 0) {
-        return c.json(
-          {
-            error: "no_contacts_found",
-            detail:
-              "この内容からはお名前を見つけられませんでした。氏名 (または姓と名) の列がある表や vCard、名簿の文面ならたいてい読み取れます",
-          },
-          422,
-        );
+  // 取り込みの本処理 (同期ルートと、ページを離れても続くジョブ実行の両方から使う)。
+  type ImportOutcome =
+    | {
+        ok: true;
+        imported: number;
+        enriched: number;
+        interactionsAdded: number;
+        skipped: number;
+        sameName: string[];
+        foundIn?: Array<{ file: string; contacts: number }>;
+        aiPeople?: number;
       }
-      const result = await applyImport(c.get("ownerUid"), { contacts: r.contacts, interactions: r.interactions });
-      return c.json(result);
-    }
-    const result = await applyImport(c.get("ownerUid"), parsed);
-    return c.json(result);
-  });
+    | { ok: false; status: 422 | 503 | 502; error: string; detail: string };
 
-  // ファイル/ZIP まるごと取込。SNS の「データをダウンロード」の ZIP をそのまま受け、
-  // 中の友だち/つながりファイルを自動発見する (ユーザーに中身を探させない)。
-  // 既知の構造化形式で拾えないファイル (Word・Excel・PDF・メール・議事録・自由なメモなど)
-  // は本文テキストに落とし、AI の人物抽出 (import_extract) で名前・連絡先・所属・
-  // 近況メモ・会った日を読み取って、同じ冪等取込 (applyImport) で連絡帳へ整理する。
-  app.post("/api/contacts/import-file", async (c) => {
-    const buf = await c.req.arrayBuffer();
-    if (buf.byteLength === 0) {
-      return c.json({ error: "content_required", detail: "ファイルが空です" }, 400);
+  const importPastedText = async (
+    ownerUid: string,
+    content: string,
+    format: string,
+    filename: string | undefined,
+    locale: string,
+    actor: AiActor,
+  ): Promise<ImportOutcome> => {
+    const parsed =
+      format === "csv" || format === "vcard"
+        ? { contacts: parseContacts(content, format), interactions: [] as ParsedInteraction[] }
+        : parseImportText(content, filename);
+    let toApply = parsed;
+    // 構造化パーサで 1 件も拾えないときは AI 抽出に回す (未知の列並び・姓/名分割・自由な名簿)。
+    if (parsed.contacts.length === 0) {
+      const r = await extractPeopleFromTexts([{ file: filename ?? "paste", kind: "text", text: content }], locale, actor);
+      if (!r.ok) {
+        const b = r.body as { error?: string; detail?: string };
+        return { ok: false, status: r.status, error: b.error ?? "ai_failed", detail: b.detail ?? "取り込めませんでした" };
+      }
+      if (r.contacts.length === 0) {
+        return {
+          ok: false,
+          status: 422,
+          error: "no_contacts_found",
+          detail: "この内容からはお名前を見つけられませんでした。氏名 (または姓と名) の列がある表や vCard、名簿の文面ならたいてい読み取れます",
+        };
+      }
+      toApply = { contacts: r.contacts, interactions: r.interactions };
     }
-    if (buf.byteLength > MAX_IMPORT_FILE_BYTES) {
-      return c.json(
-        {
-          error: "file_too_large",
-          detail:
-            "ファイルが大きすぎます (30MBまで)。エクスポートするとき、対象を友達やつながりの情報だけに絞ると小さくなります",
-        },
-        413,
-      );
-    }
-    const filename = c.req.query("filename") ?? c.req.header("x-filename") ?? undefined;
-    const parsed = parseImportFile(new Uint8Array(buf), filename);
-    const locale = normalizeLocale(c.req.query("locale"));
+    const result = await applyImport(ownerUid, toApply);
+    return {
+      ok: true,
+      imported: result.imported,
+      enriched: result.enriched,
+      interactionsAdded: result.interactionsAdded,
+      skipped: result.skipped,
+      sameName: result.sameName,
+    };
+  };
+
+  const importFileBytes = async (
+    ownerUid: string,
+    bytes: Uint8Array,
+    filename: string | undefined,
+    locale: string,
+    actor: AiActor,
+  ): Promise<ImportOutcome> => {
+    const parsed = parseImportFile(bytes, filename);
     const aiContacts: ParsedContact[] = [];
     const aiInteractions: ParsedInteraction[] = [];
     let aiUnavailable = false;
-    // 文字の書類は本文抽出 → AI、名刺・名簿・スクショの画像は Vision で読み取る
-    const actor = actorOf(c);
     if (parsed.texts.length > 0) {
       const r = await extractPeopleFromTexts(parsed.texts, locale, actor);
       if (r.ok) {
@@ -1077,25 +1103,229 @@ export function createApp(deps: AppDeps) {
     };
     if (merged.contacts.length === 0) {
       if (aiUnavailable) {
-        return c.json(
-          {
-            error: "extract_unavailable",
-            detail: "内容は読めましたが、いまは人物の読み取りができません。しばらくしてからもう一度お試しください",
-          },
-          422,
-        );
+        return {
+          ok: false,
+          status: 422,
+          error: "extract_unavailable",
+          detail: "内容は読めましたが、いまは人物の読み取りができません。しばらくしてからもう一度お試しください",
+        };
       }
+      return {
+        ok: false,
+        status: 422,
+        error: "no_contacts_found",
+        detail: "このファイルからは人物にまつわる情報を見つけられませんでした。名刺や名簿の写真、文字の入った書類 (Word・Excel・PDF・メール・テキスト・CSV・vCard・SNS のダウンロード ZIP など) ならたいてい読み取れます",
+      };
+    }
+    const result = await applyImport(ownerUid, merged);
+    return {
+      ok: true,
+      imported: result.imported,
+      enriched: result.enriched,
+      interactionsAdded: result.interactionsAdded,
+      skipped: result.skipped,
+      sameName: result.sameName,
+      foundIn: parsed.foundIn,
+      aiPeople: aiContacts.length,
+    };
+  };
+
+  app.post("/api/contacts/import", async (c) => {
+    const b = await c.req
+      .json<{ content?: string; format?: string; filename?: string; locale?: string }>()
+      .catch(() => ({}) as { content?: string; format?: string; filename?: string; locale?: string });
+    if (typeof b.content !== "string" || !b.content.trim()) {
+      return c.json({ error: "content_required", detail: "取り込む内容がありません" }, 400);
+    }
+    const format = b.format === "csv" || b.format === "vcard" ? b.format : "auto";
+    const out = await importPastedText(
+      c.get("ownerUid"),
+      b.content,
+      format,
+      typeof b.filename === "string" ? b.filename : undefined,
+      normalizeLocale(b.locale),
+      actorOf(c),
+    );
+    if (!out.ok) return c.json({ error: out.error, detail: out.detail }, out.status);
+    return c.json({
+      imported: out.imported,
+      enriched: out.enriched,
+      interactionsAdded: out.interactionsAdded,
+      skipped: out.skipped,
+      sameName: out.sameName,
+    });
+  });
+
+  // ファイル/ZIP まるごと取込 (同期)。中身は importFileBytes に委譲。
+  app.post("/api/contacts/import-file", async (c) => {
+    const buf = await c.req.arrayBuffer();
+    if (buf.byteLength === 0) {
+      return c.json({ error: "content_required", detail: "ファイルが空です" }, 400);
+    }
+    if (buf.byteLength > MAX_IMPORT_FILE_BYTES) {
       return c.json(
         {
-          error: "no_contacts_found",
+          error: "file_too_large",
           detail:
-            "このファイルからは人物にまつわる情報を見つけられませんでした。名刺や名簿の写真、文字の入った書類 (Word・Excel・PDF・メール・テキスト・CSV・vCard・SNS のダウンロード ZIP など) ならたいてい読み取れます",
+            "ファイルが大きすぎます (30MBまで)。エクスポートするとき、対象を友達やつながりの情報だけに絞ると小さくなります",
         },
-        422,
+        413,
       );
     }
-    const result = await applyImport(c.get("ownerUid"), merged);
-    return c.json({ ...result, foundIn: parsed.foundIn, aiPeople: aiContacts.length });
+    const filename = c.req.query("filename") ?? c.req.header("x-filename") ?? undefined;
+    const out = await importFileBytes(
+      c.get("ownerUid"),
+      new Uint8Array(buf),
+      filename,
+      normalizeLocale(c.req.query("locale")),
+      actorOf(c),
+    );
+    if (!out.ok) return c.json({ error: out.error, detail: out.detail }, out.status);
+    return c.json({
+      imported: out.imported,
+      enriched: out.enriched,
+      interactionsAdded: out.interactionsAdded,
+      skipped: out.skipped,
+      sameName: out.sameName,
+      foundIn: out.foundIn,
+      aiPeople: out.aiPeople,
+    });
+  });
+
+  // ---- 取り込みジョブ (ページを離れても続く・状況を見せて安心してもらう) ----
+  // ファイル/貼り付けをサーバに預けて queued にし、run で順に処理する。処理はサーバ側で
+  // 進むため、ユーザーはページを離れても・他のことをしていても取り込みは続く。
+  const MAX_JOB_PAYLOAD_CHARS = 45_000_000; // base64(30MB) ≒ 40MB の安全上限
+  const MAX_QUEUED_JOBS = 300;
+
+  // 1 件のジョブを処理する。updateMany で queued を奪って二重処理を防ぐ。
+  const processOneImportJob = async (jobId: string): Promise<boolean> => {
+    const claimed = await prisma.importJob.updateMany({
+      where: { id: jobId, status: "queued" },
+      data: { status: "processing" },
+    });
+    if (claimed.count === 0) return false;
+    const job = await prisma.importJob.findUnique({ where: { id: jobId } });
+    if (!job) return false;
+    // 取り込みはオーナー運用のデータ取り込み。無制限 (isOwner) で回し、消費は本人に計上。
+    const actor: AiActor = { ownerUid: job.ownerUid, isOwner: true };
+    try {
+      const out =
+        job.kind === "text"
+          ? await importPastedText(job.ownerUid, job.payload, "auto", job.filename ?? undefined, job.locale, actor)
+          : await importFileBytes(
+              job.ownerUid,
+              new Uint8Array(Buffer.from(job.payload, "base64")),
+              job.filename ?? undefined,
+              job.locale,
+              actor,
+            );
+      if (out.ok) {
+        await prisma.importJob.update({
+          where: { id: job.id },
+          data: {
+            status: "done",
+            imported: out.imported,
+            enriched: out.enriched,
+            interactionsAdded: out.interactionsAdded,
+            skipped: out.skipped,
+            detail: null,
+            payload: "", // 済んだら本文は保持しない (容量とデータ最小化)
+          },
+        });
+      } else {
+        await prisma.importJob.update({
+          where: { id: job.id },
+          data: { status: "error", detail: out.detail.slice(0, 300), payload: "" },
+        });
+      }
+      return true;
+    } catch (e) {
+      await prisma.importJob.update({
+        where: { id: job.id },
+        data: { status: "error", detail: (e instanceof Error ? e.message : String(e)).slice(0, 300), payload: "" },
+      });
+      return true;
+    }
+  };
+
+  // ジョブ作成: テキスト (JSON {content}) か ファイル (raw bytes ?filename=)。
+  app.post("/api/contacts/import-jobs", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const active = await prisma.importJob.count({ where: { ownerUid, status: { in: ["queued", "processing"] } } });
+    if (active >= MAX_QUEUED_JOBS) {
+      return c.json({ error: "too_many", detail: "取り込み待ちが多いため、少し待ってからお試しください" }, 429);
+    }
+    const ct = c.req.header("content-type") ?? "";
+    let kind: string;
+    let payload: string;
+    let filename: string | null;
+    let locale: string;
+    if (ct.includes("application/json")) {
+      const b = await c.req.json<{ content?: string; locale?: string; filename?: string }>().catch(() => ({}));
+      if (typeof b.content !== "string" || !b.content.trim()) {
+        return c.json({ error: "content_required", detail: "取り込む内容がありません" }, 400);
+      }
+      kind = "text";
+      payload = b.content;
+      filename = typeof b.filename === "string" ? b.filename : null;
+      locale = normalizeLocale(b.locale);
+    } else {
+      const buf = await c.req.arrayBuffer();
+      if (buf.byteLength === 0) return c.json({ error: "content_required", detail: "ファイルが空です" }, 400);
+      if (buf.byteLength > MAX_IMPORT_FILE_BYTES) {
+        return c.json({ error: "file_too_large", detail: "ファイルが大きすぎます (30MBまで)" }, 413);
+      }
+      kind = "file";
+      payload = Buffer.from(buf).toString("base64");
+      filename = c.req.query("filename") ?? null;
+      locale = normalizeLocale(c.req.query("locale"));
+    }
+    if (payload.length > MAX_JOB_PAYLOAD_CHARS) {
+      return c.json({ error: "file_too_large", detail: "内容が大きすぎます" }, 413);
+    }
+    const job = await prisma.importJob.create({
+      data: { ownerUid, kind, filename, payload, locale, status: "queued" },
+    });
+    return c.json({ job: { id: job.id, kind, filename, status: job.status } }, 201);
+  });
+
+  // 待ち行列を処理する。サーバ側で進むのでクライアントが離れても続く (残りは sweep が拾う)。
+  app.post("/api/contacts/import-jobs/run", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const jobs = await prisma.importJob.findMany({
+      where: { ownerUid, status: "queued" },
+      orderBy: { createdAt: "asc" },
+      take: 20,
+      select: { id: true },
+    });
+    let processed = 0;
+    for (const j of jobs) if (await processOneImportJob(j.id)) processed++;
+    const remaining = await prisma.importJob.count({ where: { ownerUid, status: { in: ["queued", "processing"] } } });
+    return c.json({ processed, remaining });
+  });
+
+  // 済んだ/失敗した表示を片付ける (状況パネルを消せるように)。
+  app.post("/api/contacts/import-jobs/clear", async (c) => {
+    const del = await prisma.importJob.deleteMany({
+      where: { ownerUid: c.get("ownerUid"), status: { in: ["done", "error"] } },
+    });
+    return c.json({ cleared: del.count });
+  });
+
+  // 取り残された待ち行列を処理するバックストップ (毎時 sweep / スケジューラから admin で叩く)。
+  // ユーザーがすべて閉じても、ここが拾って最後まで取り込む。
+  app.post("/api/admin/contacts/process-import-jobs", async (c) => {
+    const batch = Math.min(Math.max(parseInt(c.req.query("batch") ?? "20", 10) || 20, 1), 100);
+    const jobs = await prisma.importJob.findMany({
+      where: { status: "queued" },
+      orderBy: { createdAt: "asc" },
+      take: batch,
+      select: { id: true },
+    });
+    let processed = 0;
+    for (const j of jobs) if (await processOneImportJob(j.id)) processed++;
+    return c.json({ processed });
   });
 
   // 接触記録 (連絡済み)。距離スコアの検証還流。
