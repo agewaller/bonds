@@ -29,6 +29,9 @@ export SECRET_BREAKGLASS="${SECRET_BREAKGLASS:-BONDS_ADMIN_BREAKGLASS_TOKEN}"
 export SECRET_DB_PASSWORD="${SECRET_DB_PASSWORD:-BONDS_DB_PASSWORD}"
 export SECRET_SENDGRID="${SECRET_SENDGRID:-BONDS_SENDGRID_API_KEY}"
 export SECRET_GOOGLE_CLIENT="${SECRET_GOOGLE_CLIENT:-BONDS_GOOGLE_OAUTH_CLIENT_SECRET}"
+# ZenTrack (音声文字起こし) → bonds 取込の server-to-server 共有シークレット (任意)。
+# 未作成なら ZenTrack 受け口は「準備中」= 503 に縮退する。
+export SECRET_ZENTRACK="${SECRET_ZENTRACK:-BONDS_ZENTRACK_INGEST_SECRET}"
 
 # 本番 web の既定 URL (api 単独デプロイ時の ALLOWED_ORIGINS / OAuth 戻り先の既定)
 export PROD_WEB_URL="${PROD_WEB_URL:-https://bonds-web-xj6szhutkq-an.a.run.app}"

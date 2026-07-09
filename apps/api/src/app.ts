@@ -1390,6 +1390,47 @@ export function createApp(deps: AppDeps) {
     return c.json({ processed });
   });
 
+  // ZenTrack (音声文字起こしの日次インサイト) からの受け口 (server-to-server)。
+  // 日々の文字起こしには「誰と会った・誰の近況」が詰まっているので、bonds の取込
+  // パイプライン (会話から人物・近況・接触を抽出 → 関係グラフへ) に流して受動収集する。
+  // 認証は ZenTrack 専用の共有シークレット (オーナーの管理トークンは渡さない)。
+  // 未設定なら「準備中」に縮退 (fail closed)。bonds は単一オーナー運用なので owner に紐づく。
+  app.post("/api/ingest/zentrack", async (c) => {
+    const secret = process.env.ZENTRACK_INGEST_SECRET;
+    if (!secret) return c.json({ error: "not_configured", detail: "ZenTrack 連携は準備中です" }, 503);
+    if (c.req.header("x-zentrack-secret") !== secret) return c.json({ error: "unauthorized" }, 401);
+    const b = await c.req
+      .json<{ transcript?: string; date?: string; label?: string }>()
+      .catch(() => ({}) as { transcript?: string; date?: string; label?: string });
+    const transcript = typeof b.transcript === "string" ? b.transcript.trim() : "";
+    if (!transcript) return c.json({ error: "transcript_required", detail: "文字起こしがありません" }, 400);
+    if (transcript.length > MAX_JOB_PAYLOAD_CHARS) {
+      return c.json({ error: "too_large", detail: "内容が大きすぎます" }, 413);
+    }
+    const ownerUid = "owner";
+    const date = typeof b.date === "string" && /^\d{4}-\d{2}-\d{2}/.test(b.date) ? b.date.slice(0, 10) : null;
+    const label = typeof b.label === "string" ? b.label.trim().slice(0, 60) : "";
+    // 日付を接地して、会った相手の接触記録をその日に寄せる (抽出プロンプトが日付を拾う)。
+    const payload = date ? `日付: ${date}\n\n${transcript}` : transcript;
+    const job = await prisma.importJob.create({
+      data: {
+        ownerUid,
+        kind: "text",
+        filename: `ZenTrack ${label || date || "音声メモ"}`.slice(0, 80),
+        payload,
+        locale: "ja",
+        status: "queued",
+      },
+    });
+    // すぐ処理する (会話抽出 → 関係グラフへ)。失敗しても毎時 sweep が拾い直す。
+    try {
+      await processOneImportJob(job.id);
+    } catch {
+      // sweep が再処理する
+    }
+    return c.json({ ok: true, jobId: job.id }, 202);
+  });
+
   // 接触記録 (連絡済み)。距離スコアの検証還流。
   app.post("/api/contacts/:id/interactions", async (c) => {
     const contact = await prisma.contact.findFirst({

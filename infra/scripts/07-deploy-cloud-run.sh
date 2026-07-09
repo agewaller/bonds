@@ -22,6 +22,12 @@ if [ "$ONLY" != "web" ]; then
   else
     echo "注: Secret ${SECRET_GOOGLE_CLIENT} が未作成のため Google 連携は準備中で入ります (00-first-time-setup.sh で作成後に再デプロイで有効化)"
   fi
+  # ZenTrack 受け口の共有シークレットも存在するときだけ配線 (無ければ受け口は 503 に縮退)。
+  if gcloud secrets describe "$SECRET_ZENTRACK" --project="$PROJECT" >/dev/null 2>&1; then
+    SECRETS="${SECRETS},ZENTRACK_INGEST_SECRET=${SECRET_ZENTRACK}:latest"
+  else
+    echo "注: Secret ${SECRET_ZENTRACK} が未作成のため ZenTrack 連携は準備中で入ります"
+  fi
   gcloud run deploy "$RUN_API" --project="$PROJECT" --region="$REGION" \
     --image="${IMAGE_REGISTRY}/bonds-api:${TAG}" \
     --add-cloudsql-instances="$SQL_CONN" \
