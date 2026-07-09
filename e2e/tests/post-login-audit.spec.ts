@@ -88,12 +88,12 @@ test("連絡帳: 同じお名前は確認を挟み、別の人として追加で
   expect(errors, errors.join("\n")).toHaveLength(0);
 });
 
-test("連絡帳: Google とつなぐ枠が出る (未設定環境では準備中の案内)", async ({ page }) => {
+test("連絡帳: Google 取り込み枠が出る (未設定環境では準備中の案内)", async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto("/contacts");
-  await expect(page.getByRole("heading", { name: "Google とつなぐ" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Google（Gmail・連絡先）/ })).toBeVisible();
   await expect(
-    page.getByText(/準備中です|Google とつなぐ|つながっています/).first(),
+    page.getByText(/準備中です|Google とつないで取り込む|つながっています/).first(),
   ).toBeVisible();
   expect(errors, errors.join("\n")).toHaveLength(0);
 });

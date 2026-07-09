@@ -226,6 +226,33 @@ export default function ContactsPage() {
     }
   };
 
+  // Google 連携のお相手取り込み (「いま取り込む」と、つないだ直後の自動取り込みで共用)。
+  const syncGoogle = useCallback(async () => {
+    if (pumpingRef.current) return;
+    pumpingRef.current = true;
+    setError("");
+    setNotice("お相手を取り込んでいます… (少し時間がかかります)");
+    try {
+      const res = await apiFetch("google/sync", { method: "POST", body: "{}" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setNotice("");
+        setError(body.detail ?? "いまは取り込めませんでした");
+        return;
+      }
+      const dup =
+        Array.isArray(body.sameName) && body.sameName.length > 0
+          ? `。同じお名前で見送った方: ${body.sameName.slice(0, 5).join("、")}`
+          : "";
+      setNotice(`Google から連絡先${body.imported ?? 0}件、やりとりの記録${body.interactionsAdded ?? 0}件を取り込みました${dup}`);
+      await load();
+      const s = await apiFetch("google/status");
+      if (s.ok) setGoogleStatus(await s.json());
+    } finally {
+      pumpingRef.current = false;
+    }
+  }, [load]);
+
   useEffect(() => {
     void load();
     void (async () => {
@@ -241,16 +268,17 @@ export default function ContactsPage() {
     const params = new URLSearchParams(window.location.search);
     const g = params.get("google");
     if (g) {
-      if (g === "connected") setNotice("Google とつながりました。「いま取り込む」でお相手を取り込めます");
       if (g === "error") setError("Google との接続がうまくいきませんでした。もう一度お試しください");
       params.delete("google");
       const qs = params.toString();
       window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+      // つないだ直後は、その場で自動で取り込む (ワンタップで完了 = 極めて簡単に)
+      if (g === "connected") void syncGoogle();
     }
     return () => {
       if (jobTimerRef.current) clearTimeout(jobTimerRef.current);
     };
-  }, [load, loadJobs, pumpJobs]);
+  }, [load, loadJobs, pumpJobs, syncGoogle]);
 
   const add = async (confirmNew = false) => {
     const targetName = confirmNew ? pendingName : name.trim();
@@ -1229,10 +1257,11 @@ export default function ContactsPage() {
       </section>
 
       <section style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
-        <h2 style={{ fontSize: 18, marginTop: 0 }}>Google とつなぐ</h2>
+        <h2 style={{ fontSize: 18, marginTop: 0 }}>いちばん簡単: Google（Gmail・連絡先）からまとめて取り込む</h2>
         <p style={{ color: "#64748b", margin: "4px 0 10px", fontSize: 14 }}>
-          Google の連絡先 (アドレス帳) はもちろん、カレンダーの同席者、メールのやりとりの相手、共有ファイルの仲間まで、
-          連絡帳へ自動で取り込みます。読み取りだけの最小限の権限で、メールの本文は読みません。
+          ボタンをひとつ押すだけで、Google の連絡先（アドレス帳）に加えて、メールでやりとりした相手・カレンダーの同席者・
+          共有ファイルの仲間まで、連絡帳へ自動でまとまります。つないだあとはその場で取り込みが始まります。
+          読み取りだけの最小限の権限で、メールの本文は読みません。
         </p>
         {googleStatus === null && <p style={{ color: "#64748b" }}>確認しています…</p>}
         {googleStatus?.available === false && (
@@ -1249,7 +1278,7 @@ export default function ContactsPage() {
             disabled={busy}
             style={{ padding: "10px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
           >
-            Google とつなぐ
+            Google とつないで取り込む
           </button>
         )}
         {googleStatus?.available && googleStatus.connected && (
@@ -1261,31 +1290,7 @@ export default function ContactsPage() {
               <small style={{ color: "#64748b" }}>前回: {googleStatus.lastSyncNote}</small>
             )}
             <button
-              onClick={async () => {
-                if (busy) return;
-                setBusy(true);
-                setError("");
-                setNotice("お相手を取り込んでいます… (少し時間がかかります)");
-                try {
-                  const res = await apiFetch("google/sync", { method: "POST", body: "{}" });
-                  const body = await res.json().catch(() => ({}));
-                  if (!res.ok) {
-                    setNotice("");
-                    setError(body.detail ?? "いまは取り込めませんでした");
-                    return;
-                  }
-                  const dup =
-                    Array.isArray(body.sameName) && body.sameName.length > 0
-                      ? `。同じお名前で見送った方: ${body.sameName.slice(0, 5).join("、")}`
-                      : "";
-                  setNotice(`Google から連絡先${body.imported}件、やりとりの記録${body.interactionsAdded}件を取り込みました${dup}`);
-                  await load();
-                  const s = await apiFetch("google/status");
-                  if (s.ok) setGoogleStatus(await s.json());
-                } finally {
-                  setBusy(false);
-                }
-              }}
+              onClick={() => void syncGoogle()}
               disabled={busy}
               style={{ padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
             >
