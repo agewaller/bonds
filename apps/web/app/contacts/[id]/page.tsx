@@ -70,6 +70,19 @@ type LinkedSubject = { linkId: string; slug: string; name: string };
 type Candidate = { subject: string; body: string; tone: string; aim: string };
 type Slot = { start: string; end: string };
 
+const SNS_LABEL: Record<string, string> = {
+  x: "X (旧Twitter)",
+  instagram: "Instagram",
+  facebook: "Facebook",
+  linkedin: "LinkedIn",
+  note: "note",
+  youtube: "YouTube",
+  tiktok: "TikTok",
+  threads: "Threads",
+  github: "GitHub",
+  blog: "ブログ・ウェブサイト",
+};
+
 const input = { width: "100%", padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8 } as const;
 const btn = (primary = true) =>
   ({
@@ -110,6 +123,8 @@ export default function ContactDetailPage() {
   const [exValue, setExValue] = useState("");
   const [exStatus, setExStatus] = useState("done");
   const [exDueAt, setExDueAt] = useState("");
+  const [snsAccounts, setSnsAccounts] = useState<{ platform: string; handle: string; url: string }[]>([]);
+  const [snsInput, setSnsInput] = useState("");
   const [channel, setChannel] = useState("email");
   const [sendAt, setSendAt] = useState("");
   const [linkSlug, setLinkSlug] = useState("");
@@ -145,6 +160,8 @@ export default function ContactDetailPage() {
       setExchanges(exBody.exchanges ?? []);
       setExLedger(exBody.ledger ?? null);
     }
+    const snsRes = await apiFetch(`contacts/${id}/sns`);
+    if (snsRes.ok) setSnsAccounts((await snsRes.json()).accounts ?? []);
     setForm({
       personalProfile: body.contact.personalProfile ?? "",
       valuesProfile: body.contact.valuesProfile ?? "",
@@ -342,6 +359,75 @@ export default function ContactDetailPage() {
           </button>
           <button style={btn(false)} onClick={() => void refreshDigest(true)} disabled={!!busy}>
             公開情報も調べてまとめ直す
+          </button>
+        </div>
+      </section>
+
+      <section style={{ marginTop: 24, border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+        <h2 style={{ fontSize: 18, margin: 0 }}>この方のSNS・公開の発信</h2>
+        <p style={{ fontSize: 13, color: "#475569", margin: "6px 0" }}>
+          この方が公開している X・Instagram・LinkedIn・note・ブログなどを控えておくと、最近の様子をつかんで
+          お声がけの一言に生かせます。上の「公開情報も調べてまとめ直す」を押したときだけ、ここを手がかりに近況を調べます。
+        </p>
+        {snsAccounts.length > 0 ? (
+          <ul style={{ listStyle: "none", padding: 0, margin: "8px 0", display: "grid", gap: 6 }}>
+            {snsAccounts.map((a, i) => (
+              <li key={i} style={{ fontSize: 14, display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ color: "#64748b", minWidth: 120 }}>{SNS_LABEL[a.platform] ?? a.platform}</span>
+                {a.url ? (
+                  <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", wordBreak: "break-all" }}>
+                    {a.handle || a.url}
+                  </a>
+                ) : (
+                  <span>{a.handle}</span>
+                )}
+                <button
+                  style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 12 }}
+                  disabled={!!busy}
+                  aria-label="外す"
+                  onClick={async () => {
+                    const next = snsAccounts.filter((_, j) => j !== i);
+                    const body = await call(
+                      `contacts/${contact.id}/sns`,
+                      { method: "PUT", body: JSON.stringify({ accounts: next }) },
+                      "外しました",
+                    );
+                    if (body) setSnsAccounts(body.accounts ?? []);
+                  }}
+                >
+                  外す
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p style={{ fontSize: 14, color: "#64748b", margin: "8px 0" }}>まだ登録がありません</p>
+        )}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            style={{ ...input, flex: 1, minWidth: 200 }}
+            placeholder="URL を貼るか、note: ユーザー名 のように"
+            aria-label="SNS アカウント"
+            value={snsInput}
+            onChange={(e) => setSnsInput(e.target.value)}
+          />
+          <button
+            style={btn(false)}
+            disabled={!!busy || !snsInput.trim()}
+            onClick={async () => {
+              const merged = [...snsAccounts.map((a) => a.url || `${a.platform}: ${a.handle}`), snsInput].join("\n");
+              const body = await call(
+                `contacts/${contact.id}/sns`,
+                { method: "PUT", body: JSON.stringify({ raw: merged }) },
+                "登録しました",
+              );
+              if (body) {
+                setSnsAccounts(body.accounts ?? []);
+                setSnsInput("");
+              }
+            }}
+          >
+            登録する
           </button>
         </div>
       </section>

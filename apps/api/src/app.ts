@@ -38,6 +38,7 @@ import {
   type ExchangeCore,
 } from "./lib/exchanges.js";
 import { parseIsoIntervals, meetingSlotProposals, toIso } from "./lib/timeslots.js";
+import { parseSnsField, serializeSnsEntries, snsSearchQueries, snsPlatformLabel, type SnsEntry } from "./lib/sns.js";
 import { parseIcsBusy, looksLikeIcs, buildMeetingInviteIcs } from "./lib/ics.js";
 import {
   buildSendGridMailer,
@@ -1857,6 +1858,13 @@ export function createApp(deps: AppDeps) {
       contact.personalProfile ? `近況・状況: ${contact.personalProfile}` : "",
       contact.valuesProfile ? `価値観・大切にしていること: ${contact.valuesProfile}` : "",
       contact.notes ? `メモ: ${contact.notes}` : "",
+      contact.profileDigest ? `いまのこの方 (蓄積した記録からの見立て): ${contact.profileDigest}` : "",
+      (() => {
+        const accounts = parseSnsField(contact.sns);
+        return accounts.length > 0
+          ? `公開アカウント: ${accounts.map((e) => `${snsPlatformLabel(e.platform)}(${e.url || e.handle})`).join(" / ")}`
+          : "";
+      })(),
       interactions.length > 0
         ? `最近のやりとり:\n${interactions
             .map((i) => `- ${i.occurredAt.toISOString().slice(0, 10)} ${i.type}${i.notes ? ` (${i.notes})` : ""}`)
@@ -2213,16 +2221,30 @@ export function createApp(deps: AppDeps) {
     locale: string,
     actor: AiActor,
   ): Promise<{ ok: true; digest: string; searched: boolean } | { ok: false; status: 422 | 503 | 502; body: unknown }> => {
+    const snsEntries = parseSnsField(contact.sns);
+    const snsNote =
+      snsEntries.length > 0
+        ? `この方の公開アカウント:\n${snsEntries
+            .map((e) => `- ${snsPlatformLabel(e.platform)}: ${e.url || e.handle}`)
+            .join("\n")}`
+        : "";
     let searchNote = "";
     let searched = false;
-    if (includePublic && ddSearch && (contact.company || contact.sns)) {
+    // 公開情報の検索はユーザーが明示的に頼んだときだけ。SNS ハンドルを軸に本人を特定し、
+    // 近況 (最近の公開の発信) を優先して集める (相手の尊厳: 私生活の過剰詮索はしない)。
+    if (includePublic && ddSearch && (snsEntries.length > 0 || contact.company)) {
       try {
-        const results = await ddSearch([contact.name, contact.company ?? ""].filter(Boolean).join(" "));
-        if (results.length > 0) {
-          searchNote = results
-            .slice(0, 5)
-            .map((r) => `出典 ${r.url} : ${r.title} ${r.snippet.slice(0, 300)}`)
-            .join("\n");
+        const queries = snsSearchQueries(contact.name, snsEntries, contact.company);
+        const batches = await Promise.all(
+          queries.map((q) => ddSearch(q).catch(() => [])),
+        );
+        const seen = new Set<string>();
+        const items = batches
+          .flat()
+          .filter((r) => r.url && !seen.has(r.url) && seen.add(r.url))
+          .slice(0, 6);
+        if (items.length > 0) {
+          searchNote = items.map((r) => `出典 ${r.url} : ${r.title} ${r.snippet.slice(0, 300)}`).join("\n");
           searched = true;
         }
       } catch {
@@ -2232,7 +2254,10 @@ export function createApp(deps: AppDeps) {
     const userMessage = [
       "これまでの記録:",
       context,
-      searchNote ? `\n公開情報の検索結果 (同姓同名に注意。本人と確信できるものだけ使う):\n${searchNote}` : "",
+      snsNote ? `\n${snsNote}` : "",
+      searchNote
+        ? `\n公開情報の検索結果 (同姓同名に注意。本人と確信できるものだけ使う。相手の不利益になる詮索はしない):\n${searchNote}`
+        : "",
       `今日の日付: ${new Date().toISOString().slice(0, 10)}`,
     ]
       .filter(Boolean)
@@ -2274,6 +2299,47 @@ export function createApp(deps: AppDeps) {
       data: { profileDigest: r.digest, profileDigestAt: new Date() },
     });
     return c.json({ digest: updated.profileDigest, digestAt: updated.profileDigestAt, searched: r.searched });
+  });
+
+  // SNS アカウントの参照。暗号化された自由記述 sns を「platform ごとの公開アカウント」に
+  // 構造化して返す (公開プロフィール URL つき)。近況把握・文面への接地に使う。
+  app.get("/api/contacts/:id/sns", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+      select: { id: true, sns: true },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    return c.json({ accounts: parseSnsField(contact.sns) });
+  });
+
+  // SNS アカウントの保存。ユーザーが知っている公開アカウント (URL / "platform: handle") を
+  // 記録する。読めた分だけ正規化して sns に上書き保存する (暗号化は透過拡張が担う)。
+  app.put("/api/contacts/:id/sns", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+      select: { id: true },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const b = await c.req
+      .json<{ accounts?: unknown; raw?: unknown }>()
+      .catch(() => ({}) as { accounts?: unknown; raw?: unknown });
+    // accounts (構造化配列) か raw (自由記述) のどちらでも受ける
+    let entries: SnsEntry[];
+    if (Array.isArray(b.accounts)) {
+      entries = parseSnsField(
+        b.accounts
+          .map((a) => (a && typeof a === "object" ? ((a as { url?: string; handle?: string }).url ?? (a as { handle?: string }).handle ?? "") : String(a)))
+          .join("\n"),
+      );
+    } else {
+      entries = parseSnsField(typeof b.raw === "string" ? b.raw : "");
+    }
+    const serialized = serializeSnsEntries(entries);
+    const updated = await prisma.contact.update({
+      where: { id: contact.id },
+      data: { sns: serialized || null },
+    });
+    return c.json({ accounts: parseSnsField(updated.sns) });
   });
 
   // 相手ノートの自動更新 (バッチ)。新しい記録が積まれた人だけを対象に、1 回の実行で少数ずつ回す
