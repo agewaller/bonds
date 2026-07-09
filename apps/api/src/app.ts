@@ -39,6 +39,7 @@ import {
 } from "./lib/exchanges.js";
 import { parseIsoIntervals, meetingSlotProposals, toIso } from "./lib/timeslots.js";
 import { parseSnsField, serializeSnsEntries, snsSearchQueries, snsPlatformLabel, type SnsEntry } from "./lib/sns.js";
+import { randomUUID } from "node:crypto";
 import { parseIcsBusy, looksLikeIcs, buildMeetingInviteIcs } from "./lib/ics.js";
 import {
   buildSendGridMailer,
@@ -936,9 +937,15 @@ export function createApp(deps: AppDeps) {
     let skipped = 0;
     let enriched = 0;
     const sameName = new Set<string>();
+    // 大量取込 (Eight 名刺 CSV 等) で 1 行ずつ INSERT すると DB 往復が積み重なって遅い。
+    // 新規は createMany で一括投入する。まだ DB に無い「保留中」の行はメモリ上で育て、
+    // 既に DB にある行だけ UPDATE する (pending は id で見分ける)。
+    const toCreate: Array<Record<string, unknown>> = [];
+    const pending = new Set<string>();
+    const pendingUpdates = new Map<string, Record<string, unknown>>(); // 既存 (永続) 行の後追い更新をまとめる
 
     // 既存の相手に、空いている項目の補完とメモの書き足しだけ行う (上書きしない)。
-    const enrichContact = async (target: Row, r: ParsedContact): Promise<boolean> => {
+    const enrichContact = (target: Row, r: ParsedContact): boolean => {
       const fill: Record<string, unknown> = {};
       const fields = ["furigana", "phone", "email", "address", "company", "title"] as const;
       for (const f of fields) {
@@ -951,8 +958,13 @@ export function createApp(deps: AppDeps) {
         fill.notes = `${target.notes ? `${target.notes}\n` : ""}${note}`.slice(0, MAX_NOTES_CHARS);
       }
       if (Object.keys(fill).length === 0) return false;
-      await prisma.contact.update({ where: { id: target.id }, data: fill });
-      Object.assign(target, fill);
+      Object.assign(target, fill); // target は toCreate の実体 or existing の実体を指す (メモリ反映)
+      if (pending.has(target.id)) {
+        // まだ作成前 = createMany のデータをそのまま育てる (DB 往復なし)
+      } else {
+        // 永続済み = あとで 1 件ずつ更新 (fill をマージして最後にまとめて流す)
+        pendingUpdates.set(target.id, { ...(pendingUpdates.get(target.id) ?? {}), ...fill });
+      }
       const k = identityKeys(target);
       if (k.email) byEmail.set(k.email, target);
       if (k.phone) byPhone.set(k.phone, target);
@@ -969,7 +981,7 @@ export function createApp(deps: AppDeps) {
       // 1) メール/電話が既存と一致 = 同一人物。名前が違っても結合する。
       const strong = (rk.email && byEmail.get(rk.email)) || (rk.phone && byPhone.get(rk.phone));
       if (strong) {
-        if (await enrichContact(strong, r)) enriched++;
+        if (enrichContact(strong, r)) enriched++;
         else skipped++;
         byName.set(name, strong.id); // この名前で来た接触記録は結合先にひもづける
         continue;
@@ -979,47 +991,68 @@ export function createApp(deps: AppDeps) {
         sameName.add(name);
         if (nameCount.get(name) === 1) {
           const target = existing.find((e) => e.name === name);
-          if (target && (await enrichContact(target, r))) enriched++;
+          if (target && enrichContact(target, r)) enriched++;
         }
         skipped++;
         continue;
       }
-      // 3) 新規作成。
-      const created = await prisma.contact.create({
-        data: { ownerUid, name, source: r.source ?? "import", ...contactData(r as Record<string, unknown>) },
-      });
-      byName.set(name, created.id);
+      // 3) 新規作成 (id を先に採番し、実体を maps に載せてから一括投入する)。
+      const id = randomUUID();
+      const data: Record<string, unknown> = {
+        id,
+        ownerUid,
+        name,
+        source: r.source ?? "import",
+        ...contactData(r as Record<string, unknown>),
+      };
+      toCreate.push(data);
+      pending.add(id);
+      const rowLike = data as unknown as Row; // id/name/平文フィールドを持つ (dedup と接触ひもづけに使う)
+      byName.set(name, id);
       nameCount.set(name, 1);
-      existing.push(created);
-      // キーは平文の取込値から作る (created は暗号化列を含む可能性があるため)
-      if (rk.email) byEmail.set(rk.email, created);
-      if (rk.phone) byPhone.set(rk.phone, created);
+      existing.push(rowLike);
+      if (rk.email) byEmail.set(rk.email, rowLike);
+      if (rk.phone) byPhone.set(rk.phone, rowLike);
       imported++;
     }
+    // 一括投入 (暗号化は透過拡張が createMany の data 配列に効く)。
+    if (toCreate.length > 0) await prisma.contact.createMany({ data: toCreate as never });
+    // 既存行の補完はまとめて (件数は通常少ない)。
+    for (const [id, data] of pendingUpdates) {
+      await prisma.contact.update({ where: { id }, data: data as never });
+    }
+
     let interactionsAdded = 0;
     const daysByContact = new Map<string, Set<string>>();
+    const toCreateInteractions: Array<Record<string, unknown>> = [];
     for (const it of parsed.interactions) {
       const contactId = byName.get(clampName(it.name));
       if (!contactId) continue;
       if (!daysByContact.has(contactId)) {
-        const rows = await prisma.contactInteraction.findMany({
-          where: { contactId },
-          select: { occurredAt: true },
-        });
-        daysByContact.set(contactId, new Set(rows.map((r) => r.occurredAt.toISOString().slice(0, 10))));
+        // 新規作成した相手 (pending) には既存の接触が無いので DB を引かない (往復削減)。
+        if (pending.has(contactId)) {
+          daysByContact.set(contactId, new Set());
+        } else {
+          const rows = await prisma.contactInteraction.findMany({
+            where: { contactId },
+            select: { occurredAt: true },
+          });
+          daysByContact.set(contactId, new Set(rows.map((r) => r.occurredAt.toISOString().slice(0, 10))));
+        }
       }
       const seen = daysByContact.get(contactId)!;
       if (seen.has(it.occurredAt)) continue;
-      await prisma.contactInteraction.create({
-        data: {
-          contactId,
-          type: it.type,
-          occurredAt: new Date(`${it.occurredAt}T12:00:00Z`),
-          notes: typeof it.note === "string" && it.note.trim() ? it.note.trim().slice(0, 1000) : null,
-        },
+      toCreateInteractions.push({
+        contactId,
+        type: it.type,
+        occurredAt: new Date(`${it.occurredAt}T12:00:00Z`),
+        notes: typeof it.note === "string" && it.note.trim() ? it.note.trim().slice(0, 1000) : null,
       });
       seen.add(it.occurredAt);
       interactionsAdded++;
+    }
+    if (toCreateInteractions.length > 0) {
+      await prisma.contactInteraction.createMany({ data: toCreateInteractions as never });
     }
     return {
       imported,
