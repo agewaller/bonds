@@ -45,6 +45,14 @@ const FACET_LIST: { key: keyof Facets; label: string }[] = [
   { key: "cautions", label: "気をつけたいこと" },
   { key: "opportunities", label: "こちらから貢献できそうなこと" },
 ];
+type RelationshipScore = {
+  distance: number;
+  depth: number;
+  potential: number;
+  depthBand: string;
+  potentialBand: string;
+  reason: string;
+};
 type Interaction = { id: string; type: string; occurredAt: string; notes: string | null };
 type Gift = { id: string; occasion: string; direction: string; item: string; givenAt: string };
 type Exchange = {
@@ -100,12 +108,35 @@ function fmtSlot(s: Slot) {
   return `${st.getMonth() + 1}月${st.getDate()}日 ${st.getHours()}:${String(st.getMinutes()).padStart(2, "0")} から ${en.getHours()}:${String(en.getMinutes()).padStart(2, "0")}`;
 }
 
+// 距離感 1〜5 のやさしいラベル (専門用語を避ける。65歳ペルソナ)。
+const DISTANCE_LABEL: Record<number, string> = {
+  1: "とても近い",
+  2: "近い",
+  3: "ほどよい",
+  4: "ときどき",
+  5: "たまに",
+};
+
+function ScoreTile({ label, value, suffix, caption }: { label: string; value: string; suffix: string; caption: string }) {
+  return (
+    <div style={{ flex: "1 1 120px", minWidth: 120, background: "#f8fafc", borderRadius: 12, padding: "12px 14px" }}>
+      <div style={{ color: "#64748b", fontSize: 13 }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 2, margin: "2px 0" }}>
+        <span style={{ fontSize: 30, fontWeight: 700, color: "#0f172a", fontVariantNumeric: "tabular-nums" }}>{value}</span>
+        <span style={{ color: "#94a3b8", fontSize: 14 }}>{suffix}</span>
+      </div>
+      {caption ? <div style={{ color: "#0891b2", fontSize: 13 }}>{caption}</div> : null}
+    </div>
+  );
+}
+
 export default function ContactDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [contact, setContact] = useState<Contact | null>(null);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [gifts, setGifts] = useState<Gift[]>([]);
   const [linkedSubjects, setLinkedSubjects] = useState<LinkedSubject[]>([]);
+  const [relScore, setRelScore] = useState<RelationshipScore | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [giftItem, setGiftItem] = useState("");
   const [giftOccasion, setGiftOccasion] = useState("other");
@@ -154,6 +185,7 @@ export default function ContactDetailPage() {
     setInteractions(body.interactions);
     setGifts(body.gifts ?? []);
     setLinkedSubjects(body.linkedSubjects ?? []);
+    setRelScore(body.relationshipScore ?? null);
     const exRes = await apiFetch(`contacts/${id}/exchanges`);
     if (exRes.ok) {
       const exBody = await exRes.json();
@@ -335,6 +367,22 @@ export default function ContactDetailPage() {
       {notice && <p style={{ color: "#166534", background: "#f0fdf4", padding: 8, borderRadius: 8 }}>{notice}</p>}
       {error && (
         <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>{error}</p>
+      )}
+
+      {relScore && (
+        <section style={{ marginTop: 20, border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+          <h2 style={{ fontSize: 18, margin: "0 0 4px" }}>この方との関係</h2>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", margin: "10px 0" }}>
+            <ScoreTile label="距離感" value={`${relScore.distance}`} suffix="/5" caption={DISTANCE_LABEL[relScore.distance] ?? ""} />
+            <ScoreTile label="深さ" value={`${relScore.depth}`} suffix="/100" caption={relScore.depthBand} />
+            <ScoreTile label="のびしろ" value={`${relScore.potential}`} suffix="/100" caption={relScore.potentialBand} />
+          </div>
+          <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13, lineHeight: 1.8 }}>{relScore.reason}</p>
+          <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 12, lineHeight: 1.7 }}>
+            距離感はやりとりの多さと新しさから、深さはこれまでの積み重ねから、のびしろは把握できている強みや目標とまだ縮められる間合いから、
+            記録をもとに自動で見立てています。記録が増えるほど確かになります。
+          </p>
+        </section>
       )}
 
       <section

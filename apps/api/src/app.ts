@@ -24,7 +24,7 @@ import { canonicalizeModelId, isValidModelId, type ModelId } from "./lib/cost.js
 import { runPersonDd, getMonthlyCostJpy, getMonthlyCostJpyForUser, type DdRunEvent } from "./dd/runner.js";
 import { normalizeLocale } from "./lib/locale.js";
 import { clampScore } from "./lib/dd-spec.js";
-import { clampDistance, calculateIsolationScore, todaySuggestions, suggestDistance } from "./lib/relationship.js";
+import { clampDistance, calculateIsolationScore, todaySuggestions, suggestDistance, scoreRelationship } from "./lib/relationship.js";
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { identityKeys, normalizeName } from "./lib/identity.js";
@@ -799,6 +799,70 @@ export function createApp(deps: AppDeps) {
     return c.json({ jobs, active });
   });
 
+  // 関係性スコア (距離感・深さ・ポテンシャル) を、この 1 人について算出する。
+  // やりとり・贈り物・台帳 (貸し借り/貢献) の量と、論点整理 (facets)・相手ノートから
+  // 「どれだけ把握できているか」「伸ばせる手がかりがどれだけあるか」を数える。純粋計算は
+  // scoreRelationship に委ね、ここは DB からの信号集めに徹する。
+  const computeRelationshipScore = async (
+    contactId: string,
+    contact: { distance: number; profileFacets: string | null; profileDigest: string | null },
+  ) => {
+    const [interactions, giftCount, exchanges] = await Promise.all([
+      prisma.contactInteraction.findMany({ where: { contactId }, select: { occurredAt: true } }),
+      prisma.contactGift.count({ where: { contactId } }),
+      prisma.exchange.findMany({ where: { contactId }, select: { direction: true } }),
+    ]);
+    const days = new Set<string>();
+    let first: number | null = null;
+    let last: number | null = null;
+    for (const it of interactions) {
+      const t = it.occurredAt.getTime();
+      days.add(it.occurredAt.toISOString().slice(0, 10));
+      if (first === null || t < first) first = t;
+      if (last === null || t > last) last = t;
+    }
+    const DAY = 86_400_000;
+    const now = Date.now();
+    let exchangeInbound = 0;
+    let exchangeOutbound = 0;
+    for (const e of exchanges) {
+      if (e.direction === "inbound") exchangeInbound++;
+      else exchangeOutbound++;
+    }
+    // 論点整理 (facets) から「把握度」と「伸ばせる手がかり」を数える。
+    // 把握度 = 埋まっている観点の数 (相手ノートがあれば +1)。
+    // 手がかり = 強み・目標・貢献余地の項目数 (これが伸ばす起点になる)。
+    let understandingSignals = contact.profileDigest ? 1 : 0;
+    let potentialSignals = 0;
+    try {
+      const f = contact.profileFacets ? (JSON.parse(contact.profileFacets) as Record<string, unknown>) : null;
+      if (f) {
+        for (const k of ["summary", "contact", "status", "work", "family", "health", "values"]) {
+          if (typeof f[k] === "string" && (f[k] as string).trim()) understandingSignals++;
+        }
+        for (const k of ["concerns", "likes", "cautions"]) {
+          if (Array.isArray(f[k]) && (f[k] as unknown[]).length) understandingSignals++;
+        }
+        for (const k of ["skills", "goals", "opportunities"]) {
+          if (Array.isArray(f[k])) potentialSignals += Math.min(3, (f[k] as unknown[]).length);
+        }
+      }
+    } catch {
+      // facets が壊れていてもスコアは出す (把握度 0 のまま)
+    }
+    return scoreRelationship({
+      interactionCount: interactions.length,
+      distinctDays: days.size,
+      daysSinceLast: last === null ? null : Math.floor((now - last) / DAY),
+      spanDays: first !== null && last !== null ? Math.floor((last - first) / DAY) : 0,
+      giftCount,
+      exchangeInbound,
+      exchangeOutbound,
+      understandingSignals,
+      potentialSignals,
+    });
+  };
+
   app.get("/api/contacts/:id", async (c) => {
     const contact = await prisma.contact.findFirst({
       where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
@@ -825,7 +889,12 @@ export function createApp(deps: AppDeps) {
       const sub = subjects.find((x) => x.id === l.subjectId);
       return { linkId: l.id, slug: sub?.slug ?? "", name: sub?.name ?? "" };
     });
-    return c.json({ contact, interactions, gifts, linkedSubjects });
+    const relationshipScore = await computeRelationshipScore(contact.id, {
+      distance: contact.distance,
+      profileFacets: contact.profileFacets,
+      profileDigest: contact.profileDigest,
+    });
+    return c.json({ contact, interactions, gifts, linkedSubjects, relationshipScore });
   });
 
   app.put("/api/contacts/:id", async (c) => {

@@ -5,9 +5,11 @@ import {
   todaySuggestions,
   clampDistance,
   suggestDistance,
+  scoreRelationship,
   IDEAL_INTERVAL_DAYS,
   type ContactLike,
   type InteractionLike,
+  type RelationshipScoreSignals,
 } from "../../src/lib/relationship.js";
 
 const NOW = new Date("2026-07-04T12:00:00Z");
@@ -162,5 +164,78 @@ describe("suggestDistance", () => {
       expect(r.suggested).toBeGreaterThanOrEqual(1);
       expect(r.suggested).toBeLessThanOrEqual(5);
     }
+  });
+});
+
+describe("scoreRelationship (距離感・深さ・ポテンシャル)", () => {
+  const base: RelationshipScoreSignals = {
+    interactionCount: 0,
+    distinctDays: 0,
+    daysSinceLast: null,
+    spanDays: 0,
+    giftCount: 0,
+    exchangeInbound: 0,
+    exchangeOutbound: 0,
+    understandingSignals: 0,
+    potentialSignals: 0,
+  };
+
+  it("手がかりが無い相手は深さもポテンシャルも低く出る", () => {
+    const r = scoreRelationship(base);
+    expect(r.distance).toBe(5);
+    expect(r.depth).toBeLessThan(20);
+    expect(r.potential).toBeLessThan(20);
+    expect(r.reason).toContain("つかめていません");
+  });
+
+  it("長く厚い付き合いは深さが高い", () => {
+    const r = scoreRelationship({
+      ...base,
+      interactionCount: 30,
+      distinctDays: 20,
+      daysSinceLast: 5,
+      spanDays: 400,
+      giftCount: 3,
+      exchangeInbound: 2,
+      exchangeOutbound: 2,
+      understandingSignals: 8,
+    });
+    expect(r.depth).toBeGreaterThanOrEqual(80);
+    expect(r.distance).toBeLessThanOrEqual(2);
+  });
+
+  it("強み・目標がつかめていて、まだ距離がある相手はポテンシャルが高い", () => {
+    const r = scoreRelationship({
+      ...base,
+      interactionCount: 3,
+      distinctDays: 3,
+      daysSinceLast: 120,
+      spanDays: 120,
+      understandingSignals: 2,
+      potentialSignals: 5,
+    });
+    expect(r.distance).toBeGreaterThanOrEqual(4);
+    expect(r.potential).toBeGreaterThan(50);
+  });
+
+  it("depth も potential も 0〜100 に収まる", () => {
+    for (const s of [
+      { ...base, interactionCount: 9999, distinctDays: 9999, spanDays: 99999, giftCount: 99, exchangeInbound: 99, exchangeOutbound: 99, understandingSignals: 99, potentialSignals: 99, daysSinceLast: 0 },
+      base,
+    ]) {
+      const r = scoreRelationship(s);
+      expect(r.depth).toBeGreaterThanOrEqual(0);
+      expect(r.depth).toBeLessThanOrEqual(100);
+      expect(r.potential).toBeGreaterThanOrEqual(0);
+      expect(r.potential).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it("帯 (band) の言葉が付く", () => {
+    const r = scoreRelationship({ ...base, interactionCount: 15, distinctDays: 10, spanDays: 200, understandingSignals: 5, potentialSignals: 3, daysSinceLast: 30 });
+    expect(typeof r.depthBand).toBe("string");
+    expect(r.depthBand.length).toBeGreaterThan(0);
+    expect(typeof r.potentialBand).toBe("string");
+    expect(r.potentialBand.length).toBeGreaterThan(0);
   });
 });

@@ -188,6 +188,75 @@ export function suggestDistance(s: DistanceSignals): DistanceSuggestion {
   return { suggested, closeness, reason, confident };
 }
 
+// 関係性のスコアリング (2026-07-09 オーナー宣言の 3 軸を、この 1 人について定量化)。
+// - 距離感: 近さ (1〜5、suggestDistance)。
+// - 深さ (depth 0〜100): これまでの積み重ね。やりとりの量・長さ・双方向のやり取り・
+//   どれだけ相手を把握できているか。
+// - ポテンシャル (potential 0〜100): これから伸ばせる余地。相手の強み・貢献余地・目標を
+//   どれだけ把握できているか × まだ近づききっていない余白。
+// 純粋関数。手がかりが乏しいときは低めに出し、勝手な断定はしない。
+export type RelationshipScoreSignals = {
+  interactionCount: number;
+  distinctDays: number;
+  daysSinceLast: number | null;
+  spanDays: number; // 最初の接触〜最後の接触の日数 (関係の長さ。1 点しかなければ 0)
+  giftCount: number;
+  exchangeInbound: number; // いただいた/お借りした等
+  exchangeOutbound: number; // こちらから
+  understandingSignals: number; // 把握できている論点の数 (facets の非空項目 + 相手ノート有無)
+  potentialSignals: number; // 相手の強み・貢献余地・目標など「伸ばせる手がかり」の数
+};
+
+export type RelationshipScore = {
+  distance: number; // 1〜5
+  depth: number; // 0〜100
+  potential: number; // 0〜100
+  depthBand: string;
+  potentialBand: string;
+  reason: string;
+};
+
+function band(v: number, labels: [string, string, string, string, string]): string {
+  if (v < 20) return labels[0];
+  if (v < 40) return labels[1];
+  if (v < 60) return labels[2];
+  if (v < 80) return labels[3];
+  return labels[4];
+}
+
+export function scoreRelationship(s: RelationshipScoreSignals): RelationshipScore {
+  const distance = suggestDistance({
+    interactionCount: s.interactionCount,
+    distinctDays: s.distinctDays,
+    daysSinceLast: s.daysSinceLast,
+    giftCount: s.giftCount,
+  }).suggested;
+
+  // 深さ: 量 (最大40) + 長さ (最大20) + 双方向のやり取り (最大20) + 把握度 (最大20)
+  const volume = Math.min(40, s.distinctDays * 3 + s.interactionCount);
+  const longevity = Math.min(20, Math.floor(s.spanDays / 30) * 4); // 1か月ごとに+4、5か月で頭打ち
+  const reciprocity = Math.min(20, (s.giftCount + Math.min(s.exchangeInbound, s.exchangeOutbound)) * 5);
+  const understanding = Math.min(20, s.understandingSignals * 3);
+  const depth = Math.max(0, Math.min(100, volume + longevity + reciprocity + understanding));
+
+  // ポテンシャル: 伸ばせる手がかり (最大70) × 余白 (近すぎるほど「これから」は小さい)。
+  const latent = Math.min(70, s.potentialSignals * 14);
+  const room = distance >= 4 ? 1.0 : distance === 3 ? 0.85 : distance === 2 ? 0.65 : 0.45;
+  // 把握できていないと伸ばしようがないので、手がかりゼロなら低く出す
+  const potential = Math.max(0, Math.min(100, Math.round(latent * room + (s.potentialSignals > 0 ? 12 : 0))));
+
+  const depthBand = band(depth, ["これから", "芽生え", "育っている", "厚い", "とても厚い"]);
+  const potentialBand = band(potential, ["未知数", "少し", "そこそこ", "大きい", "とても大きい"]);
+  const parts: string[] = [];
+  parts.push(`これまでの深さは${depthBand}`);
+  if (s.understandingSignals === 0) parts.push("まだこの方の背景がつかめていません");
+  parts.push(`伸ばせる余地は${potentialBand}`);
+  if (s.potentialSignals > 0 && distance >= 4) parts.push("強みや目標がつかめている一方でまだ距離があり、育てがいがあります");
+  const reason = `${parts.join("、")}。`;
+
+  return { distance, depth, potential, depthBand, potentialBand, reason };
+}
+
 // 誕生日が now から maxDays 日以内 (今日含む) の連絡先。
 export function upcomingBirthdays(
   contacts: ContactLike[],
