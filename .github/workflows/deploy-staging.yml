@@ -1,0 +1,122 @@
+# bonds を staging (GCP Cloud Run、-staging 接尾辞リソース) へデプロイする。
+# 手動起動のみ。CLAUDE.md / cares の 2 ゲート:
+#  1) test-gate (unit + integration 実 Postgres) が緑でないと deploy に進まない
+#  2) deploy ジョブは environment: staging。GitHub の Environment 保護ルールで
+#     「必須レビュア」を付ければ実行前に承認 (スマホ可) を要求できる = 承認ゲート
+#
+# 一度だけの準備 (オーナーが実施): infra/scripts/10-create-staging.sh
+#   - Cloud SQL bonds-db-staging / Artifact Registry bonds-images-staging /
+#     Secret bonds-db-password-staging を作成
+#
+# staging は普段 Cloud SQL を停止 (activation-policy=NEVER) しておき、このワークフローが
+# 起動→migrate→deploy し、必要なら最後に停止する (stop_sql_after)。
+# デプロイ後は e2e-audit ワークフローを base_url=staging web で回し、
+# ユーザー目線監査 + リンク切れ監査 (内部/外部) を本番前に通す。
+name: deploy-staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "デプロイ対象 (all / api / web)"
+        default: "all"
+      skip_migrate:
+        description: "DB マイグレーションをスキップ (スキーマ変更が無いとき)"
+        type: boolean
+        default: false
+      stop_sql_after:
+        description: "デプロイ後に staging Cloud SQL を停止する (既定: 停止しない)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  BONDS_ENV: staging
+  PROJECT: arctic-anvil-497002-q2
+  REGION: asia-northeast1
+  SQL_INSTANCE: bonds-db-staging
+
+jobs:
+  test-gate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: bonds
+          POSTGRES_PASSWORD: bonds
+          POSTGRES_DB: bonds
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bonds" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - name: unit + integration (実 Postgres)
+        run: pnpm test
+        env:
+          TEST_DATABASE_URL: postgresql://bonds:bonds@localhost:5432/bonds_test
+
+  deploy:
+    needs: test-gate
+    runs-on: ubuntu-latest
+    environment: staging # ← Environment 保護ルールで承認ゲートを掛けられる
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: staging Cloud SQL を起動 (普段は停止している)
+        run: |
+          gcloud sql instances patch "$SQL_INSTANCE" --project="$PROJECT" --activation-policy=ALWAYS --quiet
+          # RUNNABLE になるまで待つ
+          for i in $(seq 1 40); do
+            state="$(gcloud sql instances describe "$SQL_INSTANCE" --project="$PROJECT" --format='value(state)')"
+            [ "$state" = "RUNNABLE" ] && break
+            echo "waiting SQL ($state) ..."; sleep 15
+          done
+      - name: migrate (Cloud SQL staging)
+        if: ${{ inputs.skip_migrate != true }}
+        run: |
+          curl -sSLo cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.2/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy && sudo mv cloud-sql-proxy /usr/local/bin/
+          corepack enable && pnpm install --frozen-lockfile
+          bash infra/scripts/05-migrate-prod.sh
+      - name: build & push images (staging AR repo)
+        env:
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+        run: bash infra/scripts/06-build-push-images.sh
+      - name: deploy cloud run (api → web, -staging)
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+        run: |
+          case "${{ github.event.inputs.only }}" in
+            api) bash infra/scripts/07-deploy-cloud-run.sh --only=api ;;
+            web) bash infra/scripts/07-deploy-cloud-run.sh --only=web ;;
+            *)   bash infra/scripts/07-deploy-cloud-run.sh ;;
+          esac
+      - name: health check (staging)
+        run: |
+          API_URL="$(gcloud run services describe bonds-api-staging --project=$PROJECT --region=$REGION --format='value(status.url)')"
+          curl -fsS "$API_URL/api/healthz" | grep -q '"ok"' && echo "healthz OK: $API_URL"
+          WEB_URL="$(gcloud run services describe bonds-web-staging --project=$PROJECT --region=$REGION --format='value(status.url)')"
+          echo "staging web: $WEB_URL (この URL で e2e-audit を回す)"
+      - name: staging Cloud SQL を停止 (任意)
+        if: ${{ inputs.stop_sql_after == true }}
+        run: gcloud sql instances patch "$SQL_INSTANCE" --project="$PROJECT" --activation-policy=NEVER --quiet

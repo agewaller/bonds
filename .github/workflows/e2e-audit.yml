@@ -41,8 +41,8 @@ jobs:
           E2E_BASE_URL: ${{ inputs.base_url }}
           E2E_INCLUDE_AI: ${{ inputs.include_ai && '1' || '0' }}
         # smoke.spec.ts は localhost フルスタック前提 (api /healthz を localhost:8080 で叩く)
-        # なので実機監査からは除外し、AI スモークとログイン後監査だけを回す。
-        run: pnpm exec playwright test --config e2e/playwright.config.ts ai-answers.spec.ts post-login-audit.spec.ts
+        # なので実機監査からは除外し、AI スモーク・ログイン後監査・リンク切れ監査 (内部+外部) を回す。
+        run: pnpm exec playwright test --config e2e/playwright.config.ts ai-answers.spec.ts post-login-audit.spec.ts link-audit.spec.ts
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4

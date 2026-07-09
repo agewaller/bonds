@@ -160,9 +160,12 @@ e2e           Playwright（ユーザー目線監査 + AI 実機スモーク）
 「テストしてください」と指示されたら以下を必ず全部実施する:
 
 1. `pnpm test` — ユニット → 結合（実 Postgres `bonds_test`。`scripts/setup-test-db.sh` が冪等に準備）
-2. `pnpm test:e2e` — **ユーザー目線監査**。全画面が 5xx/エラーバナー/JS エラー無しで
+2. `pnpm test:e2e` — **ユーザー目線監査**（`post-login-audit`）+ **リンク切れ監査**
+   （`link-audit`＝主要画面の内部リンク先が 404/5xx でない ＋ 外部リンク先＝SNS の取り出し方・
+   データDLページ・翻訳リンク等がすべて到達可能）。全画面が 5xx/エラーバナー/JS エラー無しで
    開くか・リンク切れ・主要ボタン（プリインストール Chromium 環境では
-   `PW_CHROMIUM_PATH=/opt/pw-browsers/chromium` を付ける）
+   `PW_CHROMIUM_PATH=/opt/pw-browsers/chromium` を付ける）。実機は `e2e-audit` ワークフロー
+   （`base_url` に staging/本番 web を指定）で走らせる
 3. **AI 実機スモーク**（`e2e/tests/ai-answers.spec.ts`）— 「渋沢栄一 → 2 評価が返る」を
    実 LLM で確認。**モック（vitest）は常に成功する偽 AI なので、この層を必ず実機で通す**。
    実行は既定 ON、API キーの無い環境だけ `E2E_INCLUDE_AI=0` で明示的に止める
@@ -172,6 +175,10 @@ e2e           Playwright（ユーザー目線監査 + AI 実機スモーク）
 
 デプロイ（フェーズ5 で整備）は cares と同じ **2 ゲート**: テスト全緑 + ユーザーの明示承認。
 デプロイスクリプトは cares `infra/scripts/05〜08` を `bonds-*` リソース名で複製する。
+**本番反映の前に staging（`-staging` 接尾辞リソース・ADR-0015 踏襲）で e2e-audit
+（ユーザー目線監査 + リンク切れ監査〔内部/外部の全リンク先〕+ AI 実機スモーク）を通す**
+（`deploy-staging` → `e2e-audit(base_url=staging)` → 緑を確認 → `deploy-gcp`。詳細は
+`infra/scripts/README.md` の「staging 環境」）。
 
 ## 参照リポジトリ早見表
 
@@ -205,4 +212,5 @@ e2e           Playwright（ユーザー目線監査 + AI 実機スモーク）
 - 人物DD 途中停止の根治と結果共有（2026-07-08）— 実装済み: ①長い評価（社会価値創造）が最後まで出ない件を根治。`buildAnthropicGenerate` の継続を「max_tokens のときだけ」から「クリーン終了（end_turn/stop_sequence）以外は全部継続」に拡張し、接続断（premature_close）や自前タイムアウトで救済した部分（incomplete）も続きを生成して繋ぐ。`PERSON_DD_TIMEOUT_MS` 120s→180s（各継続ぶんも確保）・`PERSON_DD_MAX_CONTINUATIONS` 3→4・Cloud Run api `--timeout=600`（評価は SSE 並列で DB に保存されるため、途中で instance が切られると invalid_output のまま保存されるのを防ぐ）。②結果の共有。subjects 画面に「この評価を共有する」ボタン（Web Share API、無ければクリップボード）。公人評価なので PII を含まず、氏名＋スコア＋ランクに **bonds の公開の入口（`https://agewaller.github.io/bonds/`）を添えて誘導**（受け取った人も試せる紹介ループ）。③AI 実機スモークを強化: 「前回の評価は完了しませんでした」が出たら失敗にし、二つ目（長い方）の途中停止をデプロイゲートで捕まえる
 - 人物評価が最後まで出ない件の真因特定と解消（2026-07-08）— 本番実機監査（`e2e-audit` を新設: GitHub ランナーから本番 web に対し `ai-answers`＋`post-login-audit` を実行。サンドボックスは egress 制限で本番に届かないため）で判明: 直接原因は途中停止ではなく **月次 AI コストキャップ（¥3000）の枯渇による即時 422**（全 AI 機能の当月合計に効くため機能追加と検証で枯渇）。対応: `PERSON_DD_MONTHLY_CAP_JPY` の意味を拡張し **0=上限なし**（cares の AI_MONTHLY_CAP_OWNER_JPY=0 と同思想）、bonds web は管理トークン経由の単一オーナー専用（公開の入口はプロトタイプ→cares 側で別キャップ）のため本番既定を 0 にして 07 deploy env に配線。キャップ解消後の実機監査で **意識の七次元・社会価値創造の二評価がともに完走**（スコア見出し・「10段階で N」チップ・総括の散文が描画）を確認。あわせて途中停止そのものの根治（継続を非クリーン終了全般に拡張・timeout 180s・継続4回・Cloud Run api --timeout=600）も反映済み。実機スモークのセレクタ（Next の空 route-announcer 誤検知・散文の部分一致）も修正
 - やり取り台帳・SNS 情報・連携ボタン・距離感の自動レーティング（2026-07-09）— 実装済み: ①**やり取り台帳**（`exchanges`。Gift を一般化し贈与だけでなく貢献/貸し借り/取引/約束を状態＋期日つきで記録。改ざん検知のハッシュチェーン＝ブロックチェーンは使わない・`lib/exchanges.ts`。連絡帳トップに督促「そろそろ区切りをつけたいこと」）。あわせて `/api/exchanges`・`/api/gifts` の requireUser 欠落（未認証で他人の台帳が読めた潜在バグ）を修正。②**各人の SNS 情報の取得**（`contacts.sns` を platform 別に構造化＝`lib/sns.ts`。記録 UI＋公開の発信の近況把握は refresh-digest の公開検索を SNS ハンドル軸に強化。公開検索は明示押下時のみ＝相手の尊厳）。③**SNS・サービス連携ボタン**（連絡帳上部に LINE/X/Instagram/Facebook/LinkedIn の「〜とつなぐ」＝各社公式のデータDLページを開き取り込みへ誘導。友だち一覧を直接くれる SNS API は無いため公式書き出し経由が正直・INTEGRATIONS.md 維持。Google は本物の読み取り OAuth を別枠で維持）。④**距離感 1〜5 の自動レーティング**（`suggestDistance` 純粋関数＝やりとりの延べ日数/回数/新しさ/贈り物から推定。`/api/relationship/distance-suggestions`＋`apply-distances`。連絡帳トップ「距離感の見直し」で理由つき提案→個別/一括適用。手がかり不足は confident=false で上書きしない・最終判断はユーザー）
-- 残（外部設定が前提のもの）: Google OAuth クライアントの作成と設定（上記の有効化に必要。People API の contacts.readonly も同意画面に含める・People API を有効化）・Google/Outlook 予定の書き込み同期（ICS 招待で代替中）・多言語辞書の詳細ページ展開・staging 環境
+- staging 環境と本番前の実機監査（2026-07-09）— 実装済み: cares ADR-0015 踏襲の staging（`-staging` 接尾辞リソース・本番と同一プロジェクト共存・DB 分離で本番データに触れない）を配線。`infra/scripts/_env.staging.sh`（差分オーバーレイ・`BONDS_ENV=staging` で有効）＋`10-create-staging.sh`（一度だけの provisioning: `bonds-db-staging`/`bonds-images-staging`/`bonds-db-password-staging`。暗号鍵・breakglass・AI キー・SendGrid は prod と共有）＋`deploy-staging.yml`（テストゲート→SQL 起動→migrate→build→deploy→healthz、`environment: staging` で承認ゲート化可）＋`stop-staging-sql.yml`。**リンク切れ監査 `e2e/tests/link-audit.spec.ts`（内部リンク先が 404/5xx でない ＋ 外部リンク先＝SNS の取り出し方・データDL 等がすべて到達可能。bot ブロック 401/403/405/429 は生存扱い、真の死活 404/410/5xx/接続不能のみ落とす）を新設し `e2e-audit` に追加**。本番前フロー: `deploy-staging` → `e2e-audit(base_url=staging web)` でユーザー目線監査＋リンク切れ監査＋AI 実機スモークが緑 → `deploy-gcp`（詳細は `infra/scripts/README.md`「staging 環境」）
+- 残（外部設定が前提のもの）: **staging の一度だけの GCP provisioning（オーナーが `10-create-staging.sh` を実行 + GitHub Environment `staging` 作成）**・Google OAuth クライアントの作成と設定（People API の contacts.readonly も同意画面に含める・People API を有効化）・Google/Outlook 予定の書き込み同期（ICS 招待で代替中）・多言語辞書の詳細ページ展開
