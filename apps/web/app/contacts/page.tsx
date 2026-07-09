@@ -87,6 +87,10 @@ export default function ContactsPage() {
   const [giftOccasions, setGiftOccasions] = useState<
     { kind: string; contactId: string | null; contactName: string | null; label: string; daysUntil: number; note: string }[]
   >([]);
+  // やり取りの督促 (返すお約束・貸し借りで期日が近い/過ぎたもの)
+  const [exReminders, setExReminders] = useState<
+    { id: string; contactId: string; contactName?: string; title: string; daysUntil: number | null; overdue: boolean; note: string }[]
+  >([]);
   // 名寄せ: 同じ人が二重登録されていそうな組
   type DupeMember = { id: string; name: string; company: string | null; email: string | null; phone: string | null };
   type DupeGroup = { reason: string; strong: boolean; members: DupeMember[] };
@@ -109,18 +113,20 @@ export default function ContactsPage() {
   const jobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
-    const [cRes, sRes, pRes, gRes, dRes] = await Promise.all([
+    const [cRes, sRes, pRes, gRes, dRes, eRes] = await Promise.all([
       apiFetch("contacts"),
       apiFetch("relationship/summary"),
       apiFetch("relationship/progress"),
       apiFetch("gifts/occasions"),
       apiFetch("contacts/duplicates"),
+      apiFetch("exchanges"),
     ]);
     if (cRes.ok) setContacts((await cRes.json()).contacts);
     if (sRes.ok) setSummary(await sRes.json());
     if (pRes.ok) setProgress(await pRes.json());
     if (gRes.ok) setGiftOccasions((await gRes.json()).occasions ?? []);
     if (dRes.ok) setDupeGroups((await dRes.json()).groups ?? []);
+    if (eRes.ok) setExReminders((await eRes.json()).reminders ?? []);
   }, []);
 
   const loadJobs = useCallback(async (): Promise<number> => {
@@ -598,6 +604,22 @@ export default function ContactsPage() {
                   <span style={{ fontWeight: 600 }}>{o.label}</span>
                 )}
                 <span style={{ color: "#78716c" }}> — {o.note}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {exReminders.length > 0 && (
+        <section style={{ margin: "16px 0", border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 12, padding: "12px 16px" }}>
+          <h2 style={{ fontSize: 17, marginTop: 0 }}>そろそろ区切りをつけたいこと</h2>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
+            {exReminders.slice(0, 8).map((r) => (
+              <li key={r.id} style={{ fontSize: 14 }}>
+                <Link href={`/contacts/${r.contactId}`} style={{ color: r.overdue ? "#b91c1c" : "#b45309", fontWeight: 600 }}>
+                  {r.contactName ?? "この方"}: {r.title}
+                </Link>
+                <span style={{ color: "#78716c" }}> — {r.note}</span>
               </li>
             ))}
           </ul>

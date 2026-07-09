@@ -179,9 +179,37 @@ model Contact {
 
   interactions ContactInteraction[]
   gifts        ContactGift[]
+  exchanges    Exchange[]
 
   @@index([ownerUid, state])
   @@map("contacts")
+}
+
+/// やり取り台帳 (Gift を一般化)。贈与だけでなく、貢献・貸し借り・取引・約束を1件ずつ記録する。
+/// title / notes は内容 (PII) なのでアプリ層暗号化。kind/status/value は集計・督促に使うので平文。
+/// prev_hash / hash は任意の改ざん検知チェーン (不変の中核だけをハッシュ。ブロックチェーンは使わない)。
+model Exchange {
+  id         String    @id @default(uuid())
+  ownerUid   String    @map("owner_uid")
+  contactId  String    @map("contact_id")
+  contact    Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  kind       String    @default("gift") // gift / favor(貢献) / loan(貸し借り) / deal(取引) / promise(約束) / other
+  direction  String    @default("outbound") // outbound(こちらから渡す/貸す/約束) / inbound(相手から)
+  title      String // 暗号化: 何を (品物・内容・約束の中身)
+  value      Int? // 金額/価値の目安 (任意)
+  status     String    @default("open") // open(約束/進行中) / done(完了) / returned(返礼/返済済) / canceled
+  dueAt      DateTime? @map("due_at") // 期日・返済/返礼の期限
+  occurredAt DateTime  @map("occurred_at")
+  notes      String? // 暗号化
+  prevHash   String?   @map("prev_hash") // 直前レコードのハッシュ (改ざん検知チェーン)
+  hash       String? // このレコードの不変中核のハッシュ
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@index([ownerUid, status])
+  @@index([contactId])
+  @@index([ownerUid, createdAt])
+  @@map("exchanges")
 }
 
 /// 接触記録。距離スコアの入力であり、発信結果の還流先。

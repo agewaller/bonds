@@ -30,6 +30,13 @@ import { parseContacts, parseImportText, stripHonorific, type ParsedContact, typ
 import { identityKeys, normalizeName } from "./lib/identity.js";
 import { parseImportFile, MAX_IMPORT_FILE_BYTES } from "./lib/import-file.js";
 import { computeGiftOccasions, summarizeGiftLedger } from "./lib/gifts.js";
+import {
+  summarizeExchangeLedger,
+  computeExchangeReminders,
+  hashExchangeCore,
+  verifyExchangeChain,
+  type ExchangeCore,
+} from "./lib/exchanges.js";
 import { parseIsoIntervals, meetingSlotProposals, toIso } from "./lib/timeslots.js";
 import { parseIcsBusy, looksLikeIcs, buildMeetingInviteIcs } from "./lib/ics.js";
 import {
@@ -211,6 +218,10 @@ export function createApp(deps: AppDeps) {
   app.use("/api/relationship/*", requireUser);
   app.use("/api/outreach/*", requireUser);
   app.use("/api/outreach", requireUser);
+  app.use("/api/gifts/*", requireUser);
+  app.use("/api/gifts", requireUser);
+  app.use("/api/exchanges/*", requireUser);
+  app.use("/api/exchanges", requireUser);
   // Google 連携: callback (OAuth リダイレクト受け) だけは未認証 (state 署名で本人性を担保)
   app.use("/api/google/status", requireUser);
   app.use("/api/google/auth-url", requireUser);
@@ -694,13 +705,14 @@ export function createApp(deps: AppDeps) {
 
   app.get("/api/contacts/export", async (c) => {
     // データ主権: 全件エクスポート (復号済み JSON)。ロックインしない。
-    const [contacts, interactions, gifts] = await Promise.all([
+    const [contacts, interactions, gifts, exchanges] = await Promise.all([
       prisma.contact.findMany({ where: { ownerUid: c.get("ownerUid") } }),
       prisma.contactInteraction.findMany(),
       prisma.contactGift.findMany(),
+      prisma.exchange.findMany({ where: { ownerUid: c.get("ownerUid") } }),
     ]);
     c.header("Content-Disposition", "attachment; filename=bonds-contacts-export.json");
-    return c.json({ exportedAt: new Date().toISOString(), contacts, interactions, gifts });
+    return c.json({ exportedAt: new Date().toISOString(), contacts, interactions, gifts, exchanges });
   });
 
   // 名寄せ: 同じ人が二重に登録されていそうな組を検出する。メール/電話が一致する組は
@@ -863,6 +875,7 @@ export function createApp(deps: AppDeps) {
       // 子レコードの付け替え
       await prisma.contactInteraction.updateMany({ where: { contactId: o.id }, data: { contactId: primary.id } });
       await prisma.contactGift.updateMany({ where: { contactId: o.id }, data: { contactId: primary.id } });
+      await prisma.exchange.updateMany({ where: { contactId: o.id }, data: { contactId: primary.id } });
       await prisma.outreachMessage.updateMany({ where: { contactId: o.id }, data: { contactId: primary.id } });
       // person_links は (ownerUid, contactId, subjectId) が一意。衝突する分は捨てる。
       const oLinks = await prisma.personLink.findMany({ where: { ownerUid, contactId: o.id } });
@@ -1480,6 +1493,203 @@ export function createApp(deps: AppDeps) {
       .filter((l) => l.contactName)
       .sort((a, b) => Number(b.ledger.needsReturn) - Number(a.ledger.needsReturn));
     return c.json({ gifts, ledgers });
+  });
+
+  // やり取り台帳 (Gift を一般化)。贈与だけでなく貢献・貸し借り・取引・約束を、
+  // 状態 (open/done/returned/canceled) と期日つきで記録する。改ざん検知のため
+  // ハッシュチェーンで連ねる (ブロックチェーンは使わない = docs のオーナー判断)。
+  const EXCHANGE_KINDS = ["gift", "favor", "loan", "deal", "promise", "other"];
+  const EXCHANGE_STATUSES = ["open", "done", "returned", "canceled"];
+
+  function exchangeCore(ownerUid: string, e: {
+    contactId: string;
+    kind: string;
+    direction: string;
+    title: string;
+    value: number | null;
+    occurredAt: Date;
+  }): ExchangeCore {
+    return {
+      ownerUid,
+      contactId: e.contactId,
+      kind: e.kind,
+      direction: e.direction,
+      title: e.title,
+      value: e.value,
+      occurredAt: e.occurredAt.toISOString(),
+    };
+  }
+
+  // 台帳の一覧 (相手ごとの収支・未完了) と、期日が近い/過ぎた督促。
+  app.get("/api/exchanges", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid, state: "active" },
+      select: { id: true, name: true },
+      take: 1000,
+    });
+    const nameById = new Map(contacts.map((c2) => [c2.id, c2.name]));
+    const exchanges = await prisma.exchange.findMany({
+      where: { ownerUid },
+      orderBy: { occurredAt: "desc" },
+      take: 500,
+    });
+    const byContact = new Map<string, typeof exchanges>();
+    for (const e of exchanges) {
+      if (!byContact.has(e.contactId)) byContact.set(e.contactId, []);
+      byContact.get(e.contactId)!.push(e);
+    }
+    const ledgers = [...byContact.entries()]
+      .map(([contactId, recs]) => ({
+        contactId,
+        contactName: nameById.get(contactId) ?? "",
+        ledger: summarizeExchangeLedger(
+          contactId,
+          recs.map((r) => ({ ...r, contactName: nameById.get(r.contactId) })),
+        ),
+      }))
+      .filter((l) => l.contactName)
+      .sort(
+        (a, b) =>
+          Number(b.ledger.needsReturn) - Number(a.ledger.needsReturn) ||
+          b.ledger.openCount - a.ledger.openCount,
+      );
+    const reminders = computeExchangeReminders(
+      exchanges.map((e) => ({ ...e, contactName: nameById.get(e.contactId) })),
+      new Date(),
+    );
+    return c.json({ exchanges, ledgers, reminders });
+  });
+
+  // 台帳の改ざん検知。ハッシュチェーンを頭から検証し、intact / どこで切れたかを返す。
+  app.get("/api/exchanges/verify", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const exchanges = await prisma.exchange.findMany({
+      where: { ownerUid },
+      orderBy: { createdAt: "asc" },
+    });
+    const result = verifyExchangeChain(
+      exchanges.map((e) => ({
+        ...exchangeCore(e.ownerUid, e),
+        hash: e.hash,
+        prevHash: e.prevHash,
+      })),
+    );
+    return c.json({ ...result, count: exchanges.length });
+  });
+
+  // 相手ごとのやり取り一覧。
+  app.get("/api/contacts/:id/exchanges", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const exchanges = await prisma.exchange.findMany({
+      where: { contactId: contact.id },
+      orderBy: { occurredAt: "desc" },
+    });
+    const ledger = summarizeExchangeLedger(
+      contact.id,
+      exchanges.map((e) => ({ ...e, contactName: contact.name })),
+    );
+    return c.json({ exchanges, ledger });
+  });
+
+  // やり取りを記録する。ハッシュチェーンに連ね、接触としても還流する。
+  app.post("/api/contacts/:id/exchanges", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const title = typeof b.title === "string" ? b.title.trim() : "";
+    if (!title) return c.json({ error: "title_required", detail: "何のやり取りか (内容) を入力してください" }, 400);
+    const kind = EXCHANGE_KINDS.includes(b.kind as string) ? (b.kind as string) : "gift";
+    const direction = b.direction === "inbound" ? "inbound" : "outbound";
+    const status = EXCHANGE_STATUSES.includes(b.status as string) ? (b.status as string) : "done";
+    const valueRaw = clampScore(b.value, 0, 1_000_000_000);
+    const value = valueRaw === null ? null : Math.round(valueRaw);
+    const occurredAt =
+      typeof b.occurredAt === "string" && !Number.isNaN(new Date(b.occurredAt).getTime())
+        ? new Date(b.occurredAt)
+        : new Date();
+    const dueAt =
+      typeof b.dueAt === "string" && !Number.isNaN(new Date(b.dueAt).getTime())
+        ? new Date(b.dueAt)
+        : null;
+    // 直前レコードの hash を prevHash として連ねる (owner 単位の 1 本の鎖)。
+    const last = await prisma.exchange.findFirst({
+      where: { ownerUid, hash: { not: null } },
+      orderBy: { createdAt: "desc" },
+      select: { hash: true },
+    });
+    const prevHash = last?.hash ?? null;
+    const hash = hashExchangeCore(
+      prevHash,
+      exchangeCore(ownerUid, { contactId: contact.id, kind, direction, title, value, occurredAt }),
+    );
+    const exchange = await prisma.exchange.create({
+      data: {
+        ownerUid,
+        contactId: contact.id,
+        kind,
+        direction,
+        title,
+        value,
+        status,
+        dueAt,
+        occurredAt,
+        notes: typeof b.notes === "string" ? b.notes.trim() || null : null,
+        prevHash,
+        hash,
+      },
+    });
+    // 完了済みのやり取りは接触としても還流する (約束・貸し借りの open は接触にしない)。
+    if (status === "done" || status === "returned") {
+      await prisma.contactInteraction.create({
+        data: {
+          contactId: contact.id,
+          type: direction === "outbound" ? "exchange_out" : "exchange_in",
+          occurredAt,
+          notes: title,
+        },
+      });
+    }
+    return c.json({ exchange }, 201);
+  });
+
+  // やり取りの更新 (主に状態・期日・メモ)。ハッシュ対象の中核は書き換えない設計だが、
+  // 中核を変えたい場合は再計算してこの一件の hash を更新する (以降の鎖は次回検証で検出される)。
+  app.put("/api/exchanges/:id", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const existing = await prisma.exchange.findFirst({
+      where: { id: c.req.param("id"), ownerUid },
+    });
+    if (!existing) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const data: Record<string, unknown> = {};
+    if (typeof b.status === "string" && EXCHANGE_STATUSES.includes(b.status)) data.status = b.status;
+    if (typeof b.notes === "string") data.notes = b.notes.trim() || null;
+    if (b.dueAt === null) data.dueAt = null;
+    else if (typeof b.dueAt === "string" && !Number.isNaN(new Date(b.dueAt).getTime())) data.dueAt = new Date(b.dueAt);
+    if (typeof b.title === "string" && b.title.trim()) data.title = b.title.trim();
+    if (b.value !== undefined) {
+      const v = clampScore(b.value, 0, 1_000_000_000);
+      data.value = v === null ? null : Math.round(v);
+    }
+    const exchange = await prisma.exchange.update({ where: { id: existing.id }, data });
+    return c.json({ exchange });
+  });
+
+  app.delete("/api/exchanges/:id", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const existing = await prisma.exchange.findFirst({
+      where: { id: c.req.param("id"), ownerUid },
+    });
+    if (!existing) return c.json({ error: "not_found" }, 404);
+    await prisma.exchange.delete({ where: { id: existing.id } });
+    return c.json({ ok: true });
   });
 
   // 面談招待 (.ics)。二者空き重なりの候補をそのままカレンダー取込用ファイルにする。
