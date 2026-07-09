@@ -42,6 +42,8 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
   googleConnection: ["refreshToken"],
   // 取り込みジョブの本文 (ファイル/貼り付けの中身) は PII = 暗号化
   importJob: ["payload"],
+  // やり取り台帳の内容 (何を・メモ) は PII = 暗号化
+  exchange: ["title", "notes"],
 };
 
 // data ({ field: value } / { field: { set: value } } / 配列) を in-place で暗号化。

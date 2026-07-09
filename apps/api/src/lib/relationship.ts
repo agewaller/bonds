@@ -109,6 +109,85 @@ export function calculateIsolationScore(
   };
 }
 
+// 距離感 (1=毎日会う親しさ 〜 5=年に一度) を、やりとりの多さ・新しさ・贈り物の有無から
+// 推し量る。純粋関数。ユーザーの手入力を消さないため「提案」に留め、適用は明示操作で行う。
+export type DistanceSignals = {
+  interactionCount: number; // 記録された接触の総数
+  distinctDays: number; // 接触のあった「日」の数 (同日重複は 1)
+  daysSinceLast: number | null; // 最終接触からの日数 (接触なしは null)
+  giftCount: number; // 贈り物のやりとりの件数 (双方向とも)
+};
+
+export type DistanceSuggestion = {
+  suggested: number; // 1〜5
+  closeness: number; // 0〜8 (内部指標。デバッグ・説明用)
+  reason: string; // ユーザー向けの平易な理由 (記号を使わない)
+  confident: boolean; // 手がかりが乏しいときは false (勝手に上書きしない判断材料)
+};
+
+export function suggestDistance(s: DistanceSignals): DistanceSuggestion {
+  // やりとりの多さ (延べ日数を主、総数を従に見る)
+  const freqPoints =
+    s.distinctDays >= 24 || s.interactionCount >= 40
+      ? 4
+      : s.distinctDays >= 12 || s.interactionCount >= 20
+        ? 3
+        : s.distinctDays >= 5 || s.interactionCount >= 8
+          ? 2
+          : s.distinctDays >= 2 || s.interactionCount >= 2
+            ? 1
+            : 0;
+  // やりとりの新しさ (途絶えているほど遠い)
+  const recencyPoints =
+    s.daysSinceLast === null
+      ? 0
+      : s.daysSinceLast <= 7
+        ? 3
+        : s.daysSinceLast <= 30
+          ? 2
+          : s.daysSinceLast <= 90
+            ? 1
+            : s.daysSinceLast <= 365
+              ? 0
+              : -1;
+  const giftPoints = s.giftCount >= 1 ? 1 : 0;
+  const closeness = Math.max(0, Math.min(8, freqPoints + recencyPoints + giftPoints));
+  // closeness 0→5, 2→4, 4→3, 6→2, 8→1
+  const suggested = Math.min(5, Math.max(1, 5 - Math.round(closeness / 2)));
+  // 手がかりが乏しい (接触がほとんどない) ときは自信なし = 勝手に上書きしない
+  const confident = s.interactionCount >= 2 || s.giftCount >= 1;
+
+  const parts: string[] = [];
+  if (s.distinctDays >= 2) parts.push(`これまで${s.distinctDays}日やりとりがあり`);
+  if (s.daysSinceLast !== null) {
+    parts.push(
+      s.daysSinceLast <= 7
+        ? "つい最近も連絡があり"
+        : s.daysSinceLast <= 30
+          ? "この1か月内に連絡があり"
+          : s.daysSinceLast <= 365
+            ? `最後の連絡から${s.daysSinceLast}日ほどで`
+            : "しばらく連絡が途絶えていて",
+    );
+  }
+  if (s.giftCount >= 1) parts.push("贈り物のやりとりもあり");
+  const label =
+    suggested === 1
+      ? "とても近いお付き合い"
+      : suggested === 2
+        ? "近いお付き合い"
+        : suggested === 3
+          ? "ほどよいお付き合い"
+          : suggested === 4
+            ? "ときどきのお付き合い"
+            : "たまのお付き合い";
+  const reason =
+    parts.length > 0
+      ? `${parts.join("、")}、${label}（${suggested}）とみています`
+      : `やりとりの記録がまだ少ないため、${label}（${suggested}）を仮に置いています`;
+  return { suggested, closeness, reason, confident };
+}
+
 // 誕生日が now から maxDays 日以内 (今日含む) の連絡先。
 export function upcomingBirthdays(
   contacts: ContactLike[],

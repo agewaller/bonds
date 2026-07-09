@@ -1,0 +1,27 @@
+# staging の Cloud SQL (bonds-db-staging) を停止する。
+# staging は普段停止 (activation-policy=NEVER) でコストを抑える運用。検証が終わったら
+# これを手で回す (deploy-staging の stop_sql_after=true でも同じことができる)。
+name: stop-staging-sql
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT: arctic-anvil-497002-q2
+
+jobs:
+  stop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: |
+          gcloud sql instances patch bonds-db-staging --project="$PROJECT" --activation-policy=NEVER --quiet
+          echo "bonds-db-staging を停止しました"

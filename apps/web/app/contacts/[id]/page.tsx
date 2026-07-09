@@ -47,9 +47,41 @@ const FACET_LIST: { key: keyof Facets; label: string }[] = [
 ];
 type Interaction = { id: string; type: string; occurredAt: string; notes: string | null };
 type Gift = { id: string; occasion: string; direction: string; item: string; givenAt: string };
+type Exchange = {
+  id: string;
+  kind: string;
+  direction: string;
+  title: string;
+  value: number | null;
+  status: string;
+  dueAt: string | null;
+  occurredAt: string;
+};
+type ExchangeLedger = {
+  outboundCount: number;
+  inboundCount: number;
+  outboundValue: number;
+  inboundValue: number;
+  balance: number;
+  openCount: number;
+  needsReturn: boolean;
+};
 type LinkedSubject = { linkId: string; slug: string; name: string };
 type Candidate = { subject: string; body: string; tone: string; aim: string };
 type Slot = { start: string; end: string };
+
+const SNS_LABEL: Record<string, string> = {
+  x: "X (旧Twitter)",
+  instagram: "Instagram",
+  facebook: "Facebook",
+  linkedin: "LinkedIn",
+  note: "note",
+  youtube: "YouTube",
+  tiktok: "TikTok",
+  threads: "Threads",
+  github: "GitHub",
+  blog: "ブログ・ウェブサイト",
+};
 
 const input = { width: "100%", padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8 } as const;
 const btn = (primary = true) =>
@@ -83,6 +115,16 @@ export default function ContactDetailPage() {
     { idea: string; why: string; priceRange: string; howToFind: string }[] | null
   >(null);
   const [giftNote, setGiftNote] = useState("");
+  const [exchanges, setExchanges] = useState<Exchange[]>([]);
+  const [exLedger, setExLedger] = useState<ExchangeLedger | null>(null);
+  const [exKind, setExKind] = useState("favor");
+  const [exDirection, setExDirection] = useState("outbound");
+  const [exTitle, setExTitle] = useState("");
+  const [exValue, setExValue] = useState("");
+  const [exStatus, setExStatus] = useState("done");
+  const [exDueAt, setExDueAt] = useState("");
+  const [snsAccounts, setSnsAccounts] = useState<{ platform: string; handle: string; url: string }[]>([]);
+  const [snsInput, setSnsInput] = useState("");
   const [channel, setChannel] = useState("email");
   const [sendAt, setSendAt] = useState("");
   const [linkSlug, setLinkSlug] = useState("");
@@ -112,6 +154,14 @@ export default function ContactDetailPage() {
     setInteractions(body.interactions);
     setGifts(body.gifts ?? []);
     setLinkedSubjects(body.linkedSubjects ?? []);
+    const exRes = await apiFetch(`contacts/${id}/exchanges`);
+    if (exRes.ok) {
+      const exBody = await exRes.json();
+      setExchanges(exBody.exchanges ?? []);
+      setExLedger(exBody.ledger ?? null);
+    }
+    const snsRes = await apiFetch(`contacts/${id}/sns`);
+    if (snsRes.ok) setSnsAccounts((await snsRes.json()).accounts ?? []);
     setForm({
       personalProfile: body.contact.personalProfile ?? "",
       valuesProfile: body.contact.valuesProfile ?? "",
@@ -309,6 +359,75 @@ export default function ContactDetailPage() {
           </button>
           <button style={btn(false)} onClick={() => void refreshDigest(true)} disabled={!!busy}>
             公開情報も調べてまとめ直す
+          </button>
+        </div>
+      </section>
+
+      <section style={{ marginTop: 24, border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+        <h2 style={{ fontSize: 18, margin: 0 }}>この方のSNS・公開の発信</h2>
+        <p style={{ fontSize: 13, color: "#475569", margin: "6px 0" }}>
+          この方が公開している X・Instagram・LinkedIn・note・ブログなどを控えておくと、最近の様子をつかんで
+          お声がけの一言に生かせます。上の「公開情報も調べてまとめ直す」を押したときだけ、ここを手がかりに近況を調べます。
+        </p>
+        {snsAccounts.length > 0 ? (
+          <ul style={{ listStyle: "none", padding: 0, margin: "8px 0", display: "grid", gap: 6 }}>
+            {snsAccounts.map((a, i) => (
+              <li key={i} style={{ fontSize: 14, display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ color: "#64748b", minWidth: 120 }}>{SNS_LABEL[a.platform] ?? a.platform}</span>
+                {a.url ? (
+                  <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", wordBreak: "break-all" }}>
+                    {a.handle || a.url}
+                  </a>
+                ) : (
+                  <span>{a.handle}</span>
+                )}
+                <button
+                  style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 12 }}
+                  disabled={!!busy}
+                  aria-label="外す"
+                  onClick={async () => {
+                    const next = snsAccounts.filter((_, j) => j !== i);
+                    const body = await call(
+                      `contacts/${contact.id}/sns`,
+                      { method: "PUT", body: JSON.stringify({ accounts: next }) },
+                      "外しました",
+                    );
+                    if (body) setSnsAccounts(body.accounts ?? []);
+                  }}
+                >
+                  外す
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p style={{ fontSize: 14, color: "#64748b", margin: "8px 0" }}>まだ登録がありません</p>
+        )}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            style={{ ...input, flex: 1, minWidth: 200 }}
+            placeholder="URL を貼るか、note: ユーザー名 のように"
+            aria-label="SNS アカウント"
+            value={snsInput}
+            onChange={(e) => setSnsInput(e.target.value)}
+          />
+          <button
+            style={btn(false)}
+            disabled={!!busy || !snsInput.trim()}
+            onClick={async () => {
+              const merged = [...snsAccounts.map((a) => a.url || `${a.platform}: ${a.handle}`), snsInput].join("\n");
+              const body = await call(
+                `contacts/${contact.id}/sns`,
+                { method: "PUT", body: JSON.stringify({ raw: merged }) },
+                "登録しました",
+              );
+              if (body) {
+                setSnsAccounts(body.accounts ?? []);
+                setSnsInput("");
+              }
+            }}
+          >
+            登録する
           </button>
         </div>
       </section>
@@ -629,6 +748,133 @@ export default function ContactDetailPage() {
             </li>
           ))}
           {gifts.length === 0 && <li style={{ color: "#64748b" }}>まだ記録がありません</li>}
+        </ul>
+      </section>
+
+      <section style={{ marginTop: 32 }}>
+        <h2 style={{ fontSize: 18 }}>やり取りの台帳</h2>
+        <p style={{ fontSize: 13, color: "#475569" }}>
+          この方との貢献・貸し借り・お約束・お取引を書き留めておけます。返すお約束や期日のあるものは、近づくとお知らせします。
+        </p>
+        {exLedger && (exLedger.outboundCount > 0 || exLedger.inboundCount > 0 || exLedger.openCount > 0) && (
+          <p style={{ fontSize: 13, color: "#334155" }}>
+            こちらから {exLedger.outboundCount} 件
+            {exLedger.outboundValue > 0 ? `（${exLedger.outboundValue.toLocaleString("ja-JP")}円ぶん）` : ""}、
+            いただいた・お借りしたのが {exLedger.inboundCount} 件
+            {exLedger.inboundValue > 0 ? `（${exLedger.inboundValue.toLocaleString("ja-JP")}円ぶん）` : ""}。
+            {exLedger.openCount > 0 ? ` 進行中が ${exLedger.openCount} 件。` : ""}
+            {exLedger.needsReturn ? " お返しをまだしていないものがあります。" : ""}
+          </p>
+        )}
+        <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+          <select value={exKind} onChange={(e) => setExKind(e.target.value)} aria-label="種類" style={{ ...input, width: "auto" }}>
+            <option value="favor">貢献・手助け</option>
+            <option value="loan">貸し借り</option>
+            <option value="promise">お約束</option>
+            <option value="deal">お取引</option>
+            <option value="gift">贈り物</option>
+            <option value="other">その他</option>
+          </select>
+          <select value={exDirection} onChange={(e) => setExDirection(e.target.value)} aria-label="向き" style={{ ...input, width: "auto" }}>
+            <option value="outbound">こちらから</option>
+            <option value="inbound">いただいた・お借りした</option>
+          </select>
+          <select value={exStatus} onChange={(e) => setExStatus(e.target.value)} aria-label="状態" style={{ ...input, width: "auto" }}>
+            <option value="done">済んだこと</option>
+            <option value="open">進行中・これから</option>
+          </select>
+          <input
+            style={{ ...input, flex: 1, minWidth: 180 }}
+            placeholder="内容 (例: 引っ越しを手伝った / 1万円お借りした)"
+            aria-label="やり取りの内容"
+            value={exTitle}
+            onChange={(e) => setExTitle(e.target.value)}
+          />
+          <input
+            style={{ ...input, width: 120 }}
+            placeholder="金額 (任意)"
+            aria-label="金額"
+            inputMode="numeric"
+            value={exValue}
+            onChange={(e) => setExValue(e.target.value)}
+          />
+          {exStatus === "open" && (
+            <input
+              style={{ ...input, width: "auto" }}
+              type="date"
+              aria-label="いつまでに"
+              value={exDueAt}
+              onChange={(e) => setExDueAt(e.target.value)}
+            />
+          )}
+          <button
+            style={btn(false)}
+            disabled={!!busy || !exTitle.trim()}
+            onClick={async () => {
+              const body = await call(
+                `contacts/${contact.id}/exchanges`,
+                {
+                  method: "POST",
+                  body: JSON.stringify({
+                    kind: exKind,
+                    direction: exDirection,
+                    status: exStatus,
+                    title: exTitle,
+                    value: exValue.trim() ? Number(exValue.replace(/[^0-9]/g, "")) : undefined,
+                    dueAt: exStatus === "open" && exDueAt ? exDueAt : undefined,
+                  }),
+                },
+                "書き留めました",
+              );
+              if (body) {
+                setExTitle("");
+                setExValue("");
+                setExDueAt("");
+                await load();
+              }
+            }}
+          >
+            書き留める
+          </button>
+        </div>
+        <ul>
+          {exchanges.map((e) => (
+            <li key={e.id} style={{ marginBottom: 4 }}>
+              {new Date(e.occurredAt).toLocaleDateString("ja-JP")}{" "}
+              {e.direction === "outbound" ? "こちらから" : "いただいた・お借りした"}: {e.title}
+              {e.value ? `（${e.value.toLocaleString("ja-JP")}円）` : ""}
+              {e.status === "open" && (
+                <>
+                  {" "}
+                  <span style={{ color: "#b45309" }}>
+                    進行中{e.dueAt ? `・${new Date(e.dueAt).toLocaleDateString("ja-JP")}まで` : ""}
+                  </span>{" "}
+                  <button
+                    style={{ ...btn(false), padding: "2px 8px", fontSize: 12 }}
+                    disabled={!!busy}
+                    onClick={async () => {
+                      const body = await call(`exchanges/${e.id}`, { method: "PUT", body: JSON.stringify({ status: "done" }) }, "済みにしました");
+                      if (body) await load();
+                    }}
+                  >
+                    済みにする
+                  </button>
+                </>
+              )}{" "}
+              <button
+                style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 12 }}
+                disabled={!!busy}
+                aria-label="削除"
+                onClick={async () => {
+                  const body = await call(`exchanges/${e.id}`, { method: "DELETE" }, "削除しました");
+                  if (body) await load();
+                }}
+              >
+                削除
+              </button>
+            </li>
+          ))}
+          {exchanges.length === 0 && <li style={{ color: "#64748b" }}>まだ記録がありません</li>}
         </ul>
       </section>
 

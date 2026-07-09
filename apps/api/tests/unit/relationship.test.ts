@@ -4,6 +4,7 @@ import {
   upcomingBirthdays,
   todaySuggestions,
   clampDistance,
+  suggestDistance,
   IDEAL_INTERVAL_DAYS,
   type ContactLike,
   type InteractionLike,
@@ -124,5 +125,42 @@ describe("todaySuggestions", () => {
     expect(overdue).toHaveLength(5); // 上限
     // 全員適正内なら空
     expect(todaySuggestions([contact("ok", 3)], [touch("ok", 1)], NOW)).toEqual([]);
+  });
+});
+
+describe("suggestDistance", () => {
+  it("頻繁で最近も連絡がある人は近い距離 (1〜2)", () => {
+    const r = suggestDistance({ interactionCount: 40, distinctDays: 26, daysSinceLast: 3, giftCount: 2 });
+    expect(r.suggested).toBeLessThanOrEqual(2);
+    expect(r.confident).toBe(true);
+    expect(r.reason).toContain("やりとり");
+  });
+
+  it("何年も途絶えている人は遠い距離 (5)", () => {
+    const r = suggestDistance({ interactionCount: 3, distinctDays: 3, daysSinceLast: 800, giftCount: 0 });
+    expect(r.suggested).toBe(5);
+  });
+
+  it("ほどほどの頻度・1か月内なら中間 (3前後)", () => {
+    const r = suggestDistance({ interactionCount: 10, distinctDays: 6, daysSinceLast: 20, giftCount: 0 });
+    expect(r.suggested).toBeGreaterThanOrEqual(2);
+    expect(r.suggested).toBeLessThanOrEqual(4);
+  });
+
+  it("手がかりが乏しい (接触ほぼ無し) ときは自信なし", () => {
+    const r = suggestDistance({ interactionCount: 0, distinctDays: 0, daysSinceLast: null, giftCount: 0 });
+    expect(r.confident).toBe(false);
+    expect(r.suggested).toBe(5);
+  });
+
+  it("必ず 1〜5 の範囲に収まる", () => {
+    for (const s of [
+      { interactionCount: 999, distinctDays: 999, daysSinceLast: 0, giftCount: 9 },
+      { interactionCount: 0, distinctDays: 0, daysSinceLast: 99999, giftCount: 0 },
+    ]) {
+      const r = suggestDistance(s);
+      expect(r.suggested).toBeGreaterThanOrEqual(1);
+      expect(r.suggested).toBeLessThanOrEqual(5);
+    }
   });
 });
