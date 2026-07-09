@@ -1,0 +1,31 @@
+{
+  "name": "bonds 人間関係エージェント",
+  "short_name": "bonds",
+  "description": "大切な人とのつながりをまとめて、ちょうどよい距離で続けるお手伝い",
+  "start_url": "/contacts",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "lang": "ja",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ],
+  "share_target": {
+    "action": "/contacts/receive",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "files",
+          "accept": ["application/zip", "text/csv", "text/vcard", "text/x-vcard", "text/plain", "application/json", "*/*"]
+        }
+      ]
+    }
+  }
+}

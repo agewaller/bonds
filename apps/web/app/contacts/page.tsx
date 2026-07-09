@@ -275,6 +275,23 @@ export default function ContactsPage() {
       // つないだ直後は、その場で自動で取り込む (ワンタップで完了 = 極めて簡単に)
       if (g === "connected") void syncGoogle();
     }
+    // スマホの「共有」から送られたファイルを受け付けたあと (Web Share Target)
+    const shared = params.get("shared");
+    if (shared !== null) {
+      const n = parseInt(shared, 10) || 0;
+      if (n > 0) {
+        setNotice(`${n}件を受け付けました。このあとサーバで読み取りが進みます。ページを離れても大丈夫です`);
+        void (async () => {
+          await loadJobs();
+          void pumpJobs();
+        })();
+      } else {
+        setError("共有されたファイルを取り込めませんでした。ファイルを選んで取り込む方法もお試しください");
+      }
+      params.delete("shared");
+      const qs2 = params.toString();
+      window.history.replaceState(null, "", window.location.pathname + (qs2 ? `?${qs2}` : ""));
+    }
     return () => {
       if (jobTimerRef.current) clearTimeout(jobTimerRef.current);
     };
