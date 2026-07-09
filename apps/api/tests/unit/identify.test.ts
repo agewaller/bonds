@@ -4,6 +4,8 @@ import {
   parseIdentifyCandidates,
   clampProfileHint,
   buildIdentifyUserMessage,
+  identifyQueries,
+  buildIdentifyDigest,
   IDENTIFY_MAX_CANDIDATES,
   IDENTIFY_DESCRIPTION_MAX,
   PROFILE_HINT_MAX,
@@ -69,5 +71,37 @@ describe("clampProfileHint", () => {
 describe("buildIdentifyUserMessage", () => {
   it("名前を入力欄として渡す", () => {
     expect(buildIdentifyUserMessage("山田太郎")).toBe("名前: 山田太郎");
+  });
+
+  it("検索の抜粋があれば参考情報として添える", () => {
+    const msg = buildIdentifyUserMessage("山田太郎", "出典 https://x/ : 山田太郎 参議院議員");
+    expect(msg).toContain("名前: 山田太郎");
+    expect(msg).toContain("参考情報");
+    expect(msg).toContain("参議院議員");
+  });
+
+  it("空の検索抜粋は無視して名前だけ", () => {
+    expect(buildIdentifyUserMessage("山田太郎", "   ")).toBe("名前: 山田太郎");
+  });
+});
+
+describe("identifyQueries / buildIdentifyDigest", () => {
+  it("同姓同名の別人を拾う検索クエリを作る", () => {
+    const q = identifyQueries("山田太郎");
+    expect(q.length).toBeGreaterThanOrEqual(2);
+    expect(q.every((x) => x.includes("山田太郎"))).toBe(true);
+    expect(q.some((x) => x.includes("同姓同名"))).toBe(true);
+  });
+
+  it("検索結果を出典つきの抜粋にまとめ、上限8件で打ち切る", () => {
+    const results = Array.from({ length: 12 }, (_, i) => ({
+      title: `記事${i}`,
+      url: `https://example.com/${i}`,
+      snippet: "あ".repeat(300),
+    }));
+    const digest = buildIdentifyDigest(results);
+    const lines = digest.split("\n");
+    expect(lines).toHaveLength(8);
+    expect(lines[0]).toContain("出典 https://example.com/0");
   });
 });

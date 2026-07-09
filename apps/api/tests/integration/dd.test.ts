@@ -297,6 +297,32 @@ describe("identify (同姓同名の特定)", () => {
     expect(usage).toHaveLength(1);
   });
 
+  it("Tavily があれば名前で検索し、その抜粋を identify プロンプトに接地する", async () => {
+    let seenUserMessage = "";
+    const capturingGenerate: GenerateFn = async ({ model, userMessage }) => {
+      seenUserMessage = userMessage ?? "";
+      return {
+        text: JSON.stringify({ candidates: [{ name: "山田太郎", description: "参議院議員" }] }),
+        model,
+        inputTokens: 10,
+        outputTokens: 10,
+      };
+    };
+    const fakeSearch = async (q: string) => [
+      { title: "山田太郎 参議院議員 略歴", url: `https://example.com/${encodeURIComponent(q)}`, snippet: "2022年に初当選" },
+    ];
+    const app = createApp({ prisma, generate: capturingGenerate, search: fakeSearch });
+    const res = await app.request("/api/dd/identify", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({ name: "山田太郎" }),
+    });
+    expect(res.status).toBe(200);
+    // 検索の抜粋 (出典つき) がプロンプトに載っている
+    expect(seenUserMessage).toContain("参考情報");
+    expect(seenUserMessage).toContain("2022年に初当選");
+  });
+
   it("壊れた出力は候補ゼロ (名前のみで続行できる)、AI キー未設定は候補なし縮退、name 無しは 400", async () => {
     const brokenGenerate: GenerateFn = async ({ model }) => ({
       text: "JSON ではない返答",

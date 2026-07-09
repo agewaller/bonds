@@ -62,6 +62,8 @@ import {
   buildIdentifyUserMessage,
   parseIdentifyCandidates,
   clampProfileHint,
+  identifyQueries,
+  buildIdentifyDigest,
 } from "./lib/identify.js";
 import {
   BONDS_PITCH,
@@ -397,11 +399,24 @@ export function createApp(deps: AppDeps) {
       return c.json({ error: "quota_exceeded", detail: "今月の評価枠は終了しました" }, 422);
     }
     const model = await resolveModel();
+    // Tavily があれば名前で検索し、同姓同名の別人と最新の肩書きを手がかりに与える
+    // (LLM の知識だけだと別人を取りこぼす・古くなるため)。キー無しは従来どおり知識のみ。
+    let searchDigest = "";
+    if (ddSearch) {
+      try {
+        const batches = await Promise.all(identifyQueries(name).map((q) => ddSearch(q).catch(() => [])));
+        const seen = new Set<string>();
+        const items = batches.flat().filter((r) => r.url && !seen.has(r.url) && seen.add(r.url));
+        searchDigest = buildIdentifyDigest(items);
+      } catch {
+        // 検索の失敗で確認全体を止めない (知識のみで続行)
+      }
+    }
     try {
       const gen = await generate({
         model,
         system: IDENTIFY_SYSTEM_PROMPT,
-        userMessage: buildIdentifyUserMessage(name),
+        userMessage: buildIdentifyUserMessage(name, searchDigest),
         maxTokens: IDENTIFY_MAX_TOKENS,
         timeoutMs: IDENTIFY_TIMEOUT_MS,
       });
