@@ -51,6 +51,16 @@ const DIM_LABEL: Record<string, string> = {
   "1D": "一の次元", "2D": "二の次元", "3D": "三の次元", "4D": "四の次元",
   "5D": "五の次元", "6D": "六の次元", "7D": "七の次元",
 };
+// 各次元が何を見ているかの、やさしい一言 (専門用語を避ける。65歳ペルソナ)。
+const DIM_DESC: Record<string, string> = {
+  "1D": "数字や実績で示す力。成果・データ・目に見える結果。",
+  "2D": "構造や論理、人との関係で物事をとらえる力。",
+  "3D": "現場に立ち、体を使って実際に動く力。",
+  "4D": "時間や因果、制度や倫理をふまえて長く広く考える力。",
+  "5D": "自分ならではの使命や可能性に生きる力。",
+  "6D": "全体をつなぎ、愛や共創で社会に価値を生む力。",
+  "7D": "手放し、余白を持ち、所有にとらわれない力。",
+};
 const RANK_COLOR: Record<string, string> = {
   S: "#7c3aed", A: "#2563eb", B: "#0891b2", C: "#d97706", D: "#64748b",
 };
@@ -85,8 +95,8 @@ export function ScoreHero({ value, max, chip, chipColor, caption }: {
   );
 }
 
-export function Meter({ label, score, max, right, hint }: {
-  label: string; score: number; max: number; right?: string; hint?: string;
+export function Meter({ label, score, max, right, hint, note }: {
+  label: string; score: number; max: number; right?: string; hint?: string; note?: string;
 }) {
   const pct = Math.min(100, Math.round((score / max) * 100));
   return (
@@ -102,6 +112,7 @@ export function Meter({ label, score, max, right, hint }: {
       <div style={{ background: "#e2e8f0", borderRadius: 6, height: 10 }}>
         <div style={{ width: `${pct}%`, background: "linear-gradient(90deg,#60a5fa,#2563eb)", height: 10, borderRadius: 6 }} />
       </div>
+      {note ? <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 3, lineHeight: 1.6 }}>{note}</div> : null}
     </div>
   );
 }
@@ -122,6 +133,9 @@ export function Section7d({ run }: { run: RunSummary }) {
         chipColor={RANK_COLOR[s.rank ?? "D"] ?? "#64748b"}
         caption="公的社会価値創造スコア"
       />
+      <p style={{ color: "#64748b", fontSize: 13, margin: "4px 0 8px" }}>
+        七つの意識の次元それぞれを10点満点で見ています。各項目の下に、その次元が何を見ているかを添えました。
+      </p>
       <div style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px" }}>
         {Object.entries(s.dimensions ?? {}).map(([k, d]) => (
           <Meter
@@ -131,6 +145,7 @@ export function Section7d({ run }: { run: RunSummary }) {
             score={d.score}
             max={10}
             right={s.allocation?.[k] != null ? `意識 ${s.allocation[k]}%` : undefined}
+            note={DIM_DESC[k]}
           />
         ))}
       </div>
@@ -167,9 +182,12 @@ export function SectionSvc({ run }: { run: RunSummary }) {
           </div>
         </div>
       )}
+      <p style={{ color: "#64748b", fontSize: 13, margin: "4px 0 8px" }}>
+        社会にどんな価値を生んだかを、いくつかの観点それぞれ10点満点で見ています。各項目の下に、その見立ての理由を添えました。
+      </p>
       <div style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px" }}>
         {(s.items ?? []).map((it) => (
-          <Meter key={it.key} label={it.key} score={it.score} max={10} />
+          <Meter key={it.key} label={it.key} score={it.score} max={10} note={it.reason} />
         ))}
       </div>
       <Collapsible title="総括" text={s.summary} />
