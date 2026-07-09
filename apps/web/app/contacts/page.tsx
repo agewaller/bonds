@@ -37,6 +37,42 @@ type Duplicate = {
   distance: number;
 };
 
+// SNS・サービスとの「連携」ボタン。友だち一覧を直接くれる SNS は無いのが実情なので、
+// 各社が公式に用意する「自分のデータのダウンロード」を開き、届いたファイルを取り込む導線にする
+// (Google だけは連絡先/カレンダー/メールの読み取り連携が本当にできる = 別枠)。
+const SNS_CONNECTORS: { key: string; label: string; url: string; hint: string }[] = [
+  {
+    key: "line",
+    label: "LINE",
+    url: "https://guide.line.me/ja/services/chat-history.html",
+    hint: "LINE のトーク画面 → 右上メニュー → 設定 → トーク履歴を送信、で作られるテキストファイルを、下の取り込みに置いてください。お相手とやりとりの記録が一度に入ります。",
+  },
+  {
+    key: "x",
+    label: "X (旧Twitter)",
+    url: "https://x.com/settings/download_your_data",
+    hint: "X の「データのアーカイブをダウンロード」で受け取った ZIP を、下の取り込みにそのまま置いてください。",
+  },
+  {
+    key: "instagram",
+    label: "Instagram",
+    url: "https://accountscenter.facebook.com/info_and_permissions/dyi",
+    hint: "アカウントセンターの「情報をダウンロード」で、対象をフォロー中の人・形式は JSON にすると軽くなります。届いた ZIP を下の取り込みに置いてください。",
+  },
+  {
+    key: "facebook",
+    label: "Facebook",
+    url: "https://accountscenter.facebook.com/info_and_permissions/dyi",
+    hint: "アカウントセンターの「情報をダウンロード」で友達を選び、届いた ZIP を下の取り込みに置いてください。",
+  },
+  {
+    key: "linkedin",
+    label: "LinkedIn",
+    url: "https://www.linkedin.com/mypreferences/d/download-my-data",
+    hint: "LinkedIn の「データのダウンロード」で Connections を選び、届いた ZIP か CSV を下の取り込みに置いてください。",
+  },
+];
+
 const LEVEL_LABEL: Record<string, { label: string; color: string; message: string }> = {
   good: { label: "良好", color: "#27ae60", message: "大切な方とのつながりがしっかり保たれています。" },
   fair: { label: "まずまず", color: "#f1c40f", message: "概ね良いですが、少し間が空いている方がいます。" },
@@ -61,7 +97,12 @@ export default function ContactsPage() {
   const [distance, setDistance] = useState("3");
   const [importText, setImportText] = useState("");
   const [showImport, setShowImport] = useState(false);
+  const [connectHint, setConnectHint] = useState(""); // SNS連携ボタンを押したときの手順案内
   const [dragOver, setDragOver] = useState(false);
+  // 距離感の見直し提案 (やりとりから 1〜5 を推し量る)
+  const [distanceSug, setDistanceSug] = useState<
+    { contactId: string; name: string; current: number; suggested: number; reason: string }[]
+  >([]);
   const [convText, setConvText] = useState("");
   const [showConv, setShowConv] = useState(false);
   const [proposals, setProposals] = useState<
@@ -127,6 +168,8 @@ export default function ContactsPage() {
     if (gRes.ok) setGiftOccasions((await gRes.json()).occasions ?? []);
     if (dRes.ok) setDupeGroups((await dRes.json()).groups ?? []);
     if (eRes.ok) setExReminders((await eRes.json()).reminders ?? []);
+    const distRes = await apiFetch("relationship/distance-suggestions");
+    if (distRes.ok) setDistanceSug((await distRes.json()).suggestions ?? []);
   }, []);
 
   const loadJobs = useCallback(async (): Promise<number> => {
@@ -626,6 +669,65 @@ export default function ContactsPage() {
         </section>
       )}
 
+      {distanceSug.length > 0 && (
+        <section style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <h2 style={{ fontSize: 17, margin: 0 }}>距離感の見直し</h2>
+            <button
+              style={{ padding: "6px 14px", background: "#0284c7", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+              disabled={busy}
+              onClick={async () => {
+                if (busy) return;
+                setBusy(true);
+                setError("");
+                try {
+                  const res = await apiFetch("relationship/apply-distances", { method: "POST", body: "{}" });
+                  const body = await res.json().catch(() => ({}));
+                  if (res.ok) setNotice(`${body.applied ?? 0}人の距離感を見直しました`);
+                  await load();
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              すべて反映
+            </button>
+          </div>
+          <p style={{ fontSize: 13, color: "#475569", margin: "6px 0" }}>
+            やりとりの多さや新しさから、いまの距離感（1が最も近く、5がたまに）を見直せます。反映するかはあなたが選べます。
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
+            {distanceSug.slice(0, 12).map((s) => (
+              <li key={s.contactId} style={{ fontSize: 14, display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+                <Link href={`/contacts/${s.contactId}`} style={{ color: "#0369a1", fontWeight: 600 }}>
+                  {s.name}
+                </Link>
+                <span style={{ color: "#334155" }}>
+                  {s.current} から {s.suggested} へ
+                </span>
+                <span style={{ color: "#64748b" }}>— {s.reason}</span>
+                <button
+                  style={{ padding: "2px 10px", background: "#fff", color: "#0284c7", border: "1px solid #0284c7", borderRadius: 8, cursor: "pointer", fontSize: 12 }}
+                  disabled={busy}
+                  onClick={async () => {
+                    const res = await apiFetch("relationship/apply-distances", {
+                      method: "POST",
+                      body: JSON.stringify({ ids: [s.contactId] }),
+                    });
+                    if (res.ok) {
+                      setNotice(`${s.name}さんの距離感を ${s.suggested} にしました`);
+                      await load();
+                    }
+                  }}
+                >
+                  この通りにする
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {importMsg && (
         <p aria-live="polite" style={{ color: "#1e40af", background: "#eff6ff", padding: 8, borderRadius: 8 }}>
           {importMsg}
@@ -1088,6 +1190,41 @@ export default function ContactsPage() {
               最新にする
             </button>
           </div>
+        )}
+      </section>
+
+      <section style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+        <h2 style={{ fontSize: 18, marginTop: 0 }}>SNS・サービスと連携して、関係する人をまとめる</h2>
+        <p style={{ color: "#64748b", margin: "4px 0 10px", fontSize: 14 }}>
+          お使いのサービスから、つながっている方をまとめて連絡帳に取り込めます。各社のボタンを押すと、
+          その取り出し方のページが開きます。受け取ったファイルを下の取り込みに置くだけで大丈夫です。
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {SNS_CONNECTORS.map((s) => (
+            <button
+              key={s.key}
+              onClick={() => {
+                window.open(s.url, "_blank", "noopener,noreferrer");
+                setConnectHint(s.hint);
+                setShowImport(true);
+              }}
+              style={{
+                padding: "8px 16px",
+                background: "#fff",
+                color: "#2563eb",
+                border: "1px solid #2563eb",
+                borderRadius: 8,
+                cursor: "pointer",
+              }}
+            >
+              {s.label} とつなぐ
+            </button>
+          ))}
+        </div>
+        {connectHint && (
+          <p aria-live="polite" style={{ margin: "10px 0 0", color: "#1e40af", background: "#eff6ff", padding: 10, borderRadius: 8, fontSize: 14 }}>
+            {connectHint}
+          </p>
         )}
       </section>
 

@@ -24,7 +24,7 @@ import { canonicalizeModelId, isValidModelId, type ModelId } from "./lib/cost.js
 import { runPersonDd, getMonthlyCostJpy, getMonthlyCostJpyForUser, type DdRunEvent } from "./dd/runner.js";
 import { normalizeLocale } from "./lib/locale.js";
 import { clampScore } from "./lib/dd-spec.js";
-import { clampDistance, calculateIsolationScore, todaySuggestions } from "./lib/relationship.js";
+import { clampDistance, calculateIsolationScore, todaySuggestions, suggestDistance } from "./lib/relationship.js";
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { identityKeys, normalizeName } from "./lib/identity.js";
@@ -1732,6 +1732,87 @@ export function createApp(deps: AppDeps) {
       today,
       connectionScore: 100 - isolation.score, // 高い方が良い表示 (lms と同じ)
     });
+  });
+
+  // 距離感 (1〜5) の自動レーティング。やりとりの多さ・新しさ・贈り物から推し量る。
+  // ownerUid の全 active 連絡先について {現状, おすすめ, 理由} を返す。ユーザーの手入力を
+  // 勝手に消さないため「提案」に留め、適用は明示操作 (下の apply) で行う。
+  const computeDistanceSuggestions = async (ownerUid: string) => {
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid, state: "active" },
+      select: { id: true, name: true, distance: true },
+    });
+    if (contacts.length === 0) return [];
+    const ids = contacts.map((x) => x.id);
+    const [interactions, gifts] = await Promise.all([
+      prisma.contactInteraction.findMany({
+        where: { contactId: { in: ids } },
+        select: { contactId: true, occurredAt: true },
+      }),
+      prisma.contactGift.findMany({
+        where: { contactId: { in: ids } },
+        select: { contactId: true },
+      }),
+    ]);
+    const now = Date.now();
+    const byContact = new Map<string, { count: number; days: Set<string>; last: number | null }>();
+    for (const it of interactions) {
+      let e = byContact.get(it.contactId);
+      if (!e) byContact.set(it.contactId, (e = { count: 0, days: new Set(), last: null }));
+      e.count++;
+      e.days.add(it.occurredAt.toISOString().slice(0, 10));
+      const t = it.occurredAt.getTime();
+      if (e.last === null || t > e.last) e.last = t;
+    }
+    const giftByContact = new Map<string, number>();
+    for (const g of gifts) giftByContact.set(g.contactId, (giftByContact.get(g.contactId) ?? 0) + 1);
+    const DAY = 86_400_000;
+    return contacts.map((ct) => {
+      const e = byContact.get(ct.id);
+      const s = suggestDistance({
+        interactionCount: e?.count ?? 0,
+        distinctDays: e?.days.size ?? 0,
+        daysSinceLast: e && e.last !== null ? Math.floor((now - e.last) / DAY) : null,
+        giftCount: giftByContact.get(ct.id) ?? 0,
+      });
+      return {
+        contactId: ct.id,
+        name: ct.name,
+        current: clampDistance(ct.distance),
+        suggested: s.suggested,
+        reason: s.reason,
+        confident: s.confident,
+      };
+    });
+  };
+
+  app.get("/api/relationship/distance-suggestions", async (c) => {
+    const all = await computeDistanceSuggestions(c.get("ownerUid"));
+    // 変えたほうがよい (現状と違う) 提案を、確信のあるものから先に返す
+    const changes = all
+      .filter((s) => s.confident && s.suggested !== s.current)
+      .sort((a, b) => a.suggested - b.suggested);
+    return c.json({ suggestions: changes, total: all.length });
+  });
+
+  // 距離感の提案を適用する。ids を指定すればその人だけ、無指定なら確信のある提案すべて。
+  app.post("/api/relationship/apply-distances", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const b = await c.req.json<{ ids?: unknown }>().catch(() => ({}) as { ids?: unknown });
+    const idSet = Array.isArray(b.ids) ? new Set(b.ids.filter((x): x is string => typeof x === "string")) : null;
+    const all = await computeDistanceSuggestions(ownerUid);
+    const targets = all.filter(
+      (s) => s.confident && s.suggested !== s.current && (idSet ? idSet.has(s.contactId) : true),
+    );
+    let applied = 0;
+    for (const t of targets) {
+      await prisma.contact.updateMany({
+        where: { id: t.contactId, ownerUid },
+        data: { distance: t.suggested },
+      });
+      applied++;
+    }
+    return c.json({ applied });
   });
 
   // ---------------- カレンダー & 面談候補 — フェーズ3 ----------------
