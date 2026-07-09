@@ -40,6 +40,8 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
   partnerMessage: ["body"],
   // Google 連携: refresh token は本人の Google データへの合鍵 = 暗号化
   googleConnection: ["refreshToken"],
+  // 取り込みジョブの本文 (ファイル/貼り付けの中身) は PII = 暗号化
+  importJob: ["payload"],
 };
 
 // data ({ field: value } / { field: { set: value } } / 配列) を in-place で暗号化。

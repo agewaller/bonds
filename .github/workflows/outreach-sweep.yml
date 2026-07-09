@@ -31,3 +31,6 @@ jobs:
           # Google 連携: つながっている人を古い順に少しずつ同期 (受動収集)
           curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/google/sync-all?batch=3" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
+          # 取り込みジョブのバックストップ: ユーザーが全部閉じても残った待ち行列を処理する
+          curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/contacts/process-import-jobs?batch=20" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
