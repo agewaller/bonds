@@ -71,6 +71,12 @@ const SNS_CONNECTORS: { key: string; label: string; url: string; hint: string }[
     url: "https://www.linkedin.com/mypreferences/d/download-my-data",
     hint: "LinkedIn の「データのダウンロード」で Connections を選び、届いた ZIP か CSV を下の取り込みに置いてください。",
   },
+  {
+    key: "outlook",
+    label: "Outlook",
+    url: "https://support.microsoft.com/ja-jp/office/outlook-から連絡先をエクスポートする-10f09abd-643c-4495-bb80-543714eca73f",
+    hint: "Outlook の連絡先を CSV で書き出して (People 画面 → 管理 → 連絡先のエクスポート)、届いた CSV を下の取り込みに置いてください。お名前・メール・電話・会社・役職ごと入ります。予定表は下の「ご自身の予定表とつなぐ」に Outlook の公開 ICS アドレスを貼ると面談候補にも使えます。",
+  },
 ];
 
 const LEVEL_LABEL: Record<string, { label: string; color: string; message: string }> = {
@@ -1235,6 +1241,12 @@ export default function ContactsPage() {
               最新にする
             </button>
           </div>
+        )}
+        {showCalendar && (
+          <p style={{ color: "#94a3b8", fontSize: 12, margin: "8px 0 0", lineHeight: 1.7 }}>
+            Outlook は予定表の共有 (ICS) アドレスを、Google カレンダーは設定の「非公開の ICS 形式アドレス」を貼ると、
+            ご予定をふまえた面談候補が出せます。一度つなぐと、最新にするボタンで取り直せます。
+          </p>
         )}
       </section>
 

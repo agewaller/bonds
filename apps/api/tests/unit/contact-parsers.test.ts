@@ -222,6 +222,8 @@ import {
   parseLineTalk,
   parseWhatsAppChat,
   parseGoogleContactsCsv,
+  parseOutlookContacts,
+  looksLikeOutlookCsv,
   parseLmsExport,
   parseImportText,
 } from "../../src/lib/contact-parsers.js";
@@ -296,6 +298,53 @@ John,Q,Public,,,,,jq@example.com,,,`;
 
   it("parseContacts の自動判別が LinkedIn より先に Google を見分ける", () => {
     expect(parseContacts(GOOGLE_CSV)[0]?.source).toBe("google");
+  });
+});
+
+describe("parseOutlookContacts (Outlook 連絡先 CSV)", () => {
+  // 英語 UI の Outlook.com / 従来版 Outlook のエクスポート (列が非常に多い)
+  const OUTLOOK_EN = `First Name,Middle Name,Last Name,Company,Department,Job Title,E-mail Address,E-mail 2 Address,Home Phone,Business Phone,Mobile Phone,Birthday,Notes
+Taro,,Yamada,山田工業,営業,部長,taro@example.com,taro2@example.com,,03-1111-2222,090-3333-4444,1965/6/1,商談で知り合った
+John,Q,Public,Public LLC,,Director,,jq@example.com,,,,,`;
+
+  it("英語ヘッダ: 携帯を優先し、メール・会社・役職・誕生日・メモまで取り込む", () => {
+    const rows = parseOutlookContacts(OUTLOOK_EN);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      name: "Taro Yamada",
+      email: "taro@example.com",
+      phone: "090-3333-4444", // Mobile を Business より優先
+      company: "山田工業",
+      title: "部長",
+      birthday: "1965-06-01",
+      notes: "商談で知り合った",
+      source: "outlook",
+    });
+    // メール 1 が空なら 2 を採る
+    expect(rows[1]).toMatchObject({ name: "John Q Public", email: "jq@example.com", title: "Director" });
+  });
+
+  it("日本語 UI の Outlook (姓/名/電子メール アドレス/勤務先 電話/役職) も取り込む", () => {
+    const csv = `姓,名,会社名,役職,電子メール アドレス,勤務先 電話,携帯電話
+鈴木,花子,鈴木商事,課長,hanako@example.com,06-5555-6666,080-7777-8888`;
+    const rows = parseOutlookContacts(csv);
+    expect(rows[0]).toMatchObject({
+      name: "鈴木 花子",
+      company: "鈴木商事",
+      title: "課長",
+      email: "hanako@example.com",
+      phone: "080-7777-8888", // 携帯優先
+      source: "outlook",
+    });
+  });
+
+  it("自動判別: Outlook を LinkedIn より先に見分け、Google/LinkedIn とは取り違えない", () => {
+    expect(looksLikeOutlookCsv(OUTLOOK_EN)).toBe(true);
+    expect(parseContacts(OUTLOOK_EN)[0]?.source).toBe("outlook");
+    // LinkedIn (Email Address ハイフン無し + Position + Connected On) は従来どおり linkedin
+    const linkedin = "First Name,Last Name,URL,Email Address,Company,Position,Connected On\nA,B,,a@example.com,X社,営業,01 Jan 2026";
+    expect(looksLikeOutlookCsv(linkedin)).toBe(false);
+    expect(parseContacts(linkedin)[0]?.source).toBe("linkedin");
   });
 });
 

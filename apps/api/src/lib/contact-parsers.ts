@@ -359,6 +359,21 @@ function hasCjk(s: string): boolean {
   return /[぀-ヿ㐀-鿿]/.test(s);
 }
 
+// 誕生日の表記ゆれを YYYY-MM-DD に正す。Outlook は "1965/6/1" のようにゼロ詰めしない
+// ことがある。区切りで 3 つに割れれば年月日として組み直し、無ければ 8 桁連続を拾う。
+function normalizeIsoDate(raw: string): string | undefined {
+  const parts = raw.trim().split(/[^0-9]+/).filter(Boolean);
+  if (parts.length === 3 && parts[0]!.length === 4) {
+    const [y, m, d] = parts;
+    const mm = m!.padStart(2, "0");
+    const dd = d!.padStart(2, "0");
+    if (+mm >= 1 && +mm <= 12 && +dd >= 1 && +dd <= 31) return `${y}-${mm}-${dd}`;
+  }
+  const digits = raw.replace(/[^0-9]/g, "");
+  if (digits.length === 8) return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+  return undefined;
+}
+
 export function looksLikeGoogleContactsCsv(head: string): boolean {
   return /e-mail 1 - value/i.test(head) && /first name/i.test(head);
 }
@@ -396,6 +411,73 @@ export function parseGoogleContactsCsv(csvText: string): ParsedContact[] {
           ? `${birthdayRaw.slice(0, 4)}-${birthdayRaw.slice(4, 6)}-${birthdayRaw.slice(6, 8)}`
           : undefined,
       source: "google",
+    });
+  }
+  return out;
+}
+
+// ------------------------------------------------------------
+// Outlook / Microsoft の連絡先 CSV エクスポート。
+// Outlook.com「連絡先のエクスポート」や従来版 Outlook の CSV は列名が独特で
+// (First Name / Last Name / E-mail Address / Business Phone / Mobile Phone / Job Title …)、
+// 汎用 CSV や LinkedIn 用パーサに任せると電話・メール・役職を取りこぼす。
+// 日本語 UI の Outlook (姓 / 名 / 電子メール アドレス / 勤務先 電話 / 携帯電話 / 役職) も同じ。
+// ------------------------------------------------------------
+
+export function looksLikeOutlookCsv(head: string): boolean {
+  const h = head.toLowerCase();
+  // Google 連絡先 (e-mail 1 - value) は別パーサ。ハイフン付き "e-mail address" は Outlook 固有
+  // (LinkedIn は "email address" とハイフン無し)。日本語 Outlook は「電子メール アドレス」。
+  const english = /e-mail address/.test(h) && /first name/.test(h);
+  const japanese = /電子メール\s*アドレス/.test(head) && /(?:^|,)\s*"?名"?\s*(?:,|$)/m.test(head);
+  return english || japanese;
+}
+
+export function parseOutlookContacts(csvText: string): ParsedContact[] {
+  const lines = csvText.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) return [];
+  const headers = splitCsvLine(lines[0]!).map((h) => h.replace(/"/g, "").trim().toLowerCase());
+  // 候補ヘッダ名のうち、最初に値が入っている列を拾う (英語 UI と日本語 UI の両方に対応)。
+  const firstFilled = (v: string[], names: string[]): string => {
+    for (const n of names) {
+      const i = headers.indexOf(n);
+      if (i >= 0 && (v[i] ?? "").trim()) return v[i]!.trim();
+    }
+    return "";
+  };
+  const out: ParsedContact[] = [];
+  for (const line of lines.slice(1)) {
+    const v = splitCsvLine(line).map((x) => x.replace(/^"|"$/g, ""));
+    const first = firstFilled(v, ["first name", "名"]);
+    const middle = firstFilled(v, ["middle name", "ミドル ネーム", "ミドルネーム"]);
+    const last = firstFilled(v, ["last name", "姓"]);
+    // 氏名の並びは、日本語圏なら「姓 名」、そうでなければ「名 (ミドル) 姓」。
+    const name = (
+      hasCjk(last + first)
+        ? [last, first].filter(Boolean).join(" ")
+        : [first, middle, last].filter(Boolean).join(" ")
+    ).trim();
+    if (!name) continue;
+    // メールは 1 → 2 → 3 の順、電話は携帯 → 勤務先 → 自宅 の順で、最初に埋まっているものを採る。
+    const email = firstFilled(v, [
+      "e-mail address", "e-mail 2 address", "e-mail 3 address",
+      "電子メール アドレス", "電子メールアドレス", "電子メール 2 アドレス", "電子メール 3 アドレス",
+    ]);
+    const phone = firstFilled(v, [
+      "mobile phone", "business phone", "business phone 2", "home phone", "other phone",
+      "携帯電話", "勤務先 電話", "勤務先電話", "会社 電話", "自宅 電話", "自宅電話",
+    ]);
+    out.push({
+      name,
+      furigana: [firstFilled(v, ["surname yomi", "セイ"]), firstFilled(v, ["given yomi", "メイ"])]
+        .filter(Boolean).join(" ") || undefined,
+      email: email || undefined,
+      phone: phone || undefined,
+      company: firstFilled(v, ["company", "会社名", "会社"]) || undefined,
+      title: firstFilled(v, ["job title", "役職", "役職名"]) || undefined,
+      birthday: normalizeIsoDate(firstFilled(v, ["birthday", "誕生日"])),
+      notes: firstFilled(v, ["notes", "メモ", "備考"]) || undefined,
+      source: "outlook",
     });
   }
   return out;
@@ -471,6 +553,7 @@ export function parseContacts(
     if (r.length > 0) return r;
   }
   if (looksLikeGoogleContactsCsv(head)) return parseGoogleContactsCsv(content);
+  if (looksLikeOutlookCsv(head)) return parseOutlookContacts(content);
   if (/first name/i.test(head) && /last name/i.test(head)) return parseLinkedInConnections(content);
   return parseCsvContacts(content);
 }

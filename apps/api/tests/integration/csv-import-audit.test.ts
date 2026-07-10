@@ -152,6 +152,21 @@ describe("崩れた CSV のユーザー目線監査", () => {
     expect(list[0].email).toBe("taro@example.com");
   });
 
+  it("Outlook の連絡先 CSV (多列・英語ヘッダ) をそのまま取り込み、メール/電話/役職まで正しく保存する", async () => {
+    const app = createApp({ prisma, generate: null });
+    const csv = [
+      "First Name,Middle Name,Last Name,Company,Job Title,E-mail Address,Business Phone,Mobile Phone,Birthday,Notes",
+      "Ichiro,,Kondo,近藤製作所,取締役,ichiro@example.com,03-1234-5678,090-8765-4321,1970/3/5,展示会で名刺交換",
+    ].join("\n");
+    const contacts = await importAndList(app, csv);
+    expect(contacts).toHaveLength(1);
+    expect(contacts[0]!.name).toBe("Ichiro Kondo");
+    expect(contacts[0]!.company).toBe("近藤製作所");
+    expect(contacts[0]!.title).toBe("取締役");
+    expect(contacts[0]!.email).toBe("ichiro@example.com");
+    expect(contacts[0]!.phone).toBe("090-8765-4321"); // 携帯を優先
+  });
+
   it("保存された連絡先の PII (メール・電話) は DB 上では暗号文になっている", async () => {
     const app = createApp({ prisma, generate: null });
     await importAndList(app, ["氏名,メールアドレス,電話番号", "秘密 太郎,secret@example.com,090-9999-0000"].join("\n"));
