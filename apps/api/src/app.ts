@@ -42,7 +42,7 @@ import { parseSnsField, serializeSnsEntries, snsSearchQueries, snsPlatformLabel,
 import { randomUUID } from "node:crypto";
 import { parseIcsBusy, looksLikeIcs, buildMeetingInviteIcs } from "./lib/ics.js";
 import {
-  buildSendGridMailer,
+  buildMailer,
   validateOutreachCandidates,
   OUTREACH_JSON_INSTRUCTION,
   type MailerFn,
@@ -111,8 +111,9 @@ export function createApp(deps: AppDeps) {
   const { prisma } = deps;
   // generate 未注入なら env 鍵から構築 (鍵なしなら null = 実行系は 503)
   const generate = deps.generate !== undefined ? deps.generate : buildAnthropicGenerate();
-  // mailer も同様 (SENDGRID_API_KEY / OUTREACH_FROM_EMAIL 未設定なら送信は 503)
-  const mailer = deps.mailer !== undefined ? deps.mailer : buildSendGridMailer();
+  // mailer も同様 (SENDGRID_API_KEY / OUTREACH_FROM_EMAIL 未設定なら送信は 503)。
+  // 鍵が re_ 始まりなら Resend、そうでなければ SendGrid に自動で振り分ける (cares と同じ鍵で可)。
+  const mailer = deps.mailer !== undefined ? deps.mailer : buildMailer();
   // 人物DD の検索器 (TAVILY_API_KEY 無しなら null = 知識ベースモード)
   const ddSearch = deps.search !== undefined ? deps.search : buildTavilySearch();
   // Google 連携 (env 未設定なら null = 「準備中」に縮退)

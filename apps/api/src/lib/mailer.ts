@@ -1,25 +1,43 @@
-// メール送信 (cares apps/api/src/lib/mailer.ts の SendGrid 方式を踏襲)。
+// メール送信 (cares apps/api/src/lib/mailer.ts と同じプロバイダ自動判別方式)。
 // 鍵はサーバ側 env のみ。未設定なら null (呼び出し側で 503 = graceful degrade)。
 // テストでは MailerFn を注入して実送信せずに検証する。
+//
+// 送信プロバイダは鍵の形式で自動判別する (cares と同じ鍵を使い回せる。SendGrid 専用契約は不要):
+//   re_...   → Resend  (cares が使っている。無料枠が大きく日本からの到達率も良い)
+//   それ以外 → SendGrid v3 (202 で受理)
+// 本文はプレーンテキスト (記号装飾しない方針 = BR-09)。
+// 環境変数は cares と揃える: 鍵は SENDGRID_API_KEY (中身は Resend でも可)、
+// 送信元は OUTREACH_FROM_EMAIL、表示名は OUTREACH_SENDER_IDENTITY (任意)。
 
 export type MailArgs = { to: string; subject: string; body: string };
 export type MailResult = { messageId: string | null };
 export type MailerFn = (args: MailArgs) => Promise<MailResult>;
 
-export function buildSendGridMailer(): MailerFn | null {
+export function buildMailer(): MailerFn | null {
   const apiKey = process.env.SENDGRID_API_KEY;
   const from = process.env.OUTREACH_FROM_EMAIL;
   if (!apiKey || !from) return null;
+  const fromName = process.env.OUTREACH_SENDER_IDENTITY?.trim() || "bonds";
+  const viaResend = apiKey.startsWith("re_");
   return async ({ to, subject, body }) => {
+    if (viaResend) {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from: `${fromName} <${from}>`, to: [to], subject, text: body }),
+      });
+      if (!res.ok) {
+        throw new Error(`resend_error: ${res.status} ${await res.text().catch(() => "")}`);
+      }
+      const json = (await res.json().catch(() => ({}))) as { id?: string };
+      return { messageId: json.id ?? null };
+    }
     const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         personalizations: [{ to: [{ email: to }] }],
-        from: { email: from },
+        from: { email: from, name: fromName },
         subject,
         content: [{ type: "text/plain", value: body }],
       }),
@@ -30,6 +48,9 @@ export function buildSendGridMailer(): MailerFn | null {
     return { messageId: res.headers.get("x-message-id") };
   };
 }
+
+// 旧名の別名 (呼び出し側の互換。中身はプロバイダ自動判別)。
+export const buildSendGridMailer = buildMailer;
 
 // ------------------------------------------------------------
 // 発信文面候補の検証 (AI 出力の DdResultSpec 流の型強制)
