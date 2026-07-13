@@ -214,3 +214,26 @@ e2e           Playwright（ユーザー目線監査 + AI 実機スモーク）
 - やり取り台帳・SNS 情報・連携ボタン・距離感の自動レーティング（2026-07-09）— 実装済み: ①**やり取り台帳**（`exchanges`。Gift を一般化し贈与だけでなく貢献/貸し借り/取引/約束を状態＋期日つきで記録。改ざん検知のハッシュチェーン＝ブロックチェーンは使わない・`lib/exchanges.ts`。連絡帳トップに督促「そろそろ区切りをつけたいこと」）。あわせて `/api/exchanges`・`/api/gifts` の requireUser 欠落（未認証で他人の台帳が読めた潜在バグ）を修正。②**各人の SNS 情報の取得**（`contacts.sns` を platform 別に構造化＝`lib/sns.ts`。記録 UI＋公開の発信の近況把握は refresh-digest の公開検索を SNS ハンドル軸に強化。公開検索は明示押下時のみ＝相手の尊厳）。③**SNS・サービス連携ボタン**（連絡帳上部に LINE/X/Instagram/Facebook/LinkedIn の「〜とつなぐ」＝各社公式のデータDLページを開き取り込みへ誘導。友だち一覧を直接くれる SNS API は無いため公式書き出し経由が正直・INTEGRATIONS.md 維持。Google は本物の読み取り OAuth を別枠で維持）。④**距離感 1〜5 の自動レーティング**（`suggestDistance` 純粋関数＝やりとりの延べ日数/回数/新しさ/贈り物から推定。`/api/relationship/distance-suggestions`＋`apply-distances`。連絡帳トップ「距離感の見直し」で理由つき提案→個別/一括適用。手がかり不足は confident=false で上書きしない・最終判断はユーザー）
 - staging 環境と本番前の実機監査（2026-07-09）— 実装済み: cares ADR-0015 踏襲の staging（`-staging` 接尾辞リソース・本番と同一プロジェクト共存・DB 分離で本番データに触れない）を配線。`infra/scripts/_env.staging.sh`（差分オーバーレイ・`BONDS_ENV=staging` で有効）＋`10-create-staging.sh`（一度だけの provisioning: `bonds-db-staging`/`bonds-images-staging`/`bonds-db-password-staging`。暗号鍵・breakglass・AI キー・SendGrid は prod と共有）＋`deploy-staging.yml`（テストゲート→SQL 起動→migrate→build→deploy→healthz、`environment: staging` で承認ゲート化可）＋`stop-staging-sql.yml`。**リンク切れ監査 `e2e/tests/link-audit.spec.ts`（内部リンク先が 404/5xx でない ＋ 外部リンク先＝SNS の取り出し方・データDL 等がすべて到達可能。bot ブロック 401/403/405/429 は生存扱い、真の死活 404/410/5xx/接続不能のみ落とす）を新設し `e2e-audit` に追加**。本番前フロー: `deploy-staging` → `e2e-audit(base_url=staging web)` でユーザー目線監査＋リンク切れ監査＋AI 実機スモークが緑 → `deploy-gcp`（詳細は `infra/scripts/README.md`「staging 環境」）
 - 残（外部設定が前提のもの）: **staging の一度だけの GCP provisioning（オーナーが `10-create-staging.sh` を実行 + GitHub Environment `staging` 作成）**・Google OAuth クライアントの作成と設定（People API の contacts.readonly も同意画面に含める・People API を有効化）・Google/Outlook 予定の書き込み同期（ICS 招待で代替中）・多言語辞書の詳細ページ展開
+
+## オーナー設定の記録（外部設定は OWNER-SETUP.md に、UI が変わっても迷わない粒度で書く）
+
+オーナー（非エンジニア）にしかできない外部設定（API 鍵・OAuth・デプロイ・決済など）は、
+[`docs/OWNER-SETUP.md`](docs/OWNER-SETUP.md) に「気力・体力が無くても上から順にやれば終わる」粒度で書く。
+各社の管理画面はボタン名・配置を頻繁に変えるため、オーナーは**指示と実画面が食い違うと混乱する**。
+これを避けるため、オーナー向け手順は必ず次を守る（全プロダクト共通の原則）:
+
+1. 各手順の先頭に「▼ ねらい（この操作で何を達成したいか）」を1行。名前でなく目的で探せるようにする。
+2. ボタン名は「（または〜/英語名）」で別名を併記する（例: 認証情報＝Credentials＝APIとサービス）。
+3. 迷ったとき用に【検索キーワード】と直リンク URL を添える。
+4. 各手順に「画面が違うとき」の注記を付け、最後は必ず「分からなければ止めて画面の写真を送って相談」に逃がす。
+5. 秘密の値（Secret）と公開値（Variables/環境変数）のどちらに入れるかを明示し、取り違えを防ぐ。
+6. 「終わるまで機能は準備中で縮退し、アプリは壊れない」ことを明記して不安を取り除く。
+
+Claude はオーナー設定が要る機能を作ったら、同じ回で `docs/OWNER-SETUP.md` にこの粒度で追記し、
+その URL をオーナーに伝える。UI が指示と違うという申告があれば、実画面に合わせて手順を書き直す。
+
+**bonds のオーナー設定（詳細は OWNER-SETUP.md）**: ①Resend 鍵を `BONDS_SENDGRID_API_KEY` に + `OUTREACH_FROM_EMAIL`
+変数（メール送信。SendGrid 契約は不要・cares の Resend を流用）②Google OAuth クライアント + People/Gmail/
+Calendar/Drive API + `BONDS_GOOGLE_OAUTH_CLIENT_SECRET`/`GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_REDIRECT_URL`
+（受動収集・ライブカレンダー）③staging の一度きり provisioning（`10-create-staging.sh` + GitHub Environment）
+④（任意）Tavily。ANTHROPIC 鍵は cares と共有済み。

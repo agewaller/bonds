@@ -77,6 +77,14 @@ jobs:
           # Google 連携 (Calendar/Gmail/Drive 取込) の OAuth クライアント ID (公開値)。
           # Variables 未設定なら "unset" になり、連携機能は「準備中」に縮退する。
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          # OAuth のリダイレクト先。Google Console に登録した値とここを一致させる
+          # (例: https://bonds-api-xxxx-an.a.run.app/api/google/callback)。未設定なら localhost。
+          GOOGLE_OAUTH_REDIRECT_URL: ${{ vars.GOOGLE_OAUTH_REDIRECT_URL }}
+          # 発信メールの送信元。未設定なら送信は「準備中」(下書きまで) に縮退する。
+          # 鍵 (BONDS_SENDGRID_API_KEY Secret) に Resend の re_ キーを入れれば Resend で送る。
+          OUTREACH_FROM_EMAIL: ${{ vars.OUTREACH_FROM_EMAIL }}
+          # 送信者の表示名 (任意。未設定なら "bonds")。
+          OUTREACH_SENDER_IDENTITY: ${{ vars.OUTREACH_SENDER_IDENTITY }}
           # ブラウザがログインする Firebase プロジェクトと同じ ID で API 側もトークンを
           # 検証する (これがズレると verifyIdToken が aud 不一致で必ず 401 になり、
           # ログイン後の全リクエスト＝取り込みも失敗する)。未設定なら 07 が $PROJECT に既定。

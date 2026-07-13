@@ -1,0 +1,213 @@
+# オーナー設定メモ（bonds）— 気力・体力のあるときに、頭を使わずできるように
+
+このメモは、オーナー（agewaller@gmail.com）にしかできない外部サービスの設定を、
+**上から順にそのままやれば終わる**ように書いたものです。プログラミングの知識は要りません。
+一度に全部やる必要はありません。**1 個ずつ、好きなときに**進めてください。
+
+- ここに載っている設定が終わるまで、その機能は画面に「準備中」と出るだけで、**アプリは壊れません**。
+- 各タスクは独立しています。順番は「効果の大きい順」に並べていますが、どれから始めてもかまいません。
+
+---
+
+## いちばん大事な心得（画面が説明と違って見えたとき）
+
+各社の管理画面（Google Cloud、GitHub など）は、デザインやボタンの名前を**しょっちゅう変えます**。
+このメモの手順と画面が違って見えても、**焦らなくて大丈夫**です。次のルールで乗り切れます。
+
+1. **「ボタンの名前」ではなく「やりたいこと（ねらい）」で探す。** 各手順の先頭に
+   「▼ ねらい」を書いてあります。名前が違っても、そのねらいを果たせる場所を探せば正解です。
+2. **似た言葉に読み替える。** 例:「認証情報」＝「Credentials」＝「APIとサービス」。
+   「変数」＝「Variables」＝「環境変数」。「シークレット」＝「Secret」＝「秘密の値」。
+   このメモでは、想定される別名を「（または〜）」の形で併記しています。
+3. **見つからないときは、画面上部の検索窓にキーワードを入れる。** たいていのサービスは
+   管理画面に検索窓があります。手順中の【検索キーワード】をそのまま入れてください。
+4. **それでも違ってどうしても分からないときは、ここで止めてかまいません。**
+   「◯◯の画面で、△△というボタンが見つからない。画面にはこう出ている（写真）」と
+   私（Claude）に伝えてください。**その時点の実際の画面に合わせて、やり直しの手順を書き直します。**
+   無理に進めて壊すより、止めて聞くほうが安全です。
+
+> このメモ自体の URL（ブックマーク推奨）:
+> https://github.com/agewaller/bonds/blob/claude/bonds-file-expansion-lir14l/docs/OWNER-SETUP.md
+> （本番に取り込まれたあとは `main` 版: https://github.com/agewaller/bonds/blob/main/docs/OWNER-SETUP.md ）
+
+---
+
+## 事前に一度だけ：本番へ反映する方法（各タスクの最後で使います）
+
+いくつかのタスクは、最後に「本番へ反映（再デプロイ）」が必要です。やり方は毎回同じです。
+
+- ▼ ねらい: 設定した値をアプリに読み込ませて有効にする。
+- 手順:
+  1. https://github.com/agewaller/bonds/actions を開く。
+  2. 左の一覧から **「deploy-gcp」** を選ぶ。
+  3. 右上の **「Run workflow」**（または「ワークフローを実行」）を押す。
+  4. ブランチは **main** のまま **「Run workflow」** を押す。
+  5. 緑のチェックが付けば完了（5〜8 分ほど）。
+- もっと簡単な代わりの手段: 私（Claude）に「本番反映して」と言ってくれれば、こちらで実行します。
+  **設定値そのものはオーナーしか入れられません**が、反映の実行は私が代われます。
+
+---
+
+## タスク1：メール送信を有効にする（Resend の鍵を使い回す）★おすすめ最初
+
+これができると、bonds が作った連絡・お礼・面談打診のメールを、**実際に送れる**ようになります
+（いまは下書きまで。送信ボタンが「準備中」）。**SendGrid の新規契約は不要**です。
+cares で使っている **Resend** の鍵をそのまま使い回します。
+
+- ▼ ねらい: ①Resend の鍵を bonds に渡す ②送信元メールアドレスを1つ決める ③本番反映。
+- 事前に用意するもの:
+  - cares で設定した **Resend の API キー**（`re_` で始まる文字列）。
+    見つからなければ https://resend.com にログイン →【検索キーワード: API Keys】で作り直せます
+    （無料枠で月3,000通）。
+  - 送信元にするメールアドレス（例: `bonds@advisers.jp` など、**あなたが管理しているドメインの
+    アドレス**）。Resend で「送信ドメインの認証（Verify a Domain）」を済ませたドメインが必要です。
+    まだなら Resend の【検索キーワード: Domains】から追加できます。cares と同じドメインでよいです。
+
+### 1-A. Resend の鍵を bonds のシークレットに入れる（Google Cloud）
+- ▼ ねらい: 鍵という「秘密の値」を、bonds が読める金庫（Secret Manager）に更新版として入れる。
+- 手順:
+  1. https://console.cloud.google.com/security/secret-manager?project=arctic-anvil-497002-q2 を開く。
+     （または上の検索窓で【Secret Manager】と入れる。日本語表示なら「シークレット マネージャー」）
+  2. 一覧から **`BONDS_SENDGRID_API_KEY`** をクリック。
+     - ※名前に「SENDGRID」とありますが、**中身は Resend の鍵で構いません**（bonds は鍵の形で
+       自動判別します。`re_` なら Resend として送ります）。
+  3. **「新しいバージョン」**（または「+ バージョンを追加」「Add version」）を押す。
+  4. 「シークレットの値」欄に **Resend の `re_…` キーをそのまま貼り付け**て、**「追加」**を押す。
+- 画面が違うとき: 一覧に `BONDS_SENDGRID_API_KEY` が見当たらない場合は、まだ作られていません。
+  私に「BONDS_SENDGRID_API_KEY が無い」と伝えてください（作成手順を出します）。
+
+### 1-B. 送信元アドレスを GitHub の変数に入れる
+- ▼ ねらい: 「どのアドレスから送るか」をアプリに教える。
+- 手順:
+  1. https://github.com/agewaller/bonds/settings/variables/actions を開く。
+     （または bonds リポジトリ →「Settings」→ 左メニュー「Secrets and variables」→「Actions」→
+     上のタブ **「Variables」**）
+  2. **「New repository variable」**（新しい変数）を押す。
+  3. Name（名前）に **`OUTREACH_FROM_EMAIL`**、Value（値）に **送信元アドレス**（例 `bonds@advisers.jp`）
+     を入れて保存。
+  4. （任意）差出人の表示名も変えたいなら、同じ手順でもう1つ、Name **`OUTREACH_SENDER_IDENTITY`**、
+     Value に表示名（例 `矢野`）。未設定なら「bonds」と表示されます。
+- 画面が違うとき:「Variables」タブと「Secrets」タブを間違えやすいです。ここで入れるのは
+  **秘密ではない値**なので、必ず **Variables**（変数）側に入れてください。
+
+### 1-C. 本番へ反映
+- 上の「本番へ反映する方法」を実行（または私に「本番反映して」）。
+- 確認: 連絡先の「お便りを送る」で下書き→承認→送信し、相手に届けば成功。
+
+---
+
+## タスク2：Google 連携を有効にする（メール相手・カレンダー・連絡先の自動取り込み）
+
+これができると、**ボタン一つで** Gmail のやり取り相手・Google カレンダーの同席者・
+Drive の共有相手・Google 連絡先が bonds の連絡帳に入り、毎時自動で増えていきます。
+先日入れた「空き時間のメール貼り付け」も、予定表アドレスを貼らずに自動で使えるようになります。
+
+このタスクは少し長いので、**時間と気力のあるときに**。分からなくなったら途中で止めて私に聞いてください。
+
+- ▼ ねらい: ①Google で「アプリの身分証（OAuth クライアント）」を作る ②必要な API を On にする
+  ③戻り先アドレス（リダイレクト）を登録する ④できた ID と秘密を bonds に渡す ⑤本番反映。
+- 作業する場所: Google Cloud Console（プロジェクトは **arctic-anvil-497002-q2**、cares と同じ）。
+  画面右上のプロジェクト名が違っていたら、そこを押して **arctic-anvil-497002-q2** に切り替えてください。
+
+### 2-A. 使う API を On にする
+- ▼ ねらい: bonds が使う4つの窓口を有効化する。
+- 手順（4回くり返す。各リンクを開いて「有効にする（Enable）」を押すだけ）:
+  1. People API　https://console.cloud.google.com/apis/library/people.googleapis.com?project=arctic-anvil-497002-q2
+  2. Gmail API　https://console.cloud.google.com/apis/library/gmail.googleapis.com?project=arctic-anvil-497002-q2
+  3. Google Calendar API　https://console.cloud.google.com/apis/library/calendar-json.googleapis.com?project=arctic-anvil-497002-q2
+  4. Google Drive API　https://console.cloud.google.com/apis/library/drive.googleapis.com?project=arctic-anvil-497002-q2
+- 画面が違うとき: 「有効にする」がすでに「管理」に変わっていれば、それは**もう On** です（そのままでOK）。
+
+### 2-B. 同意画面（アプリの説明ページ）を用意する
+- ▼ ねらい: ユーザーが「bonds に連絡先の読み取りを許可しますか？」と聞かれる画面を用意する。
+- 手順:
+  1. https://console.cloud.google.com/apis/credentials/consent?project=arctic-anvil-497002-q2 を開く。
+     （または【検索キーワード: OAuth 同意画面 / OAuth consent screen】）
+  2. すでに cares 用に設定済みのはずです。**その場合はこの 2-B は飛ばして 2-C へ**。
+  3. まだなら「外部（External）」を選び、アプリ名（例 bonds）・サポートメール（自分のメール）を入れて
+     保存。スコープや公開申請は今はしなくて大丈夫（自分だけで使う分には「テスト」状態のまま、
+     利用者に自分のメールを「テストユーザー」に足せば動きます）。
+- 迷ったら: cares がすでに動いているので、**cares と同じ同意画面をそのまま使う**のがいちばん簡単です。
+
+### 2-C. OAuth クライアント（アプリの身分証）を作る
+- ▼ ねらい: bonds 専用の「クライアント ID」と「クライアント シークレット」を1組もらう。
+- 手順:
+  1. https://console.cloud.google.com/apis/credentials?project=arctic-anvil-497002-q2 を開く。
+     （【検索キーワード: 認証情報 / Credentials】。左メニュー「APIとサービス」→「認証情報」でも可）
+  2. 上の **「＋認証情報を作成」**（Create Credentials）→ **「OAuth クライアント ID」** を選ぶ。
+  3. アプリケーションの種類（Application type）は **「ウェブ アプリケーション」（Web application）**。
+  4. 名前は自由（例 `bonds-web`）。
+  5. **「承認済みのリダイレクト URI」（Authorized redirect URIs）** に、次を**そのまま1行**追加:
+     ```
+     https://bonds-api-xj6szhutkq-an.a.run.app/api/google/callback
+     ```
+     - ※ここが1文字でも違うと連携が失敗します。**コピーして貼り付け**てください。
+     - ※将来 bonds-api の URL が変わったら、この値も直す必要があります（その時は私が知らせます）。
+  6. 「作成」を押すと、**クライアント ID** と **クライアント シークレット** が表示されます。
+     この2つを**メモ**してください（次で使います）。閉じても後から見られます。
+- 画面が違うとき: 「リダイレクト URI」欄が見当たらないのは、種類を「ウェブ アプリケーション」に
+  していないときです。種類を選び直すと欄が出ます。
+
+### 2-D. できた ID と秘密を bonds に渡す
+- クライアント **シークレット**（秘密のほう）→ Google Cloud の Secret Manager に入れる:
+  1. https://console.cloud.google.com/security/secret-manager?project=arctic-anvil-497002-q2 を開く。
+  2. **`BONDS_GOOGLE_OAUTH_CLIENT_SECRET`** があればクリック→「新しいバージョン」で値を貼り付け→追加。
+  3. **無ければ**「シークレットを作成」→ 名前 `BONDS_GOOGLE_OAUTH_CLIENT_SECRET` → 値にシークレットを
+     貼り付け → 作成。
+- クライアント **ID**（公開してよいほう）と **戻り先 URL** → GitHub の変数に入れる:
+  1. https://github.com/agewaller/bonds/settings/variables/actions を開く（「Variables」タブ）。
+  2. 「New repository variable」で、Name **`GOOGLE_OAUTH_CLIENT_ID`**、Value にクライアント ID。
+  3. もう1つ、Name **`GOOGLE_OAUTH_REDIRECT_URL`**、Value に
+     `https://bonds-api-xj6szhutkq-an.a.run.app/api/google/callback`（2-C の5と同じ文字列）。
+
+### 2-E. 本番へ反映
+- 上の「本番へ反映する方法」を実行（または私に「本番反映して」）。
+- 確認: bonds にログイン →「連絡帳」→ Google 連携のボタンが「準備中」でなくなり、押すと Google の
+  許可画面が出れば成功。許可すると相手が連絡帳に入ってきます。
+
+---
+
+## タスク3：staging（本番前のリハーサル環境）を一度だけ用意する
+
+これができると、本番に出す前に「そっくりな別環境」で自動チェック（ユーザー目線監査・リンク切れ・
+AI 実機）を通してから本番へ、という安全な流れになります。**本番のデータには一切触れません**。
+
+- ▼ ねらい: ①gcloud にログイン ②用意スクリプトを1回実行 ③GitHub に staging という枠を作る。
+- 手順:
+  1. **gcloud にログイン**（自分のパソコンのターミナルで）。未インストールなら
+     https://cloud.google.com/sdk/docs/install の案内に従う。
+     ```
+     gcloud auth login
+     gcloud config set project arctic-anvil-497002-q2
+     ```
+  2. **用意スクリプトを実行**（bonds を clone したフォルダで1回だけ）:
+     ```
+     bash infra/scripts/10-create-staging.sh
+     ```
+     - これが staging 用の DB などを作ります（本番と別物）。
+  3. **GitHub に「staging」という環境枠を作る**:
+     - https://github.com/agewaller/bonds/settings/environments を開く。
+     - 「New environment」→ 名前 **`staging`** → 「Configure environment」→ そのまま保存でOK
+       （承認ゲートを付けたいときはここで設定できますが、必須ではありません）。
+- 画面が違うとき: 「Environments」が左メニューに見当たらないときは、リポジトリの「Settings」内を
+  【検索キーワード: Environments】で探してください。
+- これは1回やれば済みます。以降は私が deploy-staging → 実機監査 → 本番、の順で回せます。
+
+---
+
+## いまは不要（将来やりたくなったら声をかけてください）
+
+- **Tavily（人物評価や相手ノートの公開情報の実検索）**: 精度が上がりますが必須ではありません。
+  希望があれば、まず私が「鍵を渡す配線」を用意してから、あなたが tavily.com で鍵を取る手順を出します。
+- **Outlook のライブ連携（Microsoft）**: いまは Outlook の連絡先 CSV と予定表 ICS で十分動きます。
+  ワンタップ連携まで欲しくなったら、Azure のアプリ登録が要るので、その時に手順を出します。
+- **課金（Stripe / PayPal）**: 一般ユーザーに課金するときに。計測基盤は実装済みなので、
+  プラン設計を決めてから進めます。
+
+---
+
+## 困ったときのひとこと（これだけ覚えておけば大丈夫）
+
+- **画面が違って迷ったら、止めて写真を送って私に聞く。** その画面に合わせて手順を書き直します。
+- **「準備中」と出ても壊れていません。** その設定がまだ、というだけです。
+- **どの設定も、順番も、いつやってもかまいません。** 気力・体力のあるときに1つずつで大丈夫です。
