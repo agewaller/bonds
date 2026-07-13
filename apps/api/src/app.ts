@@ -25,6 +25,7 @@ import { runPersonDd, getMonthlyCostJpy, getMonthlyCostJpyForUser, type DdRunEve
 import { normalizeLocale } from "./lib/locale.js";
 import { clampScore } from "./lib/dd-spec.js";
 import { clampDistance, calculateIsolationScore, todaySuggestions, suggestDistance, scoreRelationship } from "./lib/relationship.js";
+import { nominateIntroPairs, type IntroPerson } from "./lib/introductions.js";
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { identityKeys, normalizeName } from "./lib/identity.js";
@@ -2009,6 +2010,99 @@ export function createApp(deps: AppDeps) {
       applied++;
     }
     return c.json({ applied });
+  });
+
+  // 引き合わせの提案 (「気づかない一手」の核) — 連絡帳の中から、一方の困りごと/目標に
+  // もう一方の強み/貢献が噛み合うお二人を見つけて提案する。論点整理 (facets) を突き合わせて
+  // 候補を安く指名し (nominateIntroPairs)、是非と文面は AI が判断する。3軸ミッションの中核。
+  app.get("/api/relationship/introductions", async (c) => {
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid: c.get("ownerUid"), state: "active" },
+      select: { id: true, name: true, profileFacets: true },
+    });
+    // facets から needs (困りごと+目標) と offers (強み+貢献できること) を取り出す。
+    const roster: IntroPerson[] = [];
+    for (const ct of contacts) {
+      if (!ct.profileFacets) continue;
+      let f: Record<string, unknown> | null = null;
+      try {
+        f = JSON.parse(ct.profileFacets) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const arr = (k: string) => (Array.isArray(f![k]) ? (f![k] as unknown[]).map((x) => String(x)).filter(Boolean) : []);
+      const needs = [...arr("concerns"), ...arr("goals")];
+      const offers = [...arr("skills"), ...arr("opportunities")];
+      if (needs.length || offers.length) roster.push({ id: ct.id, name: ct.name, needs, offers });
+    }
+    const pairs = nominateIntroPairs(roster, 8);
+    if (pairs.length === 0) {
+      return c.json({
+        introductions: [],
+        note: roster.length < 2
+          ? "連絡先の論点 (強みや困りごと) を整理していくと、引き合わせるとよいお二人が見えてきます。"
+          : "いまのところ、はっきり噛み合うお二人は見当たりませんでした。記録が増えると見つかりやすくなります。",
+      });
+    }
+    // AI が使えないときは、噛み合った手がかりだけを添えて候補として返す (縮退)。
+    if (!generate) {
+      return c.json({
+        introductions: pairs.map((p) => ({
+          personA: p.aName,
+          personB: p.bName,
+          reason: `おふたりには「${[...p.aNeedsBOffers, ...p.bNeedsAOffers].slice(0, 3).join("、")}」で噛み合いそうなところがあります。`,
+          how: "",
+          caution: "",
+        })),
+        note: "",
+      });
+    }
+    // 候補を AI に渡して是非を見極めてもらう。名簿は候補に出た人だけに絞る (接地・混同防止)。
+    const involved = new Map<string, IntroPerson>();
+    for (const p of pairs) {
+      const a = roster.find((r) => r.id === p.aId);
+      const b = roster.find((r) => r.id === p.bId);
+      if (a) involved.set(a.id, a);
+      if (b) involved.set(b.id, b);
+    }
+    const b2 = await c.req.json<{ locale?: string }>().catch(() => ({}) as { locale?: string });
+    const rosterText = [...involved.values()]
+      .map((p) => `${p.name}: 強み・貢献できること=[${p.offers.join("、") || "なし"}] / 困りごと・目標=[${p.needs.join("、") || "なし"}]`)
+      .join("\n");
+    const pairsText = pairs
+      .map((p) => `${p.aName} と ${p.bName}: 噛み合う手がかり=${[...p.aNeedsBOffers, ...p.bNeedsAOffers].join("、")}${p.mutual ? " (双方向)" : ""}`)
+      .join("\n");
+    const userMessage = [
+      "名簿 (この中の人だけを扱う):",
+      rosterText,
+      "",
+      "噛み合いそうな候補の組:",
+      pairsText,
+    ].join("\n");
+    const r = await runRelationshipAi(
+      "intro_suggest",
+      '出力は JSON オブジェクト 1 個だけ: {"introductions": [{"personA": "", "personB": "", "reason": "", "how": "", "caution": ""}]}',
+      userMessage,
+      "intro_suggest",
+      normalizeLocale(b2.locale),
+      { actor: actorOf(c) },
+    );
+    if (!r.ok) return c.json(r.body as never, r.status);
+    const parsed = extractJson(r.text) as { introductions?: unknown } | null;
+    const names = new Set([...involved.values()].map((p) => p.name));
+    const clean = (v: unknown, max = 300) => sanitizeProse(typeof v === "string" ? v : "").trim().slice(0, max);
+    const introductions = (Array.isArray(parsed?.introductions) ? (parsed.introductions as Array<Record<string, unknown>>) : [])
+      .slice(0, 6)
+      .map((x) => ({
+        personA: clean(x.personA, 60),
+        personB: clean(x.personB, 60),
+        reason: clean(x.reason),
+        how: clean(x.how),
+        caution: clean(x.caution),
+      }))
+      // 名簿に無い人物を勝手に作っていないか検証 (混同・捏造を落とす)。
+      .filter((x) => x.personA && x.personB && x.personA !== x.personB && names.has(x.personA) && names.has(x.personB));
+    return c.json({ introductions, note: "" });
   });
 
   // ---------------- カレンダー & 面談候補 — フェーズ3 ----------------

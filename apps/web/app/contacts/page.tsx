@@ -111,6 +111,11 @@ export default function ContactsPage() {
   >([]);
   const [convText, setConvText] = useState("");
   const [showConv, setShowConv] = useState(false);
+  // 引き合わせの提案 (気づかない一手)。AI を使うのでボタンで取りに行く。
+  const [intros, setIntros] = useState<
+    { personA: string; personB: string; reason: string; how: string; caution: string }[] | null
+  >(null);
+  const [introNote, setIntroNote] = useState("");
   const [proposals, setProposals] = useState<
     { name: string; note: string; date: string | null; contactId: string | null; selected: boolean }[]
   >([]);
@@ -778,6 +783,55 @@ export default function ContactsPage() {
           </ul>
         </section>
       )}
+
+      <section style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <h2 style={{ fontSize: 17, margin: 0 }}>引き合わせるとよいお二人</h2>
+          <button
+            style={{ padding: "6px 14px", background: "#7c3aed", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+            disabled={busy}
+            onClick={async () => {
+              if (busy) return;
+              setBusy(true);
+              setError("");
+              try {
+                const res = await apiFetch("relationship/introductions");
+                const body = await res.json().catch(() => ({}));
+                if (res.ok) {
+                  setIntros(body.introductions ?? []);
+                  setIntroNote(body.note ?? "");
+                } else {
+                  setError(body.detail ?? "いまは提案を作れませんでした");
+                }
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "考えています…" : "見つけてもらう"}
+          </button>
+        </div>
+        <p style={{ fontSize: 13, color: "#6b21a8", margin: "6px 0 0" }}>
+          連絡帳の中から、一方の困りごとや目標に、もう一方の強みや力になれることが噛み合いそうなお二人を、そっとお知らせします。
+        </p>
+        {intros && intros.length > 0 && (
+          <ul style={{ listStyle: "none", padding: 0, margin: "10px 0 0", display: "grid", gap: 10 }}>
+            {intros.map((it, i) => (
+              <li key={i} style={{ background: "#fff", border: "1px solid #e9d5ff", borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ fontWeight: 700, color: "#5b21b6" }}>{it.personA} と {it.personB}</div>
+                {it.reason && <div style={{ fontSize: 14, marginTop: 3, lineHeight: 1.8 }}>{it.reason}</div>}
+                {it.how && <div style={{ fontSize: 13, color: "#475569", marginTop: 3 }}>引き合わせ方: {it.how}</div>}
+                {it.caution && <div style={{ fontSize: 13, color: "#92400e", marginTop: 3 }}>{it.caution}</div>}
+              </li>
+            ))}
+          </ul>
+        )}
+        {intros && intros.length === 0 && (
+          <p style={{ fontSize: 13, color: "#6b7280", margin: "8px 0 0" }}>
+            {introNote || "いまのところ、はっきり噛み合うお二人は見当たりませんでした。"}
+          </p>
+        )}
+      </section>
 
       {importMsg && (
         <p aria-live="polite" style={{ color: "#1e40af", background: "#eff6ff", padding: 8, borderRadius: 8 }}>
