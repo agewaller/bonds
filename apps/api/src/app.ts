@@ -26,6 +26,7 @@ import { normalizeLocale } from "./lib/locale.js";
 import { clampScore } from "./lib/dd-spec.js";
 import { clampDistance, calculateIsolationScore, todaySuggestions, suggestDistance, scoreRelationship } from "./lib/relationship.js";
 import { nominateIntroPairs, type IntroPerson } from "./lib/introductions.js";
+import { detectDrift } from "./lib/drift.js";
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { identityKeys, normalizeName } from "./lib/identity.js";
@@ -1929,6 +1930,23 @@ export function createApp(deps: AppDeps) {
       today,
       connectionScore: 100 - isolation.score, // 高い方が良い表示 (lms と同じ)
     });
+  });
+
+  // こじれ・疎遠の検知 (ミッション項目4)。やりとりの記録から「そっと気にかけたい関係」を
+  // 見つける。断定せず気づきの提示に留め、修復の打ち手 (お便りの下書き) は連絡先詳細の
+  // 発信フロー (purpose=repair) に委ねる。AI 不要 = 安く毎回出せる。
+  app.get("/api/relationship/drift", async (c) => {
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid: c.get("ownerUid"), state: "active" },
+      select: { id: true, name: true, distance: true, birthday: true },
+    });
+    if (contacts.length === 0) return c.json({ items: [] });
+    const interactions = await prisma.contactInteraction.findMany({
+      where: { contactId: { in: contacts.map((x) => x.id) } },
+      select: { contactId: true, occurredAt: true, type: true },
+    });
+    const items = detectDrift(contacts, interactions).slice(0, 8);
+    return c.json({ items });
   });
 
   // 距離感 (1〜5) の自動レーティング。やりとりの多さ・新しさ・贈り物から推し量る。

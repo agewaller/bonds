@@ -116,6 +116,10 @@ export default function ContactsPage() {
     { personA: string; personB: string; reason: string; how: string; caution: string }[] | null
   >(null);
   const [introNote, setIntroNote] = useState("");
+  // こじれ・疎遠の検知 (そっと気にかけたい関係)。AI 不要なので自動で読み込む。
+  const [drift, setDrift] = useState<
+    { contactId: string; name: string; kind: string; reason: string; daysSince: number }[]
+  >([]);
   const [proposals, setProposals] = useState<
     { name: string; note: string; date: string | null; contactId: string | null; selected: boolean }[]
   >([]);
@@ -181,6 +185,8 @@ export default function ContactsPage() {
     if (eRes.ok) setExReminders((await eRes.json()).reminders ?? []);
     const distRes = await apiFetch("relationship/distance-suggestions");
     if (distRes.ok) setDistanceSug((await distRes.json()).suggestions ?? []);
+    const driftRes = await apiFetch("relationship/drift");
+    if (driftRes.ok) setDrift((await driftRes.json()).items ?? []);
   }, []);
 
   const loadJobs = useCallback(async (): Promise<number> => {
@@ -778,6 +784,25 @@ export default function ContactsPage() {
                 >
                   この通りにする
                 </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {drift.length > 0 && (
+        <section style={{ margin: "16px 0", border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 12, padding: "12px 16px" }}>
+          <h2 style={{ fontSize: 17, marginTop: 0 }}>そっと気にかけたい関係</h2>
+          <p style={{ fontSize: 13, color: "#9a3412", margin: "4px 0 8px" }}>
+            近しかった方や、いつもやりとりされていた方との間が、少し空いてきています。よろしければ、久しぶりのひとことから。
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
+            {drift.map((d) => (
+              <li key={d.contactId} style={{ fontSize: 14 }}>
+                <Link href={`/contacts/${d.contactId}`} style={{ color: "#c2410c", fontWeight: 600 }}>
+                  {d.name}
+                </Link>
+                <span style={{ color: "#7c2d12" }}> — {d.reason}</span>
               </li>
             ))}
           </ul>
