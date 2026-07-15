@@ -28,6 +28,12 @@ if [ "$ONLY" != "web" ]; then
   else
     echo "注: Secret ${SECRET_ZENTRACK} が未作成のため ZenTrack 連携は準備中で入ります"
   fi
+  # Tavily (公開情報の実検索) も任意。無ければ人物DD/相手ノートは知識ベースモードに縮退。
+  if gcloud secrets describe "$SECRET_TAVILY" --project="$PROJECT" >/dev/null 2>&1; then
+    SECRETS="${SECRETS},TAVILY_API_KEY=${SECRET_TAVILY}:latest"
+  else
+    echo "注: Secret ${SECRET_TAVILY} が未作成のため公開情報の実検索は知識ベースモードで入ります"
+  fi
   gcloud run deploy "$RUN_API" --project="$PROJECT" --region="$REGION" \
     --image="${IMAGE_REGISTRY}/bonds-api:${TAG}" \
     --add-cloudsql-instances="$SQL_CONN" \

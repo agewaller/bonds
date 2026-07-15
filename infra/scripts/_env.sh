@@ -32,6 +32,9 @@ export SECRET_GOOGLE_CLIENT="${SECRET_GOOGLE_CLIENT:-BONDS_GOOGLE_OAUTH_CLIENT_S
 # ZenTrack (音声文字起こし) → bonds 取込の server-to-server 共有シークレット (任意)。
 # 未作成なら ZenTrack 受け口は「準備中」= 503 に縮退する。
 export SECRET_ZENTRACK="${SECRET_ZENTRACK:-BONDS_ZENTRACK_INGEST_SECRET}"
+# Tavily (公開情報の実検索。人物DD の検索ステップ・相手ノート・提携先探しの精度が上がる)。
+# 未作成なら知識ベースモードに縮退する (壊れない)。
+export SECRET_TAVILY="${SECRET_TAVILY:-BONDS_TAVILY_API_KEY}"
 
 # 本番 web の既定 URL (api 単独デプロイ時の ALLOWED_ORIGINS / OAuth 戻り先の既定)
 export PROD_WEB_URL="${PROD_WEB_URL:-https://bonds-web-xj6szhutkq-an.a.run.app}"
