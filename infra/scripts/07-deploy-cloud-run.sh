@@ -17,22 +17,30 @@ if [ "$ONLY" != "web" ]; then
   # 存在するときだけ配線する — 無いのに参照するとデプロイ全体が落ちるため
   # (実障害 2026-07-08: BONDS_GOOGLE_OAUTH_CLIENT_SECRET 未作成でリビジョン作成失敗)。
   SECRETS="ANTHROPIC_API_KEY=${SECRET_ANTHROPIC}:latest,DATA_ENCRYPTION_KEY=${SECRET_ENCRYPTION}:latest,ADMIN_BREAKGLASS_TOKEN=${SECRET_BREAKGLASS}:latest,DB_PASSWORD=${SECRET_DB_PASSWORD}:latest,SENDGRID_API_KEY=${SECRET_SENDGRID}:latest"
-  if gcloud secrets describe "$SECRET_GOOGLE_CLIENT" --project="$PROJECT" >/dev/null 2>&1; then
+  # 任意シークレットの検出は describe でなく「値を実際に読めるか」で行う。
+  # describe は secrets.get (viewer) が要るが、デプロイ SA は versions.access (accessor) しか
+  # 持たないことがあり、存在するのに「未作成」と誤判定していた (実障害 2026-07-15: オーナーが
+  # BONDS_TAVILY_API_KEY を作成済みなのに知識ベースモードで入り続けた)。versions access なら
+  # 権限が足り、さらに「作成したが値が未投入」(latest が無く --set-secrets が落ちる) も弾ける。
+  secret_readable() {
+    gcloud secrets versions access latest --secret="$1" --project="$PROJECT" >/dev/null 2>&1
+  }
+  if secret_readable "$SECRET_GOOGLE_CLIENT"; then
     SECRETS="${SECRETS},GOOGLE_OAUTH_CLIENT_SECRET=${SECRET_GOOGLE_CLIENT}:latest"
   else
-    echo "注: Secret ${SECRET_GOOGLE_CLIENT} が未作成のため Google 連携は準備中で入ります (00-first-time-setup.sh で作成後に再デプロイで有効化)"
+    echo "注: Secret ${SECRET_GOOGLE_CLIENT} が読めない (未作成/値が未投入) ため Google 連携は準備中で入ります"
   fi
-  # ZenTrack 受け口の共有シークレットも存在するときだけ配線 (無ければ受け口は 503 に縮退)。
-  if gcloud secrets describe "$SECRET_ZENTRACK" --project="$PROJECT" >/dev/null 2>&1; then
+  # ZenTrack 受け口の共有シークレットも読めるときだけ配線 (無ければ受け口は 503 に縮退)。
+  if secret_readable "$SECRET_ZENTRACK"; then
     SECRETS="${SECRETS},ZENTRACK_INGEST_SECRET=${SECRET_ZENTRACK}:latest"
   else
-    echo "注: Secret ${SECRET_ZENTRACK} が未作成のため ZenTrack 連携は準備中で入ります"
+    echo "注: Secret ${SECRET_ZENTRACK} が読めない (未作成/値が未投入) ため ZenTrack 連携は準備中で入ります"
   fi
   # Tavily (公開情報の実検索) も任意。無ければ人物DD/相手ノートは知識ベースモードに縮退。
-  if gcloud secrets describe "$SECRET_TAVILY" --project="$PROJECT" >/dev/null 2>&1; then
+  if secret_readable "$SECRET_TAVILY"; then
     SECRETS="${SECRETS},TAVILY_API_KEY=${SECRET_TAVILY}:latest"
   else
-    echo "注: Secret ${SECRET_TAVILY} が未作成のため公開情報の実検索は知識ベースモードで入ります"
+    echo "注: Secret ${SECRET_TAVILY} が読めない (未作成/値が未投入) ため公開情報の実検索は知識ベースモードで入ります"
   fi
   gcloud run deploy "$RUN_API" --project="$PROJECT" --region="$REGION" \
     --image="${IMAGE_REGISTRY}/bonds-api:${TAG}" \
