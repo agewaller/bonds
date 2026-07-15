@@ -27,6 +27,7 @@ import { clampScore } from "./lib/dd-spec.js";
 import { clampDistance, calculateIsolationScore, todaySuggestions, suggestDistance, scoreRelationship } from "./lib/relationship.js";
 import { nominateIntroPairs, type IntroPerson } from "./lib/introductions.js";
 import { detectDrift } from "./lib/drift.js";
+import { firstMoves, type OnboardPerson } from "./lib/onboarding.js";
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { identityKeys, normalizeName } from "./lib/identity.js";
@@ -1949,6 +1950,53 @@ export function createApp(deps: AppDeps) {
     return c.json({ items });
   });
 
+  // 新しく迎えた方への「はじめの一手」— 取り込んだきりの方から、動いたほうがよい方を
+  // 理由つきで挙げる (AI 不要の純粋計算)。深い対応は連絡先詳細の「対応を考える」に委ねる。
+  app.get("/api/relationship/first-moves", async (c) => {
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid: c.get("ownerUid"), state: "active", createdAt: { gte: since } },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+    if (contacts.length === 0) return c.json({ moves: [] });
+    const counts = await prisma.contactInteraction.groupBy({
+      by: ["contactId"],
+      where: { contactId: { in: contacts.map((x) => x.id) } },
+      _count: { contactId: true },
+    });
+    const countBy = new Map(counts.map((x) => [x.contactId, x._count.contactId]));
+    const people: OnboardPerson[] = contacts.map((ct) => {
+      let facets: OnboardPerson["facets"] = null;
+      if (ct.profileFacets) {
+        try {
+          const f = JSON.parse(ct.profileFacets) as Record<string, unknown>;
+          facets = {
+            work: typeof f.work === "string" && f.work.trim() ? f.work : undefined,
+            goals: Array.isArray(f.goals) ? (f.goals as string[]) : [],
+            opportunities: Array.isArray(f.opportunities) ? (f.opportunities as string[]) : [],
+            concerns: Array.isArray(f.concerns) ? (f.concerns as string[]) : [],
+          };
+        } catch {
+          // 壊れた facets は無視 (材料なし扱い)
+        }
+      }
+      return {
+        id: ct.id,
+        name: ct.name,
+        company: ct.company,
+        title: ct.title,
+        relationship: ct.relationship,
+        source: ct.source,
+        createdAt: ct.createdAt,
+        hasEmail: !!ct.email,
+        interactionCount: countBy.get(ct.id) ?? 0,
+        facets,
+      };
+    });
+    return c.json({ moves: firstMoves(people) });
+  });
+
   // 距離感 (1〜5) の自動レーティング。やりとりの多さ・新しさ・贈り物から推し量る。
   // ownerUid の全 active 連絡先について {現状, おすすめ, 理由} を返す。ユーザーの手入力を
   // 勝手に消さないため「提案」に留め、適用は明示操作 (下の apply) で行う。
@@ -2690,25 +2738,64 @@ export function createApp(deps: AppDeps) {
     return out;
   };
 
-  app.post("/api/contacts/:id/facets", async (c) => {
-    const ctx = await buildContactContext(c.get("ownerUid"), c.req.param("id"));
-    if (!ctx) return c.json({ error: "not_found" }, 404);
-    const b = await c.req.json<{ locale?: string }>().catch(() => ({}) as { locale?: string });
-    const r = await runRelationshipAi(
-      "contact_facets",
-      FACETS_JSON_INSTRUCTION,
-      ctx.context,
-      "contact_facets",
-      normalizeLocale(b.locale),
-      { actor: actorOf(c) },
-    );
-    if (!r.ok) return c.json(r.body as never, r.status);
+  // 論点整理の生成と保存 (ルートと毎時スイープで共用)。
+  const generateAndSaveFacets = async (
+    ownerUid: string,
+    contactId: string,
+    locale: string,
+    actor: AiActor,
+  ): Promise<{ ok: true; facets: Record<string, unknown>; facetsAt: Date | null } | { ok: false; status: 404 | 422 | 503 | 502; body: unknown }> => {
+    const ctx = await buildContactContext(ownerUid, contactId);
+    if (!ctx) return { ok: false, status: 404, body: { error: "not_found" } };
+    const r = await runRelationshipAi("contact_facets", FACETS_JSON_INSTRUCTION, ctx.context, "contact_facets", locale, { actor });
+    if (!r.ok) return r;
     const facets = sanitizeFacets(extractJson(r.text) as Record<string, unknown> | null);
     const updated = await prisma.contact.update({
       where: { id: ctx.contact.id },
       data: { profileFacets: JSON.stringify(facets), profileFacetsAt: new Date() },
     });
-    return c.json({ facets, facetsAt: updated.profileFacetsAt });
+    return { ok: true, facets, facetsAt: updated.profileFacetsAt };
+  };
+
+  app.post("/api/contacts/:id/facets", async (c) => {
+    const b = await c.req.json<{ locale?: string }>().catch(() => ({}) as { locale?: string });
+    const r = await generateAndSaveFacets(c.get("ownerUid"), c.req.param("id"), normalizeLocale(b.locale), actorOf(c));
+    if (!r.ok) return c.json(r.body as never, r.status);
+    return c.json({ facets: r.facets, facetsAt: r.facetsAt });
+  });
+
+  // 取り込んだばかりの方の論点整理を自動で進める (毎時スイープから呼ぶ)。
+  // 「取り込んだら、その方の状況が自動でまとまっていく」の要。web 検索はしない (相手の尊厳)。
+  // 対象: 30日以内に取り込まれ、まだ論点が無く、整理する材料 (所属/役職/メモ/近況) がある方。
+  // 少数ずつ・月次キャップ到達で停止 (refresh-digests と同じ規律)。
+  app.post("/api/admin/contacts/enrich-imports", async (c) => {
+    if (!generate) return c.json({ error: "unavailable", detail: "AI が設定されていません" }, 503);
+    const batch = Math.min(Math.max(parseInt(c.req.query("batch") ?? "5", 10) || 5, 1), 20);
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const candidates = await prisma.contact.findMany({
+      where: { state: "active", profileFacets: null, createdAt: { gte: since } },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+    let enriched = 0;
+    let skipped = 0;
+    for (const ct of candidates) {
+      if (enriched >= batch) break;
+      // 整理する材料が何も無い人は AI を呼ばない (空の論点を量産しない)
+      const hasMaterial = !!(ct.company || ct.title || ct.notes || ct.personalProfile || ct.profileDigest);
+      if (!hasMaterial) {
+        skipped++;
+        continue;
+      }
+      const r = await generateAndSaveFacets(ct.ownerUid, ct.id, "ja", { ownerUid: ct.ownerUid, isOwner: true });
+      if (!r.ok) {
+        if (r.status === 422) break; // 月次キャップ到達: これ以上回さない
+        skipped++;
+        continue;
+      }
+      enriched++;
+    }
+    return c.json({ enriched, skipped, candidates: candidates.length });
   });
 
   // 相手ノート (見立て) の生成 — 蓄積した記録に根拠を置き、希望があれば公開情報の検索を足す。

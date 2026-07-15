@@ -34,3 +34,6 @@ jobs:
           # 取り込みジョブのバックストップ: ユーザーが全部閉じても残った待ち行列を処理する
           curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/contacts/process-import-jobs?batch=20" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
+          # 取り込んだばかりの方の論点整理を自動で進める (材料のある方だけ・web 検索なし・キャップ対応)
+          curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/contacts/enrich-imports?batch=5" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"

@@ -120,6 +120,10 @@ export default function ContactsPage() {
   const [drift, setDrift] = useState<
     { contactId: string; name: string; kind: string; reason: string; daysSince: number }[]
   >([]);
+  // 新しく迎えた方への「はじめの一手」(取り込んだきりの方)。AI 不要なので自動で読み込む。
+  const [firstMoves, setFirstMoves] = useState<
+    { contactId: string; name: string; kind: string; reason: string }[]
+  >([]);
   const [proposals, setProposals] = useState<
     { name: string; note: string; date: string | null; contactId: string | null; selected: boolean }[]
   >([]);
@@ -187,6 +191,8 @@ export default function ContactsPage() {
     if (distRes.ok) setDistanceSug((await distRes.json()).suggestions ?? []);
     const driftRes = await apiFetch("relationship/drift");
     if (driftRes.ok) setDrift((await driftRes.json()).items ?? []);
+    const fmRes = await apiFetch("relationship/first-moves");
+    if (fmRes.ok) setFirstMoves((await fmRes.json()).moves ?? []);
   }, []);
 
   const loadJobs = useCallback(async (): Promise<number> => {
@@ -806,6 +812,28 @@ export default function ContactsPage() {
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {firstMoves.length > 0 && (
+        <section style={{ margin: "16px 0", border: "1px solid #a7f3d0", background: "#ecfdf5", borderRadius: 12, padding: "12px 16px" }}>
+          <h2 style={{ fontSize: 17, marginTop: 0 }}>新しく迎えた方へ、はじめの一手</h2>
+          <p style={{ fontSize: 13, color: "#065f46", margin: "4px 0 8px" }}>
+            最近お迎えした方のうち、いま動くとよさそうな方です。詳しい進め方は、お名前を開いて「この方への対応を考える」からどうぞ。
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
+            {firstMoves.map((m) => (
+              <li key={m.contactId} style={{ fontSize: 14 }}>
+                <Link href={`/contacts/${m.contactId}`} style={{ color: "#047857", fontWeight: 600 }}>
+                  {m.name}
+                </Link>
+                <span style={{ color: "#064e3b" }}> — {m.reason}</span>
+              </li>
+            ))}
+          </ul>
+          <p style={{ fontSize: 12, color: "#047857", margin: "8px 0 0" }}>
+            お相手の論点整理は、材料のある方から順に自動で進みます。整うほど、この一手も具体的になります。
+          </p>
         </section>
       )}
 
