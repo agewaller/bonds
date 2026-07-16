@@ -37,3 +37,6 @@ jobs:
           # 取り込んだばかりの方の論点整理を自動で進める (材料のある方だけ・web 検索なし・キャップ対応)
           curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/contacts/enrich-imports?batch=5" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
+          # 名寄せの自動実行 (メール/電話が一致する「同じ人」を黙ってまとめる。名前だけの一致は提案に留める)
+          curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/contacts/auto-merge?batch=50" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"

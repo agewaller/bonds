@@ -30,6 +30,7 @@ import { detectDrift } from "./lib/drift.js";
 import { firstMoves, type OnboardPerson } from "./lib/onboarding.js";
 import { recentMeetings, pickDailyQuestion, type DailyPerson } from "./lib/capture.js";
 import { parseGoalField, serializeGoal, goalPlan, validateGoalInput, PURPOSE_LABEL } from "./lib/goals.js";
+import { pickFocusContacts, type FocusInput } from "./lib/priority.js";
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { identityKeys, normalizeName } from "./lib/identity.js";
@@ -936,25 +937,10 @@ export function createApp(deps: AppDeps) {
 
   // 名寄せの実行: others を primary に統合する。子レコード (やりとり・贈り物・発信・公人リンク) を
   // 付け替え、空いている項目を補完し、プロフィール系は追記する。other はソフト削除 (元に戻せる)。
-  app.post("/api/contacts/merge", async (c) => {
-    const ownerUid = c.get("ownerUid");
-    const b = await c.req
-      .json<{ primaryId?: string; otherIds?: string[] }>()
-      .catch(() => ({}) as { primaryId?: string; otherIds?: string[] });
-    const primaryId = typeof b.primaryId === "string" ? b.primaryId : "";
-    const otherIds = Array.isArray(b.otherIds)
-      ? b.otherIds.filter((x): x is string => typeof x === "string" && x !== primaryId)
-      : [];
-    if (!primaryId || otherIds.length === 0) {
-      return c.json({ error: "invalid", detail: "まとめる相手を選んでください" }, 400);
-    }
-    const primary = await prisma.contact.findFirst({ where: { id: primaryId, ownerUid, state: "active" } });
-    if (!primary) return c.json({ error: "not_found" }, 404);
-    const others = await prisma.contact.findMany({
-      where: { id: { in: otherIds }, ownerUid, state: "active" },
-    });
-    if (others.length === 0) return c.json({ error: "not_found" }, 404);
-
+  // 同一人物のマージの実体 (手動マージと自動名寄せの共用)。
+  // primary に空欄補完・メモ結合・子レコード付け替えを行い、others はアーカイブする。
+  type ContactRow = NonNullable<Awaited<ReturnType<typeof prisma.contact.findFirst>>>;
+  const mergeContactGroup = async (ownerUid: string, primary: ContactRow, others: ContactRow[]): Promise<number> => {
     const fill: Record<string, unknown> = {};
     const appendKeys = ["notes", "personalProfile", "valuesProfile", "socialPosition"] as const;
     const appended: Record<string, string[]> = { notes: [], personalProfile: [], valuesProfile: [], socialPosition: [] };
@@ -1000,7 +986,73 @@ export function createApp(deps: AppDeps) {
       fill[f] = [...base, ...fresh].join("\n").slice(0, MAX_NOTES_CHARS);
     }
     if (Object.keys(fill).length > 0) await prisma.contact.update({ where: { id: primary.id }, data: fill });
+    return merged;
+  };
+
+  app.post("/api/contacts/merge", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const b = await c.req
+      .json<{ primaryId?: string; otherIds?: string[] }>()
+      .catch(() => ({}) as { primaryId?: string; otherIds?: string[] });
+    const primaryId = typeof b.primaryId === "string" ? b.primaryId : "";
+    const otherIds = Array.isArray(b.otherIds)
+      ? b.otherIds.filter((x): x is string => typeof x === "string" && x !== primaryId)
+      : [];
+    if (!primaryId || otherIds.length === 0) {
+      return c.json({ error: "invalid", detail: "まとめる相手を選んでください" }, 400);
+    }
+    const primary = await prisma.contact.findFirst({ where: { id: primaryId, ownerUid, state: "active" } });
+    if (!primary) return c.json({ error: "not_found" }, 404);
+    const others = await prisma.contact.findMany({
+      where: { id: { in: otherIds }, ownerUid, state: "active" },
+    });
+    if (others.length === 0) return c.json({ error: "not_found" }, 404);
+    const merged = await mergeContactGroup(ownerUid, primary, others);
     return c.json({ merged, primaryId: primary.id });
+  });
+
+  // 名寄せの自動実行 (毎時 sweep から)。メール/電話が一致する「同じ人」だけを黙って
+  // まとめる (ユーザーの手を煩わせない)。名前だけの一致は同姓同名の別人がいるため
+  // 自動ではまとめず、従来どおり画面の提案に留める。残った側は情報が最も厚い記録。
+  app.post("/api/admin/contacts/auto-merge", async (c) => {
+    const batch = Math.min(Math.max(parseInt(c.req.query("batch") ?? "50", 10) || 50, 1), 200);
+    const rows = await prisma.contact.findMany({ where: { state: "active" }, orderBy: { createdAt: "asc" } });
+    // 情報の厚み (埋まっている項目数)。厚い方を残す
+    const richness = (e: ContactRow): number =>
+      ["furigana", "phone", "email", "address", "company", "title"].filter((f) => (e as Record<string, unknown>)[f]).length +
+      (e.profileFacets ? 2 : 0) +
+      (e.profileDigest ? 1 : 0) +
+      (e.notes ? 1 : 0) +
+      (e.goal ? 2 : 0);
+    // ownerUid ごと・強いキー (メール/電話) ごとにまとめる
+    const groups = new Map<string, ContactRow[]>();
+    for (const e of rows) {
+      const k = identityKeys(e);
+      for (const key of [k.email && `e:${k.email}`, k.phone && `p:${k.phone}`]) {
+        if (!key) continue;
+        const gk = `${e.ownerUid} ${key}`;
+        const list = groups.get(gk);
+        if (list) list.push(e);
+        else groups.set(gk, [e]);
+      }
+    }
+    let mergedGroups = 0;
+    let mergedContacts = 0;
+    const consumed = new Set<string>();
+    for (const members of groups.values()) {
+      if (mergedGroups >= batch) break;
+      const alive = members.filter((m) => !consumed.has(m.id));
+      if (alive.length < 2) continue;
+      const sorted = [...alive].sort(
+        (a, b) => richness(b) - richness(a) || a.createdAt.getTime() - b.createdAt.getTime(),
+      );
+      const primary = sorted[0]!;
+      const others = sorted.slice(1);
+      mergedContacts += await mergeContactGroup(primary.ownerUid, primary, others);
+      others.forEach((o) => consumed.add(o.id));
+      mergedGroups++;
+    }
+    return c.json({ mergedGroups, mergedContacts });
   });
 
   // 取込 (CSV / vCard / auto)。取り込み件数とスキップ件数を返す。
@@ -2062,6 +2114,52 @@ export function createApp(deps: AppDeps) {
       };
     });
     return c.json({ moves: firstMoves(people) });
+  });
+
+  // 大切にしたい方々 — 取り込んだリストの大半は動かない名簿である前提で、実際の
+  // やりとり・ユーザーの意思 (目標/距離/手入力)・記録の厚みから、関係を高める価値の
+  // ありそうな方を選んで返す (AI 不要・毎回無料)。残りは消さずに静かに置いておく。
+  app.get("/api/relationship/focus", async (c) => {
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid: c.get("ownerUid"), state: "active" },
+    });
+    if (contacts.length === 0) return c.json({ items: [], total: 0 });
+    const ids = contacts.map((x) => x.id);
+    const [interactions, gifts, exchanges] = await Promise.all([
+      prisma.contactInteraction.groupBy({
+        by: ["contactId"],
+        where: { contactId: { in: ids } },
+        _count: { contactId: true },
+        _max: { occurredAt: true },
+      }),
+      prisma.contactGift.groupBy({ by: ["contactId"], where: { contactId: { in: ids } }, _count: { contactId: true } }),
+      prisma.exchange.groupBy({ by: ["contactId"], where: { contactId: { in: ids } }, _count: { contactId: true } }),
+    ]);
+    const interBy = new Map(interactions.map((x) => [x.contactId, x]));
+    const giftBy = new Map(gifts.map((x) => [x.contactId, x._count.contactId]));
+    const exBy = new Map(exchanges.map((x) => [x.contactId, x._count.contactId]));
+    const now = Date.now();
+    const people: FocusInput[] = contacts.map((ct) => {
+      const inter = interBy.get(ct.id);
+      const lastAt = inter?._max.occurredAt ?? null;
+      return {
+        id: ct.id,
+        name: ct.name,
+        company: ct.company,
+        title: ct.title,
+        hasEmail: !!ct.email,
+        hasPhone: !!ct.phone,
+        distance: ct.distance,
+        source: ct.source,
+        interactionCount: inter?._count.contactId ?? 0,
+        lastContactDays: lastAt ? Math.floor((now - lastAt.getTime()) / 86_400_000) : null,
+        giftExchangeCount: (giftBy.get(ct.id) ?? 0) + (exBy.get(ct.id) ?? 0),
+        hasFacets: !!ct.profileFacets,
+        hasDigest: !!ct.profileDigest,
+        hasGoal: !!ct.goal,
+      };
+    });
+    return c.json({ items: pickFocusContacts(people), total: contacts.length });
   });
 
   // 会った直後のひとこと伺い — 直近に会った方で、まだその後のメモが無い方を挙げる。

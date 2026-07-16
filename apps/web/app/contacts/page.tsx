@@ -128,6 +128,13 @@ export default function ContactsPage() {
   const [recentMet, setRecentMet] = useState<{ contactId: string; name: string; metAt: string }[]>([]);
   const [metNotes, setMetNotes] = useState<Record<string, string>>({});
   const [metSaved, setMetSaved] = useState<Record<string, boolean>>({});
+  // 大切にしたい方々 (重要そうな方のピックアップ)。AI 不要なので自動で読み込む。
+  const [focusItems, setFocusItems] = useState<
+    { contactId: string; name: string; company: string | null; reasons: string[] }[]
+  >([]);
+  // みなさんの一覧は既定で畳む (大半は動かない名簿のため)。名前検索でいつでも探せる
+  const [showAll, setShowAll] = useState(false);
+  const [nameFilter, setNameFilter] = useState("");
   // 関係の目標 (目標を持つ方の、差と次の一手)。AI 不要なので自動で読み込む。
   const [goalItems, setGoalItems] = useState<
     { contactId: string; name: string; purposeLabel: string; current: number; target: number; plan: { paceLabel: string; nextMove: string; overdue: boolean; progress: number } }[]
@@ -209,6 +216,8 @@ export default function ContactsPage() {
     if (rmRes.ok) setRecentMet((await rmRes.json()).items ?? []);
     const glRes = await apiFetch("relationship/goals");
     if (glRes.ok) setGoalItems((await glRes.json()).items ?? []);
+    const fcRes = await apiFetch("relationship/focus");
+    if (fcRes.ok) setFocusItems((await fcRes.json()).items ?? []);
     const dqRes = await apiFetch("relationship/daily-question");
     if (dqRes.ok) setDailyQ((await dqRes.json()).question ?? null);
   }, []);
@@ -838,6 +847,26 @@ export default function ContactsPage() {
                   {d.name}
                 </Link>
                 <span style={{ color: "#7c2d12" }}> — {d.reason}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {focusItems.length > 0 && (
+        <section style={{ margin: "16px 0", border: "2px solid #fbbf24", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
+          <h2 style={{ fontSize: 17, marginTop: 0 }}>大切にしたい方々</h2>
+          <p style={{ fontSize: 13, color: "#92400e", margin: "4px 0 8px" }}>
+            やりとりの積み重ねや目標、記録の厚みから、いま関係を高める価値がありそうな方です。打ち手はこの方々に集中させましょう。
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
+            {focusItems.map((f) => (
+              <li key={f.contactId} style={{ fontSize: 14 }}>
+                <Link href={`/contacts/${f.contactId}`} style={{ color: "#b45309", fontWeight: 600 }}>
+                  {f.name}
+                </Link>
+                {f.company && <small style={{ color: "#92400e", marginLeft: 6 }}>{f.company}</small>}
+                {f.reasons.length > 0 && <span style={{ color: "#78350f", fontSize: 12, marginLeft: 8 }}>{f.reasons.join("・")}</span>}
               </li>
             ))}
           </ul>
@@ -1568,8 +1597,38 @@ export default function ContactsPage() {
 
       <section>
         <h2 style={{ fontSize: 18 }}>{t("everyone")} ({contacts.length})</h2>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+          <input
+            value={nameFilter}
+            onChange={(e) => setNameFilter(e.target.value)}
+            placeholder="お名前や会社で探す"
+            style={{ flex: 1, minWidth: 200, padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14 }}
+          />
+          {contacts.length > 30 && !nameFilter && (
+            <button
+              onClick={() => setShowAll((v) => !v)}
+              style={{ padding: "8px 14px", background: "transparent", color: "#475569", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+            >
+              {showAll ? "一覧を畳む" : `すべて表示する (${contacts.length}名)`}
+            </button>
+          )}
+        </div>
+        {contacts.length > 30 && !showAll && !nameFilter && (
+          <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 8px" }}>
+            人数が多いため一覧は畳んでいます。上の「大切にしたい方々」から開くか、お名前で探してください。全員の記録はそのまま残っています。
+          </p>
+        )}
         <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 6 }}>
-          {contacts.map((c) => (
+          {(nameFilter
+            ? contacts.filter(
+                (c) =>
+                  c.name.toLowerCase().includes(nameFilter.toLowerCase()) ||
+                  (c.company ?? "").toLowerCase().includes(nameFilter.toLowerCase()),
+              )
+            : contacts.length > 30 && !showAll
+              ? []
+              : contacts
+          ).map((c) => (
             <li key={c.id}>
               <Link
                 href={`/contacts/${c.id}`}
