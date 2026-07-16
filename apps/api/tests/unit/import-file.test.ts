@@ -14,7 +14,38 @@ function facebookZip(): Uint8Array {
   });
 }
 
+// Facebook の HTML 形式エクスポート (ダウンロード画面の既定。2026-07-16 実ファイル回帰)。
+// 実物は connections/friends/ 配下に your_friends.html と、友だちでない人のページ
+// (removed/requests/知り合いかも等)・ロゴ・プロフィール写真が同梱される。
+function facebookHtmlZip(): Uint8Array {
+  const friend = (id: string, name: string) =>
+    `<section class="_a6-g" aria-labelledby="${id}"><h2 class="_2ph_ _a6-h _a6-i" id="${id}">${name}</h2><footer><div class="_a72d">7月 01, 2026 6:25:04 PM</div></footer></section>`;
+  return zipSync({
+    "start_here.html": strToU8("<html><h2>ここから</h2></html>"),
+    "connections/friends/your_friends.html": strToU8(
+      `<html><head><title>あなたの友達</title></head><body><h1>あなたの友達</h1>${friend("a", "新島 太郎")}${friend("b", "大空 花子")}</body></html>`,
+    ),
+    "connections/friends/removed_friends.html": strToU8(
+      `<html><body>${"x"}<section class="_a6-g"><h2>削除 済人</h2></section></body></html>`,
+    ),
+    "connections/friends/people_you_may_know.html": strToU8(
+      `<html><body><section class="_a6-g"><h2>知合 かも代</h2></section></body></html>`,
+    ),
+    "files/fb_logo.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
+  });
+}
+
 describe("parseImportFile (ZIP まるごと取込)", () => {
+  it("Facebook の HTML 形式エクスポートから友だちだけを取り込み、ノイズは AI/Vision に回さない", () => {
+    const r = parseImportFile(facebookHtmlZip(), "facebook-html.zip");
+    expect(r.contacts.map((c) => c.name)).toEqual(["新島 太郎", "大空 花子"]);
+    expect(r.contacts[0]?.source).toBe("facebook");
+    // 削除した友だち・知り合いかも・ロゴ画像は、連絡帳にも AI 抽出 (texts) にも Vision (images) にも入らない
+    expect(r.contacts.some((c) => c.name.includes("削除") || c.name.includes("知合"))).toBe(false);
+    expect(r.texts).toEqual([]);
+    expect(r.images).toEqual([]);
+  });
+
   it("Facebook アーカイブから friends.json を自動発見する", () => {
     const bytes = facebookZip();
     expect(isZip(bytes)).toBe(true);

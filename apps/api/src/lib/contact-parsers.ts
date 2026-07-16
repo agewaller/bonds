@@ -85,13 +85,26 @@ const GIVEN_HEADERS = new Set(["名", "めい", "メイ", "firstname", "first na
 export function parseCsvContacts(csv: string): ParsedContact[] {
   const lines = csv.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return [];
-  const headers = splitCsvLine(lines[0]!).map((h) => h.replace(/"/g, "").toLowerCase());
+  // 既知のヘッダ名がいくつ並ぶ行か (ヘッダ行の探索に使う)
+  const mappedCount = (line: string): number =>
+    splitCsvLine(line)
+      .map((h) => h.replace(/"/g, "").toLowerCase())
+      .filter((h) => HEADER_MAP[h] || FAMILY_HEADERS.has(h) || GIVEN_HEADERS.has(h)).length;
+  // Eight の実エクスポートはヘッダ行の前に前置き (生成日時・合計件数・注意書き) が数行入る。
+  // 先頭行が既知ヘッダに見えないときは、既知ヘッダ名が 2 つ以上並ぶ行を探してそこから読む
+  // (LinkedIn の Connections.csv と同じ考え方)。
+  let headerIdx = 0;
+  if (mappedCount(lines[0]!) < 2) {
+    const found = lines.slice(0, 15).findIndex((l) => mappedCount(l) >= 2);
+    if (found > 0) headerIdx = found;
+  }
+  const headers = splitCsvLine(lines[headerIdx]!).map((h) => h.replace(/"/g, "").toLowerCase());
   const fields = headers.map((h) => HEADER_MAP[h] ?? null);
   // 姓/名の列位置 (氏名が無い名刺 CSV 向け)
   const familyIdx = headers.findIndex((h) => FAMILY_HEADERS.has(h));
   const givenIdx = headers.findIndex((h) => GIVEN_HEADERS.has(h));
   const out: ParsedContact[] = [];
-  for (const line of lines.slice(1)) {
+  for (const line of lines.slice(headerIdx + 1)) {
     const values = splitCsvLine(line).map((v) => v.replace(/^"|"$/g, ""));
     const c: Partial<Record<keyof ParsedContact, string>> = {};
     fields.forEach((f, i) => {
@@ -163,6 +176,31 @@ export function parseFacebookFriends(jsonText: string): ParsedContact[] {
   } catch {
     return [];
   }
+}
+
+// Facebook: HTML 形式のエクスポート (your_friends.html)。ダウンロード画面の既定は
+// JSON でなく HTML のため、実際に届く ZIP はこちらであることが多い。
+// 構造: 友だち 1 人が <section class="_a6-g"><h2 ...>名前</h2>…</section>。
+// h2 を拾い、HTML エンティティを戻す。ページ見出し (h1) は含まれない。
+const HTML_ENTITY: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&#(\d+);/g, (_, n: string) => String.fromCodePoint(parseInt(n, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n: string) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&(amp|lt|gt|quot|apos);/g, (_, k: string) => HTML_ENTITY[k] ?? "");
+}
+
+export function parseFacebookFriendsHtml(html: string): ParsedContact[] {
+  if (!/class="_a6-g"/.test(html)) return [];
+  const out: ParsedContact[] = [];
+  const seen = new Set<string>();
+  for (const m of html.matchAll(/<h2[^>]*>([^<]{1,80})<\/h2>/g)) {
+    const name = decodeHtmlEntities(m[1]!).trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, source: "facebook", distance: 4 });
+  }
+  return out;
 }
 
 // Instagram: アーカイブの following.json (relationships_following)
@@ -578,6 +616,11 @@ export function parseImportText(content: string, filenameHint?: string): ParsedI
   if (/^(\[\d{4}[/.]\d{1,2}[/.]\d{1,2}[^\]]*\]|\d{1,2}\/\d{1,2}\/\d{2,4},?\s+\d{1,2}:\d{2}\s*-)\s*[^:]+:\s/m.test(head)) {
     const r = parseWhatsAppChat(content, filenameHint);
     if (r.contacts.length > 0) return r;
+  }
+  // Facebook の HTML 形式エクスポート (your_friends.html。ダウンロードの既定は HTML)
+  if (/class="_a6-g"/.test(content)) {
+    const r = parseFacebookFriendsHtml(content);
+    if (r.length > 0) return { contacts: r, interactions: [] };
   }
   return { contacts: parseContacts(content), interactions: [] };
 }

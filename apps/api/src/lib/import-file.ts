@@ -5,6 +5,7 @@ import { unzipSync } from "fflate";
 import { extractFileText, MAX_EXTRACT_TEXT_CHARS, detectImageMediaType, MAX_IMAGE_BYTES } from "./file-text.js";
 import {
   parseFacebookFriends,
+  parseFacebookFriendsHtml,
   parseInstagramFollowing,
   parseTwitterFollowing,
   parseLinkedInConnections,
@@ -33,10 +34,27 @@ function basename(path: string): string {
   return path.split("/").pop()?.toLowerCase() ?? "";
 }
 
+// Facebook の HTML エクスポートに含まれる「友だち以外」のページと同梱画像。
+// 友だちでない人 (削除した人・申請中・知り合いかも等) を誤って連絡帳に入れない・
+// ロゴやプロフィール写真を Vision に回さないため、既知の名前で明示的に読み飛ばす。
+const FB_NOISE_ENTRY =
+  /(removed_friends|received_friend_requests|sent_friend_requests|rejected_friend_requests|people_you_may_know|suggested_friends|your_post_audiences|friends_you_see_less|waving_emojis|start_here)\.html$|(^|\/)files\/(fb_logo\.png|profile_pic\.jpg)$/i;
+
+export function isKnownNoiseEntry(path: string): boolean {
+  return FB_NOISE_ENTRY.test(path.toLowerCase());
+}
+
 // ZIP 内の 1 エントリを既知の形式に振り分ける。該当しなければ null。
 function parseZipEntry(path: string, bytes: Uint8Array): ParsedImport | null {
   const base = basename(path);
   const lower = path.toLowerCase();
+  // Facebook の HTML 形式エクスポート (ダウンロード画面の既定は JSON でなく HTML)。
+  // 「いまの友だち」のページだけを対象にする (removed/requests 等は FB_NOISE_ENTRY で除外済み)
+  if (base === "your_friends.html" || base === "friends.html") {
+    if (bytes.length > MAX_ZIP_ENTRY_BYTES) return null;
+    const r = parseFacebookFriendsHtml(decode(bytes));
+    return r.length > 0 ? { contacts: r, interactions: [] } : null;
+  }
   if (!/\.(json|js|csv|vcf|txt)$/.test(base)) return null;
   if (bytes.length > MAX_ZIP_ENTRY_BYTES) return null;
   const asContacts = (contacts: ParsedContact[]): ParsedImport | null =>
@@ -141,6 +159,8 @@ export function parseImportFile(bytes: Uint8Array, filename?: string): FileImpor
     const talks: ExtractedTalk[] = [];
     let textChars = 0;
     for (const [path, data] of Object.entries(entries)) {
+      // 友だちでない人のページ・同梱のロゴ等は、AI 抽出にも Vision にも回さない
+      if (isKnownNoiseEntry(path)) continue;
       const r = parseZipEntry(path, data);
       if (r && r.contacts.length > 0) {
         contacts.push(...r.contacts);

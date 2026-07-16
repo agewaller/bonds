@@ -7,6 +7,7 @@ import {
   parseContacts,
   parseLinkedInConnections,
   parseFacebookFriends,
+  parseFacebookFriendsHtml,
   parseInstagramFollowing,
   parseTwitterFollowing,
 } from "../../src/lib/contact-parsers.js";
@@ -148,6 +149,49 @@ describe("Eight / 年賀状リストの取込 (フェーズ3)", () => {
     const en = `First Name,Last Name,Email\nJohn,Smith,john@example.com`;
     const rows = parseCsvContacts(en);
     expect(rows[0]).toMatchObject({ name: "Smith John", email: "john@example.com" });
+  });
+
+  it("Eight の実エクスポート形式 (ヘッダ行の前に前置き行) でも取り込める (2026-07-16 実ファイル回帰)", () => {
+    // 実際のエクスポートはヘッダの前に生成日時・合計件数・注意書き・空行が入る
+    const eight = `﻿02月08日23時00分 JST にEightで生成された名刺リストです。
+合計 2 件
+*データ化の際に認識できない文字が含まれていた場合は「?」で代替されます。対象データが含まれる名刺はQ列にて特定できます。
+*プレミアム登録キャンペーンにより不足項目を入力し直している名刺はP列にて特定ができます。
+*データ生成時に文字化けする恐れがある文字は「＊」として置き換えてあります。
+
+
+会社名,部署名,役職,氏名,e-mail,郵便番号,住所,TEL会社,TEL部門,TEL直通,Fax,携帯電話,URL,名刺交換日,Eightでつながっている人,再データ化中の名刺,'?'を含んだデータ
+株式会社エイト商事,"",部長,近藤五郎,goro@eight-example.co.jp,1050001,東京都港区1-2-3,03-0000-1111,"","","","090-2222-3333",http://example.co.jp,2022/05/26,1,"",""
+テスト株式会社,"","",山川六実,mutsumi@test-example.co.jp,"","","","","","","","",2016/06/07,1,"",""`;
+    const rows = parseCsvContacts(eight);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ name: "近藤五郎", company: "株式会社エイト商事", title: "部長" });
+    expect(rows[1]).toMatchObject({ name: "山川六実", email: "mutsumi@test-example.co.jp" });
+  });
+});
+
+describe("parseFacebookFriendsHtml (HTML 形式のエクスポート。ダウンロードの既定は HTML)", () => {
+  const FB_HTML = `<html><head><style>...</style><title>あなたの友達</title></head><body>
+<h1 id="x">あなたの友達</h1>
+<section class="_a6-g" aria-labelledby="a"><h2 class="_2ph_ _a6-h _a6-i" id="a">新島 太郎</h2><footer><div class="_a72d">7月 01, 2026 6:25:04 PM</div></footer></section>
+<section class="_a6-g" aria-labelledby="b"><h2 class="_2ph_ _a6-h _a6-i" id="b">O&#039;Brien &amp; Smith</h2><footer><div class="_a72d">6月 30, 2026 5:30:53 AM</div></footer></section>
+</body></html>`;
+
+  it("h2 の友だち名を拾い、HTML エンティティを戻す (h1 の見出しは拾わない)", () => {
+    const rows = parseFacebookFriendsHtml(FB_HTML);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ name: "新島 太郎", source: "facebook", distance: 4 });
+    expect(rows[1]!.name).toBe("O'Brien & Smith");
+  });
+
+  it("友だちページでない HTML からは何も拾わない", () => {
+    expect(parseFacebookFriendsHtml("<html><h2>ただの見出し</h2></html>")).toEqual([]);
+  });
+
+  it("parseImportText 経由 (単体ファイル/貼り付け) でも判別される", () => {
+    const r = parseImportText(FB_HTML, "your_friends.html");
+    expect(r.contacts).toHaveLength(2);
+    expect(r.contacts[0]!.source).toBe("facebook");
   });
 });
 
