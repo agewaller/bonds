@@ -134,9 +134,10 @@ test("連絡先詳細: プロフィール保存・面談候補・お便り導線
   await page.getByRole("button", { name: "おたがいの空きから候補を出す" }).click();
   await expect(page.getByText(/ご自身の予定が未登録|重なる空きが見つかりませんでした/)).toBeVisible();
 
-  // お便りセクション: AI キー無し環境では 503 の優しい文言がエラーバナーに出る
+  // お便りセクション: AI キー無し環境では 503 の優しい文言、鍵のある実機では
+  // 実際に文面候補が返る (実生成は 1 分ほどかかりうるため長めに待つ)
   await page.getByRole("button", { name: "文面の候補を作る" }).click();
-  await expect(page.locator('p[role="alert"]').or(page.getByLabel("件名"))).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('p[role="alert"]').or(page.getByLabel("件名"))).toBeVisible({ timeout: 90_000 });
   expect(errors, errors.join("\n")).toHaveLength(0);
 });
 
@@ -345,7 +346,17 @@ test("優先リスト: 距離感と目標をその場で直せて、あなたへ
   await page.getByRole("button", { name: "追加", exact: true }).click();
   await expect(page.getByText(name).first()).toBeVisible();
 
-  // 自分で登録 + 近い距離感 → 優先リストに載り、その場で目標を決められる
+  // 「大切」の印を付ける (印を付けた方は、実データで強い方が多くても必ずリストに載る)。
+  // 行の操作ボタンは載ってからしか押せないため、印だけは API で先に付ける
+  const found = await (await page.request.get(`/api/bff/contacts?q=${encodeURIComponent(name)}`)).json();
+  const contactId = (found.contacts as { id: string; name: string }[]).find((x) => x.name === name)!.id;
+  const pin = await page.request.put(`/api/bff/contacts/${contactId}/focus-preference`, {
+    data: { preference: "pinned" },
+  });
+  expect(pin.ok()).toBeTruthy();
+  await page.reload();
+
+  // 優先リストに載り、その場で目標を決められる
   const panel = page.locator("section", { has: page.getByRole("heading", { name: /大切にしたい方々/ }) });
   await panel.getByLabel(`${name}さんとの関係の目標`).selectOption("business");
   await expect(page.getByText("関係の目標を決めました")).toBeVisible();

@@ -70,4 +70,13 @@ describe("pickFocusContacts (大切にしたい方々)", () => {
     expect(picks.map((p) => p.contactId)).toEqual(["pin"]);
     expect(picks[0]!.reasons).toContain("あなたが大切と印を付けた方");
   });
+
+  it("pinned は件数上限に関わらず必ず載る (強い方が 20 名いても溢れない)", () => {
+    const strong = Array.from({ length: 25 }, (_, i) =>
+      person({ id: `s${i}`, hasGoal: true, distance: 1, source: "manual", interactionCount: 20, lastContactDays: 1, giftExchangeCount: 5 }),
+    );
+    const picks = pickFocusContacts([...strong, person({ id: "pin", name: "印 太郎", focusPreference: "pinned" })], 20);
+    expect(picks).toHaveLength(20);
+    expect(picks.some((p) => p.contactId === "pin")).toBe(true);
+  });
 });

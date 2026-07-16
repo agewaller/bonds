@@ -29,6 +29,7 @@ export type FocusPick = {
   company: string | null;
   score: number;
   reasons: string[]; // ユーザー向けの平易な理由 (最大3つ)
+  pinned: boolean; // ユーザーが「大切」と印を付けた方 (件数上限に関わらず必ず載せる)
 };
 
 // この点数に満たない方は「静かなリスト」として一覧の外に置く (消しはしない)。
@@ -86,7 +87,19 @@ export function pickFocusContacts(people: FocusInput[], maxItems = 20): FocusPic
     if (p.hasEmail || p.hasPhone) score += 5;
 
     if (score < FOCUS_THRESHOLD) continue;
-    out.push({ contactId: p.id, name: p.name, company: p.company, score, reasons: reasons.slice(0, 3) });
+    out.push({
+      contactId: p.id,
+      name: p.name,
+      company: p.company,
+      score,
+      reasons: reasons.slice(0, 3),
+      pinned: p.focusPreference === "pinned",
+    });
   }
-  return out.sort((a, b) => b.score - a.score || (a.contactId < b.contactId ? -1 : 1)).slice(0, maxItems);
+  const sorted = out.sort((a, b) => b.score - a.score || (a.contactId < b.contactId ? -1 : 1));
+  // 印を付けた方は件数上限に関わらず必ず載せる (ユーザーの意思がリストから溢れない)
+  const pinnedCount = sorted.filter((p) => p.pinned).length;
+  if (pinnedCount >= maxItems) return sorted.filter((p) => p.pinned);
+  let restBudget = maxItems - pinnedCount;
+  return sorted.filter((p) => p.pinned || (restBudget > 0 ? (restBudget--, true) : false));
 }
