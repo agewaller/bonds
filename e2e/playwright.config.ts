@@ -18,6 +18,10 @@ export default defineConfig({
     baseURL: BASE_URL,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
+    // クリック等の待ちに上限を置く (既定は無制限のため、対象が現れないとテスト時間
+    // いっぱいまで黙って待ち続け、原因の分からないタイムアウトになる)
+    actionTimeout: 15_000,
+    navigationTimeout: 30_000,
   },
   projects: [
     {

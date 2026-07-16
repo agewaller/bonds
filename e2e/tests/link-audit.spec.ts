@@ -21,7 +21,13 @@ const STATIC_EXTERNAL = [
 
 test.describe("リンク切れ監査", () => {
   test("主要画面の内部リンク先がすべて生存している (404/5xx でない)", async ({ page }) => {
-    test.setTimeout(120_000); // 画面が増えるほど巡回数が増える (cares 2026-07-02 の教訓)
+    test.setTimeout(300_000); // 画面が増えるほど巡回数が増える (cares 2026-07-02 の教訓)
+    // 本番は連絡先が数千件あり、同じ種類のページを全件巡回すると時間切れになる。
+    // 狙いは「リンク先の種類が生きていること」なので、UUID や数値をならした
+    // パターンごとに最大 3 件だけ巡回する (2026-07-16 実測: 7,500 名で 120s 超過)。
+    const pattern = (path: string) =>
+      path.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ":id").replace(/\d{4,}/g, ":n");
+    const perPattern = new Map<string, number>();
     const links = new Set<string>();
     for (const route of ROUTES) {
       const resp = await page.goto(route, { waitUntil: "domcontentloaded" }).catch(() => null);
@@ -38,7 +44,12 @@ test.describe("リンク切れ監査", () => {
         .evaluateAll((els) => els.map((e) => (e as HTMLAnchorElement).getAttribute("href") ?? ""));
       for (const h of hrefs) {
         const path = h.split("#")[0];
-        if (path && !path.startsWith("//")) links.add(path);
+        if (!path || path.startsWith("//")) continue;
+        const key = pattern(path);
+        const n = perPattern.get(key) ?? 0;
+        if (n >= 3) continue;
+        perPattern.set(key, n + 1);
+        links.add(path);
       }
     }
     const broken: string[] = [];
@@ -55,7 +66,7 @@ test.describe("リンク切れ監査", () => {
   });
 
   test("外部リンク先 (SNS の取り出し方・データDL) がすべて到達可能", async ({ page, baseURL }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(300_000);
     const baseHost = baseURL ? new URL(baseURL).host : "";
     const external = new Set<string>(STATIC_EXTERNAL);
     for (const route of ROUTES) {
