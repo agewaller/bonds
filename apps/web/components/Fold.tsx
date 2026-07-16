@@ -47,28 +47,35 @@ export default function Fold({
     });
   return (
     <section style={style}>
-      <button
-        type="button"
-        onClick={toggle}
-        aria-expanded={open}
-        style={{
-          width: "100%",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 8,
-          background: "transparent",
-          border: "none",
-          padding: 0,
-          margin: 0,
-          cursor: "pointer",
-          textAlign: "left",
-          color: "inherit",
-        }}
-      >
-        <span style={{ fontSize: 17, fontWeight: 600 }}>{title}</span>
-        <span style={{ color: "#94a3b8", fontSize: 12, flexShrink: 0 }}>{open ? "たたむ" : "ひらく"}</span>
-      </button>
+      {/* 見出しは h2 のまま保つ (読み上げ・画面構造・監査のセマンティクスを壊さない)。
+          h2 の中のボタン全体がタップ対象になる。 */}
+      <h2 style={{ margin: 0, fontSize: 17, fontWeight: 600 }}>
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          style={{
+            width: "100%",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 8,
+            background: "transparent",
+            border: "none",
+            padding: 0,
+            margin: 0,
+            cursor: "pointer",
+            textAlign: "left",
+            color: "inherit",
+            font: "inherit",
+          }}
+        >
+          <span>{title}</span>
+          <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 400, flexShrink: 0 }}>
+            {open ? "たたむ" : "ひらく"}
+          </span>
+        </button>
+      </h2>
       {open && <div style={{ marginTop: 6 }}>{children}</div>}
     </section>
   );

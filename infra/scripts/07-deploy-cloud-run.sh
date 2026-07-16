@@ -42,6 +42,12 @@ if [ "$ONLY" != "web" ]; then
   else
     echo "注: Secret ${SECRET_TAVILY} が読めない (未作成/値が未投入) ため公開情報の実検索は知識ベースモードで入ります"
   fi
+  # Stripe (時間の出品の決済) も任意。無ければ有料の出品だけ「準備中」に縮退 (無料の出品と日程調整は動く)。
+  if secret_readable "$SECRET_STRIPE"; then
+    SECRETS="${SECRETS},STRIPE_SECRET_KEY=${SECRET_STRIPE}:latest"
+  else
+    echo "注: Secret ${SECRET_STRIPE} が読めない (未作成/値が未投入) ため有料の出品は準備中で入ります"
+  fi
   gcloud run deploy "$RUN_API" --project="$PROJECT" --region="$REGION" \
     --image="${IMAGE_REGISTRY}/bonds-api:${TAG}" \
     --add-cloudsql-instances="$SQL_CONN" \

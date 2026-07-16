@@ -377,6 +377,113 @@ model PartnerMessage {
   @@map("partner_messages")
 }
 
+/// 空き時間の設定 (timeshare の FreeTimeSetting の概念を新規実装)。
+/// 曜日ごとの受け付け時間窓・予定の前後の余白 (移動/準備)・これ未満は出さない最低時間。
+/// 秘密情報ではない (時間の好みのみ) ため暗号化しない。
+model AvailabilitySetting {
+  id            String   @id @default(uuid())
+  ownerUid      String   @unique @map("owner_uid")
+  days          Json // {mon..sun: {enabled, startHour, startMinute, endHour, endMinute}}
+  bufferMinutes Int      @default(0) @map("buffer_minutes")
+  minMinutes    Int      @default(30) @map("min_minutes")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("availability_settings")
+}
+
+/// 日程の共有リンク (timeshare の FreeTimeShare の概念を新規実装)。
+/// 推測不能な share_key の URL を相手 (アカウント不要の第三者) に送り、相手はこちらの
+/// 空き枠から候補を選んで提案し、ユーザーが承認して確定する (下書き→承認→実行の原則)。
+/// ページに出すのは空き枠と名乗りだけ (予定の中身は出さない)。任意でパスワード・有効期限。
+model ScheduleShare {
+  id           String    @id @default(uuid())
+  ownerUid     String    @default("owner") @map("owner_uid")
+  contactId    String?   @map("contact_id") // 紐づける相手 (承認時に接触記録へ還流)
+  shareKey     String    @unique @map("share_key")
+  title        String    @default("")
+  displayName  String    @default("") @map("display_name") // ページに出す名乗り (ユーザーが選ぶ公開情報)
+  method       String    @default("meeting") // meeting / online / phone
+  note         String    @default("") // 相手へのひとこと (公開・サニタイズ済み)
+  periodStart  DateTime  @map("period_start")
+  periodEnd    DateTime  @map("period_end")
+  slotMinutes  Int       @default(60) @map("slot_minutes")
+  passwordHash String?   @map("password_hash") // scrypt。null = パスワードなし
+  expiresAt    DateTime? @map("expires_at") // null = 期限なし (既定は期間終了 + 1 か月)
+  state        String    @default("active") // active / archived (ソフト削除)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  proposals ScheduleShareProposal[]
+
+  @@index([ownerUid, state])
+  @@map("schedule_shares")
+}
+
+/// 共有リンクへの相手からの候補提案。相手 (第三者) の名乗り・連絡先・メッセージは PII = 暗号化。
+model ScheduleShareProposal {
+  id           String        @id @default(uuid())
+  shareId      String        @map("share_id")
+  share        ScheduleShare @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  guestName    String        @map("guest_name") // 暗号化
+  guestContact String?       @map("guest_contact") // 暗号化
+  message      String?      // 暗号化
+  candidates   Json // [{start, end}] 時刻のみ (PII ではない)
+  status       String        @default("proposed") // proposed / accepted / declined
+  decidedSlot  Json?         @map("decided_slot") // 承認した枠 {start, end}
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  @@index([shareId, status])
+  @@map("schedule_share_proposals")
+}
+
+/// 時間の出品 (timeshare スポットコンサルの概念を新規実装)。
+/// 空き枠を相談などのメニューとして公開し、予約 + Stripe 決済 (BMP-LP 方式 = REST 直・
+/// 鍵は Secret Manager のみ) で受ける。price_jpy 0 は無料 (決済なしで確定)。
+model TimeOffer {
+  id          String   @id @default(uuid())
+  ownerUid    String   @default("owner") @map("owner_uid")
+  offerKey    String   @unique @map("offer_key")
+  title       String
+  description String   @default("")
+  displayName String   @default("") @map("display_name")
+  method      String   @default("online") // meeting / online / phone
+  minutes     Int      @default(60)
+  priceJpy    Int      @default(0) @map("price_jpy")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  bookings TimeBooking[]
+
+  @@index([ownerUid, active])
+  @@map("time_offers")
+}
+
+/// 時間の予約。ゲスト (第三者) の名乗り・連絡先・メッセージは PII = 暗号化。
+/// 有料は pending_payment → (Stripe 支払い確認) → confirmed。無料は即 confirmed。
+model TimeBooking {
+  id              String    @id @default(uuid())
+  offerId         String    @map("offer_id")
+  offer           TimeOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  ownerUid        String    @map("owner_uid")
+  guestName       String    @map("guest_name") // 暗号化
+  guestContact    String?   @map("guest_contact") // 暗号化
+  message         String?  // 暗号化
+  slot            Json // {start, end}
+  status          String    @default("pending_payment") // pending_payment / confirmed / canceled / expired
+  amountJpy       Int       @map("amount_jpy")
+  stripeSessionId String?   @unique @map("stripe_session_id")
+  paidAt          DateTime? @map("paid_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([ownerUid, status])
+  @@index([offerId, status])
+  @@map("time_bookings")
+}
+
 /// 公人 (dd_subjects) と人脈 (contacts) の任意リンク (DESIGN-HANDOVER §2 の将来項目)。
 model PersonLink {
   id        String   @id @default(uuid())

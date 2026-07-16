@@ -171,6 +171,7 @@ export default function ContactDetailPage() {
   const [form, setForm] = useState<Record<string, string>>({});
   const [slots, setSlots] = useState<Slot[] | null>(null);
   const [theirIcsUrl, setTheirIcsUrl] = useState("");
+  const [shareUrl, setShareUrl] = useState("");
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [draftId, setDraftId] = useState("");
   const [chosen, setChosen] = useState(0);
@@ -867,6 +868,37 @@ export default function ContactDetailPage() {
             {slots.length === 0 && <li>この 2 週間では重なる空きが見つかりませんでした</li>}
           </ul>
         )}
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #f1f5f9" }}>
+          <p style={{ margin: "0 0 6px", color: "#64748b", fontSize: 13, lineHeight: 1.7 }}>
+            相手に選んでいただく方法もあります。こちらの空いている枠だけが見えるページを作り、
+            リンクを送ると、相手がご都合のよい時間を選んで返してくれます (アカウント不要)。
+          </p>
+          <button
+            style={btn(false)}
+            disabled={!!busy}
+            onClick={async () => {
+              const body = await call("schedule/shares", {
+                method: "POST",
+                body: JSON.stringify({ contactId: contact.id, title: `${contact.name}様との日程のご相談` }),
+              }, "選んでいただくページを作りました。リンクをコピーしてお送りください");
+              if (body?.url) setShareUrl(body.url);
+            }}
+          >
+            この方に選んでいただくページを作る
+          </button>
+          {shareUrl && (
+            <p style={{ margin: "8px 0 0", background: "#f8fafc", padding: 8, borderRadius: 8 }}>
+              <span style={{ wordBreak: "break-all" }}>{shareUrl}</span>{" "}
+              <button
+                style={{ ...btn(false), fontSize: 13, padding: "4px 10px" }}
+                onClick={() => void navigator.clipboard.writeText(shareUrl).then(() => setNotice("リンクをコピーしました"))}
+              >
+                コピー
+              </button>
+              <a href="/schedule" style={{ color: "#2563eb", marginLeft: 8, fontSize: 13 }}>届いた提案はこちらで確認</a>
+            </p>
+          )}
+        </div>
       </Fold>
 
       <Fold k="cd9" title={<>お便りを送る</>} style={{ marginTop: 32 }}>

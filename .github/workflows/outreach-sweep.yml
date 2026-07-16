@@ -40,3 +40,6 @@ jobs:
           # 名寄せの自動実行 (メール/電話が一致する「同じ人」を黙ってまとめる。名前だけの一致は提案に留める)
           curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/contacts/auto-merge?batch=50" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
+          # 時間の予約の取りこぼし再照合 (支払い済みの確定漏れを拾い、期限切れは枠を開放する)
+          curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/schedule/reconcile-bookings?batch=20" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"

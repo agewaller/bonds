@@ -107,7 +107,7 @@ export const PERSON_EVAL_SAFETY = [
 export function buildPersonEvalUserMessage(
   name: string,
   profileHint?: string | null,
-  referenceDate?: Date,
+  referenceDate?: Date | null,
 ): string {
   const lines = [`評価対象人物: ${name}`];
   if (profileHint && profileHint.trim()) {

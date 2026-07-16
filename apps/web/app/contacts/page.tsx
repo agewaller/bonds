@@ -659,8 +659,9 @@ export default function ContactsPage() {
         <LanguageSelector />
         <AuthBar />
       </div>
-      <p>
+      <p style={{ display: "flex", gap: 16 }}>
         <Link href="/" style={{ color: "#2563eb" }}>{t("back_home")}</Link>
+        <Link href="/schedule" style={{ color: "#2563eb" }}>日程調整と時間の受け付け</Link>
       </p>
       <h1 style={{ fontSize: 24 }}>{t("contacts_title")}</h1>
 

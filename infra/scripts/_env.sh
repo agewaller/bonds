@@ -35,6 +35,9 @@ export SECRET_ZENTRACK="${SECRET_ZENTRACK:-BONDS_ZENTRACK_INGEST_SECRET}"
 # Tavily (公開情報の実検索。人物DD の検索ステップ・相手ノート・提携先探しの精度が上がる)。
 # 未作成なら知識ベースモードに縮退する (壊れない)。
 export SECRET_TAVILY="${SECRET_TAVILY:-BONDS_TAVILY_API_KEY}"
+# Stripe (時間の出品の決済。BMP-LP と同方針 = 鍵は Secret Manager のみ)。
+# 未作成なら有料の出品だけ「準備中」に縮退する (無料の出品と日程調整は動く)。
+export SECRET_STRIPE="${SECRET_STRIPE:-BONDS_STRIPE_SECRET_KEY}"
 
 # 本番 web の既定 URL (api 単独デプロイ時の ALLOWED_ORIGINS / OAuth 戻り先の既定)
 export PROD_WEB_URL="${PROD_WEB_URL:-https://bonds-web-xj6szhutkq-an.a.run.app}"
