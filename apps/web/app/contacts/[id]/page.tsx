@@ -3,6 +3,7 @@
 // 実行 (承認 → 送信) / 検証 (やりとりの記録) を一画面に。
 // 外に出る行動は必ず「下書き → 承認 → 送信」(CLAUDE.md 自律性の段階)。
 import { useCallback, useEffect, useState } from "react";
+import Fold from "../../../components/Fold";
 import { apiFetch } from "../../../lib/client-api";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -398,8 +399,7 @@ export default function ContactDetailPage() {
       )}
 
       {relScore && (
-        <section style={{ marginTop: 20, border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
-          <h2 style={{ fontSize: 18, margin: "0 0 4px" }}>この方との関係</h2>
+        <Fold k="cd0" title={<>この方との関係</>} style={{ marginTop: 20, border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", margin: "10px 0" }}>
             <ScoreTile label="距離感" value={`${relScore.distance}`} suffix="/5" caption={DISTANCE_LABEL[relScore.distance] ?? ""} />
             <ScoreTile label="深さ" value={`${relScore.depth}`} suffix="/100" caption={relScore.depthBand} />
@@ -464,12 +464,11 @@ export default function ContactDetailPage() {
               )}
             </div>
           )}
-        </section>
+        </Fold>
       )}
 
-      <section style={{ marginTop: 20, border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
+      <Fold k="cd1" title={<>この関係の目標</>} style={{ marginTop: 20, border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-          <h2 style={{ fontSize: 18, margin: 0 }}>この関係の目標</h2>
           {goal && !goalEdit && (
             <button
               style={{ padding: "4px 10px", background: "transparent", color: "#7c3aed", border: "1px solid #ddd6fe", borderRadius: 8, cursor: "pointer", fontSize: 12 }}
@@ -572,10 +571,9 @@ export default function ContactDetailPage() {
             </p>
           </div>
         )}
-      </section>
+      </Fold>
 
-      <section style={{ marginTop: 20, border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
-        <h2 style={{ fontSize: 18, margin: "0 0 4px" }}>近況メモ・いただいた返信を残す</h2>
+      <Fold k="cd2" title={<>近況メモ・いただいた返信を残す</>} style={{ marginTop: 20, border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
         <p style={{ fontSize: 13, color: "#075985", margin: "0 0 8px" }}>
           会ったときのひとことや、いただいた返信をそのまま貼り付けてください。接触の記録になり、この方の論点整理にも自動で反映されます。
         </p>
@@ -613,12 +611,11 @@ export default function ContactDetailPage() {
             {busy.includes("/note") ? "残しています…" : "残す"}
           </button>
         </div>
-      </section>
+      </Fold>
 
       {contact.company && (
-        <section style={{ marginTop: 20, border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cd3" title={<>{contact.company} の最近の動き</>} style={{ marginTop: 20, border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 16px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-            <h2 style={{ fontSize: 18, margin: 0 }}>{contact.company} の最近の動き</h2>
             <button
               style={btn(true)}
               disabled={!!busy}
@@ -656,14 +653,11 @@ export default function ContactDetailPage() {
               )}
             </div>
           )}
-        </section>
+        </Fold>
       )}
 
-      <section
-        style={{ marginTop: 24, background: "#f8fafc", borderRadius: 12, padding: "12px 16px", borderLeft: "5px solid #0891b2" }}
-      >
+      <Fold k="cd4" title={<>いまのこの方 (自動でまとまるノート)</>} style={{ marginTop: 24, background: "#f8fafc", borderRadius: 12, padding: "12px 16px", borderLeft: "5px solid #0891b2" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
-          <h2 style={{ fontSize: 18, margin: 0 }}>いまのこの方 (自動でまとまるノート)</h2>
           {contact.profileDigestAt && (
             <small style={{ color: "#64748b" }}>{new Date(contact.profileDigestAt).toLocaleDateString("ja-JP")} 更新</small>
           )}
@@ -683,10 +677,9 @@ export default function ContactDetailPage() {
             公開情報も調べてまとめ直す
           </button>
         </div>
-      </section>
+      </Fold>
 
-      <section style={{ marginTop: 24, border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
-        <h2 style={{ fontSize: 18, margin: 0 }}>この方のSNS・公開の発信</h2>
+      <Fold k="cd5" title={<>この方のSNS・公開の発信</>} style={{ marginTop: 24, border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
         <p style={{ fontSize: 13, color: "#475569", margin: "6px 0" }}>
           この方が公開している X・Instagram・LinkedIn・note・ブログなどを控えておくと、最近の様子をつかんで
           お声がけの一言に生かせます。上の「公開情報も調べてまとめ直す」を押したときだけ、ここを手がかりに近況を調べます。
@@ -752,7 +745,7 @@ export default function ContactDetailPage() {
             登録する
           </button>
         </div>
-      </section>
+      </Fold>
 
       {(() => {
         let facets: Facets | null = null;
@@ -768,9 +761,8 @@ export default function ContactDetailPage() {
             return Array.isArray(v) ? v.length > 0 : !!v;
           });
         return (
-          <section style={{ marginTop: 24, border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+          <Fold k="cd6" title={<>この方の論点</>} style={{ marginTop: 24, border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-              <h2 style={{ fontSize: 18, margin: 0 }}>この方の論点</h2>
               {contact.profileFacetsAt && (
                 <small style={{ color: "#64748b" }}>{new Date(contact.profileFacetsAt).toLocaleDateString("ja-JP")} 更新</small>
               )}
@@ -804,12 +796,11 @@ export default function ContactDetailPage() {
             <button style={btn(false)} onClick={() => void generateFacets()} disabled={!!busy}>
               {hasAny ? "論点を整理し直す" : "記録から論点を整理する"}
             </button>
-          </section>
+          </Fold>
         );
       })()}
 
-      <section style={{ marginTop: 24 }}>
-        <h2 style={{ fontSize: 18 }}>この方のこと</h2>
+      <Fold k="cd7" title={<>この方のこと</>} style={{ marginTop: 24 }}>
         <label style={{ display: "block", margin: "8px 0" }}>
           メールアドレス
           <input style={input} value={form.email ?? ""} onChange={(e) => setForm({ ...form, email: e.target.value })} />
@@ -832,10 +823,9 @@ export default function ContactDetailPage() {
             記録から「大切にしていること」の下書きを作る
           </button>
         </div>
-      </section>
+      </Fold>
 
-      <section style={{ marginTop: 32 }}>
-        <h2 style={{ fontSize: 18 }}>お会いする日を探す</h2>
+      <Fold k="cd8" title={<>お会いする日を探す</>} style={{ marginTop: 32 }}>
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           <input
             style={{ ...input, flex: 1, width: "auto" }}
@@ -877,10 +867,9 @@ export default function ContactDetailPage() {
             {slots.length === 0 && <li>この 2 週間では重なる空きが見つかりませんでした</li>}
           </ul>
         )}
-      </section>
+      </Fold>
 
-      <section style={{ marginTop: 32 }}>
-        <h2 style={{ fontSize: 18 }}>お便りを送る</h2>
+      <Fold k="cd9" title={<>お便りを送る</>} style={{ marginTop: 32 }}>
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           <select value={channel} onChange={(e) => setChannel(e.target.value)} aria-label="届け方" style={{ ...input, width: "auto" }}>
             <option value="email">メール</option>
@@ -978,10 +967,9 @@ export default function ContactDetailPage() {
           </div>
         )}
         {sentInfo && <p style={{ color: "#166534" }}>{sentInfo}</p>}
-      </section>
+      </Fold>
 
-      <section style={{ marginTop: 32 }}>
-        <h2 style={{ fontSize: 18 }}>贈り物を選ぶ</h2>
+      <Fold k="cd10" title={<>贈り物を選ぶ</>} style={{ marginTop: 32 }}>
         <p style={{ color: "#64748b", fontSize: 14, marginTop: 0 }}>
           この方のことをふまえて、喜ばれそうな贈り物と、その探し方をご提案します。
         </p>
@@ -1047,10 +1035,9 @@ export default function ContactDetailPage() {
             {giftNote && <p style={{ fontSize: 13, color: "#475569" }}>{giftNote}</p>}
           </div>
         )}
-      </section>
+      </Fold>
 
-      <section style={{ marginTop: 32 }}>
-        <h2 style={{ fontSize: 18 }}>贈り物の記録</h2>
+      <Fold k="cd11" title={<>贈り物の記録</>} style={{ marginTop: 32 }}>
         <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
           <select value={giftDirection} onChange={(e) => setGiftDirection(e.target.value)} aria-label="贈った・いただいた" style={{ ...input, width: "auto" }}>
             <option value="outbound">贈った</option>
@@ -1095,10 +1082,9 @@ export default function ContactDetailPage() {
           ))}
           {gifts.length === 0 && <li style={{ color: "#64748b" }}>まだ記録がありません</li>}
         </ul>
-      </section>
+      </Fold>
 
-      <section style={{ marginTop: 32 }}>
-        <h2 style={{ fontSize: 18 }}>やり取りの台帳</h2>
+      <Fold k="cd12" title={<>やり取りの台帳</>} style={{ marginTop: 32 }}>
         <p style={{ fontSize: 13, color: "#475569" }}>
           この方との貢献・貸し借り・お約束・お取引を書き留めておけます。返すお約束や期日のあるものは、近づくとお知らせします。
         </p>
@@ -1222,10 +1208,9 @@ export default function ContactDetailPage() {
           ))}
           {exchanges.length === 0 && <li style={{ color: "#64748b" }}>まだ記録がありません</li>}
         </ul>
-      </section>
+      </Fold>
 
-      <section style={{ marginTop: 32 }}>
-        <h2 style={{ fontSize: 18 }}>公人プロフィール</h2>
+      <Fold k="cd13" title={<>公人プロフィール</>} style={{ marginTop: 32 }}>
         {linkedSubjects.length > 0 ? (
           <ul>
             {linkedSubjects.map((l) => (
@@ -1261,10 +1246,9 @@ export default function ContactDetailPage() {
             </button>
           </div>
         )}
-      </section>
+      </Fold>
 
-      <section style={{ marginTop: 32 }}>
-        <h2 style={{ fontSize: 18 }}>これまでのやりとり</h2>
+      <Fold k="cd14" title={<>これまでのやりとり</>} style={{ marginTop: 32 }}>
         <ul>
           {interactions.map((i) => (
             <li key={i.id}>
@@ -1274,7 +1258,7 @@ export default function ContactDetailPage() {
           ))}
           {interactions.length === 0 && <li style={{ color: "#64748b" }}>まだ記録がありません</li>}
         </ul>
-      </section>
+      </Fold>
     </main>
   );
 }

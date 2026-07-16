@@ -2,6 +2,7 @@
 // 連絡帳 + つながりスコア + 「今日、連絡してみませんか」(lms の関係性ダッシュボードを移植)。
 // 文言は寄り添い基調・技術語なし・記号装飾なし (CLAUDE.md 共通プロダクト原則)。
 import { useCallback, useEffect, useRef, useState } from "react";
+import Fold from "../../components/Fold";
 import { apiFetch } from "../../lib/client-api";
 import { AuthBar } from "../../components/AuthBar";
 import { LanguageSelector } from "../../components/LanguageSelector";
@@ -645,17 +646,14 @@ export default function ContactsPage() {
       <h1 style={{ fontSize: 24 }}>{t("contacts_title")}</h1>
 
       {summary && (
-        <section
-          style={{
+        <Fold k="cl0" title={<>{t("connection_score")}</>} style={{
             borderLeft: `5px solid ${level.color}`,
             background: "#f8fafc",
             borderRadius: 12,
             padding: "12px 16px",
             margin: "16px 0",
-          }}
-        >
+          }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-            <h2 style={{ fontSize: 18, margin: 0 }}>{t("connection_score")}</h2>
             <div style={{ fontSize: 28, color: level.color }}>
               {summary.connectionScore}
               <small style={{ fontSize: 14, color: "#64748b" }}>/100</small>
@@ -663,13 +661,12 @@ export default function ContactsPage() {
           </div>
           <p style={{ margin: "4px 0", color: level.color }}>{level.label}</p>
           <p style={{ margin: 0, color: "#334155" }}>{level.message}</p>
-        </section>
+        </Fold>
       )}
 
       {progress && progress.totalInteractions > 0 && (
-        <section style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px", margin: "16px 0" }}>
+        <Fold k="cl1" title={<>これまでの歩み</>} style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px", margin: "16px 0" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-            <h2 style={{ fontSize: 18, margin: 0 }}>これまでの歩み</h2>
             <span style={{ color: "#334155" }}>
               {progress.streakDays > 0 ? `${progress.streakDays}日続いています` : ""}
             </span>
@@ -694,12 +691,11 @@ export default function ContactsPage() {
               </div>
             </div>
           )}
-        </section>
+        </Fold>
       )}
 
       {summary && summary.today.length > 0 && (
-        <section style={{ margin: "16px 0" }}>
-          <h2 style={{ fontSize: 18 }}>{t("today_suggestion")}</h2>
+        <Fold k="cl2" title={<>{t("today_suggestion")}</>} style={{ margin: "16px 0" }}>
           <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 8 }}>
             {summary.today.map((sug) => (
               <li
@@ -733,15 +729,14 @@ export default function ContactsPage() {
               </li>
             ))}
           </ul>
-        </section>
+        </Fold>
       )}
       {summary && summary.today.length === 0 && contacts.length > 0 && (
         <p style={{ color: "#27ae60" }}>すべての方と適切な頻度でつながれています。素晴らしいですね。</p>
       )}
 
       {giftOccasions.length > 0 && (
-        <section style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
-          <h2 style={{ fontSize: 17, marginTop: 0 }}>いま贈るとよい方・行事</h2>
+        <Fold k="cl3" title={<>いま贈るとよい方・行事</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
             {giftOccasions.slice(0, 8).map((o, i) => (
               <li key={i} style={{ fontSize: 14 }}>
@@ -756,12 +751,11 @@ export default function ContactsPage() {
               </li>
             ))}
           </ul>
-        </section>
+        </Fold>
       )}
 
       {exReminders.length > 0 && (
-        <section style={{ margin: "16px 0", border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 12, padding: "12px 16px" }}>
-          <h2 style={{ fontSize: 17, marginTop: 0 }}>そろそろ区切りをつけたいこと</h2>
+        <Fold k="cl4" title={<>そろそろ区切りをつけたいこと</>} style={{ margin: "16px 0", border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 12, padding: "12px 16px" }}>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
             {exReminders.slice(0, 8).map((r) => (
               <li key={r.id} style={{ fontSize: 14 }}>
@@ -772,13 +766,12 @@ export default function ContactsPage() {
               </li>
             ))}
           </ul>
-        </section>
+        </Fold>
       )}
 
       {distanceSug.length > 0 && (
-        <section style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl5" title={<>距離感の見直し</>} style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-            <h2 style={{ fontSize: 17, margin: 0 }}>距離感の見直し</h2>
             <button
               style={{ padding: "6px 14px", background: "#0284c7", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
               disabled={busy}
@@ -831,12 +824,11 @@ export default function ContactsPage() {
               </li>
             ))}
           </ul>
-        </section>
+        </Fold>
       )}
 
       {drift.length > 0 && (
-        <section style={{ margin: "16px 0", border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 12, padding: "12px 16px" }}>
-          <h2 style={{ fontSize: 17, marginTop: 0 }}>そっと気にかけたい関係</h2>
+        <Fold k="cl6" title={<>そっと気にかけたい関係</>} style={{ margin: "16px 0", border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#9a3412", margin: "4px 0 8px" }}>
             近しかった方や、いつもやりとりされていた方との間が、少し空いてきています。よろしければ、久しぶりのひとことから。
           </p>
@@ -850,12 +842,11 @@ export default function ContactsPage() {
               </li>
             ))}
           </ul>
-        </section>
+        </Fold>
       )}
 
       {focusItems.length > 0 && (
-        <section style={{ margin: "16px 0", border: "2px solid #fbbf24", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
-          <h2 style={{ fontSize: 17, marginTop: 0 }}>大切にしたい方々</h2>
+        <Fold k="cl7" title={<>大切にしたい方々</>} style={{ margin: "16px 0", border: "2px solid #fbbf24", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#92400e", margin: "4px 0 8px" }}>
             やりとりの積み重ねや目標、記録の厚みから、いま関係を高める価値がありそうな方です。打ち手はこの方々に集中させましょう。
           </p>
@@ -870,12 +861,11 @@ export default function ContactsPage() {
               </li>
             ))}
           </ul>
-        </section>
+        </Fold>
       )}
 
       {goalItems.length > 0 && (
-        <section style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
-          <h2 style={{ fontSize: 17, marginTop: 0 }}>目標に向かっている関係</h2>
+        <Fold k="cl8" title={<>目標に向かっている関係</>} style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#6b21a8", margin: "4px 0 8px" }}>
             目標を決めた方との、いまの間合いと次の一手です。間が空いてきた方から並べています。
           </p>
@@ -894,12 +884,11 @@ export default function ContactsPage() {
               </li>
             ))}
           </ul>
-        </section>
+        </Fold>
       )}
 
       {recentMet.length > 0 && (
-        <section style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
-          <h2 style={{ fontSize: 17, marginTop: 0 }}>最近お会いした方</h2>
+        <Fold k="cl9" title={<>最近お会いした方</>} style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#075985", margin: "4px 0 8px" }}>
             お変わりありませんでしたか。覚えているうちにひとことだけ残しておくと、この先の一手がぐっと的確になります。
           </p>
@@ -935,12 +924,11 @@ export default function ContactsPage() {
               </li>
             ))}
           </ul>
-        </section>
+        </Fold>
       )}
 
       {dailyQ && !dailySaved && (
-        <section style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
-          <h2 style={{ fontSize: 17, marginTop: 0 }}>今日のひとこと</h2>
+        <Fold k="cl10" title={<>今日のひとこと</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 14, color: "#78350f", margin: "4px 0 8px" }}>{dailyQ.question}</p>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <input
@@ -970,12 +958,11 @@ export default function ContactsPage() {
           <p style={{ fontSize: 12, color: "#92400e", margin: "8px 0 0" }}>
             毎日ひとりについて、まだ書き留めていないことをひとつだけお聞きします。積み重なるほど、提案が的確になります。
           </p>
-        </section>
+        </Fold>
       )}
 
       {firstMoves.length > 0 && (
-        <section style={{ margin: "16px 0", border: "1px solid #a7f3d0", background: "#ecfdf5", borderRadius: 12, padding: "12px 16px" }}>
-          <h2 style={{ fontSize: 17, marginTop: 0 }}>新しく迎えた方へ、はじめの一手</h2>
+        <Fold k="cl11" title={<>新しく迎えた方へ、はじめの一手</>} style={{ margin: "16px 0", border: "1px solid #a7f3d0", background: "#ecfdf5", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#065f46", margin: "4px 0 8px" }}>
             最近お迎えした方のうち、いま動くとよさそうな方です。詳しい進め方は、お名前を開いて「この方への対応を考える」からどうぞ。
           </p>
@@ -992,12 +979,11 @@ export default function ContactsPage() {
           <p style={{ fontSize: 12, color: "#047857", margin: "8px 0 0" }}>
             お相手の論点整理は、材料のある方から順に自動で進みます。整うほど、この一手も具体的になります。
           </p>
-        </section>
+        </Fold>
       )}
 
-      <section style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
+      <Fold k="cl12" title={<>引き合わせるとよいお二人</>} style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-          <h2 style={{ fontSize: 17, margin: 0 }}>引き合わせるとよいお二人</h2>
           <button
             style={{ padding: "6px 14px", background: "#7c3aed", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
             disabled={busy}
@@ -1042,7 +1028,7 @@ export default function ContactsPage() {
             {introNote || "いまのところ、はっきり噛み合うお二人は見当たりませんでした。"}
           </p>
         )}
-      </section>
+      </Fold>
 
       {importMsg && (
         <p aria-live="polite" style={{ color: "#1e40af", background: "#eff6ff", padding: 8, borderRadius: 8 }}>
@@ -1064,12 +1050,9 @@ export default function ContactsPage() {
           const color = (s: string) =>
             s === "done" ? "#166534" : s === "error" ? "#b91c1c" : "#1e40af";
           return (
-            <section
-              aria-live="polite"
-              style={{ margin: "16px 0", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: "12px 16px" }}
-            >
+            <Fold k="cl13" title={<>取り込みの状況</>}
+              style={{ margin: "16px 0", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: "12px 16px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                <h2 style={{ fontSize: 17, margin: 0 }}>取り込みの状況</h2>
                 {active === 0 && (
                   <button
                     onClick={() => void clearJobs()}
@@ -1100,13 +1083,12 @@ export default function ContactsPage() {
                   </li>
                 ))}
               </ul>
-            </section>
+            </Fold>
           );
         })()}
 
       {dupeGroups.length > 0 && (
-        <section style={{ margin: "16px 0", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: "12px 16px" }}>
-          <h2 style={{ fontSize: 17, marginTop: 0 }}>同じ方が二重に登録されているかもしれません</h2>
+        <Fold k="cl14" title={<>同じ方が二重に登録されているかもしれません</>} style={{ margin: "16px 0", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ color: "#475569", fontSize: 13, margin: "0 0 10px" }}>
             まとめると、やりとりや贈り物の記録も1件に集まります。別の方なら、そのままにしておいて大丈夫です。
           </p>
@@ -1135,11 +1117,10 @@ export default function ContactsPage() {
               </li>
             ))}
           </ul>
-        </section>
+        </Fold>
       )}
 
-      <section style={{ margin: "24px 0" }}>
-        <h2 style={{ fontSize: 18 }}>{t("add_section")}</h2>
+      <Fold k="cl15" title={<>{t("add_section")}</>} style={{ margin: "24px 0" }}>
         <div style={{ display: "flex", gap: 8 }}>
           <input
             value={name}
@@ -1455,7 +1436,7 @@ export default function ContactsPage() {
             )}
           </div>
         )}
-      </section>
+      </Fold>
 
       <section style={{ margin: "24px 0" }}>
         <p>
@@ -1516,8 +1497,7 @@ export default function ContactsPage() {
         )}
       </section>
 
-      <section style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
-        <h2 style={{ fontSize: 18, marginTop: 0 }}>SNS・サービスと連携して、関係する人をまとめる</h2>
+      <Fold k="cl18" title={<>SNS・サービスと連携して、関係する人をまとめる</>} style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
         <p style={{ color: "#64748b", margin: "4px 0 10px", fontSize: 14 }}>
           お使いのサービスから、つながっている方をまとめて連絡帳に取り込めます。各社のボタンを押すと、
           その取り出し方のページが開きます。受け取ったファイルを下の取り込みに置くだけで大丈夫です。
@@ -1549,10 +1529,9 @@ export default function ContactsPage() {
             {connectHint}
           </p>
         )}
-      </section>
+      </Fold>
 
-      <section style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
-        <h2 style={{ fontSize: 18, marginTop: 0 }}>いちばん簡単: Google（Gmail・連絡先）からまとめて取り込む</h2>
+      <Fold k="cl19" title={<>いちばん簡単: Google（Gmail・連絡先）からまとめて取り込む</>} style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
         <p style={{ color: "#64748b", margin: "4px 0 10px", fontSize: 14 }}>
           ボタンをひとつ押すだけで、Google の連絡先（アドレス帳）に加えて、メールでやりとりした相手・カレンダーの同席者・
           共有ファイルの仲間まで、連絡帳へ自動でまとまります。つないだあとはその場で取り込みが始まります。
@@ -1593,10 +1572,9 @@ export default function ContactsPage() {
             </button>
           </div>
         )}
-      </section>
+      </Fold>
 
-      <section>
-        <h2 style={{ fontSize: 18 }}>{t("everyone")} ({contacts.length})</h2>
+      <Fold k="cl20" title={<>{t("everyone")} ({contacts.length})</>}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
           <input
             value={nameFilter}
@@ -1652,7 +1630,7 @@ export default function ContactsPage() {
           ))}
           {contacts.length === 0 && <li style={{ color: "#64748b" }}>まだ登録がありません。大切な方から登録してみましょう。</li>}
         </ul>
-      </section>
+      </Fold>
     </main>
   );
 }
