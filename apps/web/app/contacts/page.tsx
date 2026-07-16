@@ -130,8 +130,22 @@ export default function ContactsPage() {
   const [metNotes, setMetNotes] = useState<Record<string, string>>({});
   const [metSaved, setMetSaved] = useState<Record<string, boolean>>({});
   // 大切にしたい方々 (重要そうな方のピックアップ)。AI 不要なので自動で読み込む。
+  // 距離感・関係の目標・ピン留め/外すをこの場でカスタムでき、以降の自動ケアはこの
+  // 優先度に沿って動く。
   const [focusItems, setFocusItems] = useState<
-    { contactId: string; name: string; company: string | null; reasons: string[] }[]
+    {
+      contactId: string;
+      name: string;
+      company: string | null;
+      reasons: string[];
+      distance: number;
+      focusPreference: string | null;
+      goal: { purpose: string; targetDistance: number } | null;
+    }[]
+  >([]);
+  // あなたへの提案 (優先度に基づく自動ケアの受け箱)。実行するかはユーザーが選ぶ。
+  const [careItems, setCareItems] = useState<
+    { id: string; contactId: string; name: string; kind: string; body: string | null }[]
   >([]);
   // みなさんの一覧は既定で畳む (大半は動かない名簿のため)。検索でいつでも探せる
   const [showAll, setShowAll] = useState(false);
@@ -238,9 +252,63 @@ export default function ContactsPage() {
     if (glRes.ok) setGoalItems((await glRes.json()).items ?? []);
     const fcRes = await apiFetch("relationship/focus");
     if (fcRes.ok) setFocusItems((await fcRes.json()).items ?? []);
+    const csRes = await apiFetch("relationship/care-suggestions");
+    if (csRes.ok) setCareItems((await csRes.json()).items ?? []);
     const dqRes = await apiFetch("relationship/daily-question");
     if (dqRes.ok) setDailyQ((await dqRes.json()).question ?? null);
   }, []);
+
+  // 優先リストのその場カスタム — 距離感・関係の目標・ピン留め/外す。
+  // ここで決めた内容に沿って、以降の自動ケア (提案・材料整理) が動く。
+  const saveFocusDistance = async (contactId: string, distance: number) => {
+    const res = await apiFetch(`contacts/${contactId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ distance }),
+    });
+    if (res.ok) {
+      setNotice("距離感を直しました");
+      await load();
+    }
+  };
+  const saveFocusGoal = async (contactId: string, purpose: string, targetDistance: number) => {
+    const res = purpose
+      ? await apiFetch(`contacts/${contactId}/goal`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ purpose, targetDistance }),
+        })
+      : await apiFetch(`contacts/${contactId}/goal`, { method: "DELETE" });
+    if (res.ok) {
+      setNotice(purpose ? "関係の目標を決めました" : "目標を外しました");
+      await load();
+    }
+  };
+  const saveFocusPreference = async (contactId: string, preference: string | null) => {
+    const res = await apiFetch(`contacts/${contactId}/focus-preference`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preference }),
+    });
+    if (res.ok) {
+      setNotice(
+        preference === "excluded"
+          ? "このリストから外しました。記録はそのまま残り、いつでも戻せます"
+          : preference === "pinned"
+            ? "大切な方として印を付けました"
+            : "自動判定に戻しました",
+      );
+      await load();
+    }
+  };
+  const resolveCare = async (id: string, status: "done" | "dismissed") => {
+    const res = await apiFetch(`relationship/care-suggestions/${id}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    if (res.ok) setCareItems((cur) => cur.filter((x) => x.id !== id));
+  };
 
   // ひとことメモを相手に還流する (接触記録 + 論点整理の自動更新)
   const saveQuickNote = useCallback(async (contactId: string, text: string): Promise<boolean> => {
@@ -866,18 +934,121 @@ export default function ContactsPage() {
       )}
 
       {focusItems.length > 0 && (
-        <Fold k="cl7" title={<>大切にしたい方々</>} style={{ margin: "16px 0", border: "2px solid #fbbf24", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl7" title={<>大切にしたい方々 (優先リスト)</>} style={{ margin: "16px 0", border: "2px solid #fbbf24", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#92400e", margin: "4px 0 8px" }}>
-            やりとりの積み重ねや目標、記録の厚みから、いま関係を高める価値がありそうな方です。打ち手はこの方々に集中させましょう。
+            くり返しの登場・記録の厚み・直近のやりとりから、いま関係を高める価値がありそうな方です。
+            距離感や目標をここで直すと、以降のご提案はこの優先度と目標に沿って動きます。
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 10 }}>
+            {focusItems.map((f) => (
+              <li key={f.contactId} style={{ fontSize: 14, borderBottom: "1px solid #fde68a", paddingBottom: 8 }}>
+                <div>
+                  <Link href={`/contacts/${f.contactId}`} style={{ color: "#b45309", fontWeight: 600 }}>
+                    {f.name}
+                  </Link>
+                  {f.company && <small style={{ color: "#92400e", marginLeft: 6 }}>{f.company}</small>}
+                  {f.reasons.length > 0 && <span style={{ color: "#78350f", fontSize: 12, marginLeft: 8 }}>{f.reasons.join("・")}</span>}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 6 }}>
+                  <label style={{ fontSize: 12, color: "#92400e" }}>
+                    距離感{" "}
+                    <select
+                      value={f.distance}
+                      aria-label={`${f.name}さんの距離感`}
+                      onChange={(e) => void saveFocusDistance(f.contactId, Number(e.target.value))}
+                      style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #fcd34d", fontSize: 13 }}
+                    >
+                      <option value={1}>1 とても近い</option>
+                      <option value={2}>2 近い</option>
+                      <option value={3}>3 ふつう</option>
+                      <option value={4}>4 遠め</option>
+                      <option value={5}>5 年に一度</option>
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 12, color: "#92400e" }}>
+                    目標{" "}
+                    <select
+                      value={f.goal?.purpose ?? ""}
+                      aria-label={`${f.name}さんとの関係の目標`}
+                      onChange={(e) => void saveFocusGoal(f.contactId, e.target.value, f.goal?.targetDistance ?? Math.max(1, f.distance - 1))}
+                      style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #fcd34d", fontSize: 13 }}
+                    >
+                      <option value="">決めていない</option>
+                      <option value="business">仕事の間柄</option>
+                      <option value="friend">友人</option>
+                      <option value="romance">恋人・パートナー</option>
+                      <option value="family">家族</option>
+                      <option value="community">地域・コミュニティ</option>
+                      <option value="other">その他</option>
+                    </select>
+                  </label>
+                  {f.goal && (
+                    <label style={{ fontSize: 12, color: "#92400e" }}>
+                      目指す距離感{" "}
+                      <select
+                        value={f.goal.targetDistance}
+                        aria-label={`${f.name}さんと目指す距離感`}
+                        onChange={(e) => void saveFocusGoal(f.contactId, f.goal!.purpose, Number(e.target.value))}
+                        style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #fcd34d", fontSize: 13 }}
+                      >
+                        {[1, 2, 3, 4, 5].map((n) => (
+                          <option key={n} value={n}>{n}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <span style={{ flex: 1 }} />
+                  <button
+                    onClick={() => void saveFocusPreference(f.contactId, f.focusPreference === "pinned" ? null : "pinned")}
+                    style={{ background: "none", border: "1px solid #fcd34d", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontSize: 12, color: "#92400e" }}
+                  >
+                    {f.focusPreference === "pinned" ? "印を外す" : "大切と印を付ける"}
+                  </button>
+                  <button
+                    onClick={() => void saveFocusPreference(f.contactId, "excluded")}
+                    style={{ background: "none", border: "none", color: "#a16207", cursor: "pointer", fontSize: 12, textDecoration: "underline" }}
+                  >
+                    このリストから外す
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Fold>
+      )}
+
+      {careItems.length > 0 && (
+        <Fold k="cl21" title={<>あなたへの提案 ({careItems.length}件)</>} style={{ margin: "16px 0", border: "1px solid #a5b4fc", background: "#eef2ff", borderRadius: 12, padding: "12px 16px" }}>
+          <p style={{ fontSize: 13, color: "#3730a3", margin: "4px 0 8px" }}>
+            優先リストの方々について、次の一手をご用意しました。やるかどうかはあなたが選んでください。
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
-            {focusItems.map((f) => (
-              <li key={f.contactId} style={{ fontSize: 14 }}>
-                <Link href={`/contacts/${f.contactId}`} style={{ color: "#b45309", fontWeight: 600 }}>
-                  {f.name}
-                </Link>
-                {f.company && <small style={{ color: "#92400e", marginLeft: 6 }}>{f.company}</small>}
-                {f.reasons.length > 0 && <span style={{ color: "#78350f", fontSize: 12, marginLeft: 8 }}>{f.reasons.join("・")}</span>}
+            {careItems.map((s) => (
+              <li key={s.id} style={{ fontSize: 14 }}>
+                <div style={{ color: "#312e81", lineHeight: 1.7 }}>{s.body}</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 4, alignItems: "center" }}>
+                  {s.kind === "import_talk" ? (
+                    <button
+                      onClick={() => {
+                        setShowImport(true);
+                        setNotice("下の「追加する」の取り込み欄に、トーク履歴のファイルを置いてください");
+                      }}
+                      style={{ background: "none", border: "none", color: "#4338ca", cursor: "pointer", fontSize: 13, textDecoration: "underline", padding: 0 }}
+                    >
+                      取り込みへ進む
+                    </button>
+                  ) : (
+                    <Link href={`/contacts/${s.contactId}`} style={{ color: "#4338ca", fontSize: 13 }}>
+                      {s.kind === "reach_out" ? "お便りを考える" : s.kind === "meet" ? "日程のページを作る" : s.kind === "set_goal" ? "目標を決める" : "この方のページへ"}
+                    </Link>
+                  )}
+                  <button onClick={() => void resolveCare(s.id, "done")} style={{ background: "none", border: "none", color: "#166534", cursor: "pointer", fontSize: 12, padding: 0 }}>
+                    やりました
+                  </button>
+                  <button onClick={() => void resolveCare(s.id, "dismissed")} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 12, padding: 0 }}>
+                    今回は見送る
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

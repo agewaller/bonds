@@ -6,6 +6,7 @@ function person(over: Partial<FocusInput>): FocusInput {
     id: "x", name: "名無", company: null, title: null, hasEmail: false, hasPhone: false,
     distance: 4, source: "csv", interactionCount: 0, lastContactDays: null,
     giftExchangeCount: 0, hasFacets: false, hasDigest: false, hasGoal: false,
+    sourceHits: 1, focusPreference: null,
     ...over,
   };
 }
@@ -47,5 +48,26 @@ describe("pickFocusContacts (大切にしたい方々)", () => {
     const picks = pickFocusContacts(many, 20);
     expect(picks).toHaveLength(20);
     expect(picks[0]!.reasons.length).toBeLessThanOrEqual(3);
+  });
+
+  it("取り込みにくり返し登場する方は弱い名簿シグナルでも浮かび上がる", () => {
+    const picks = pickFocusContacts([
+      person({ id: "hits", name: "重複 登", sourceHits: 4, company: "会社", hasEmail: true }),
+      person({ id: "once", name: "一度 だけ", sourceHits: 1, company: "会社", hasEmail: true }),
+    ]);
+    expect(picks.map((p) => p.contactId)).toEqual(["hits"]);
+    expect(picks[0]!.reasons).toContain("取り込みにくり返し登場");
+  });
+
+  it("pinned は材料が無くても必ず載り、excluded はどれだけ強くても載らない", () => {
+    const picks = pickFocusContacts([
+      person({ id: "pin", name: "印 太郎", focusPreference: "pinned" }),
+      person({
+        id: "ex", name: "外 花子", focusPreference: "excluded",
+        hasGoal: true, interactionCount: 20, lastContactDays: 1, giftExchangeCount: 5,
+      }),
+    ]);
+    expect(picks.map((p) => p.contactId)).toEqual(["pin"]);
+    expect(picks[0]!.reasons).toContain("あなたが大切と印を付けた方");
   });
 });

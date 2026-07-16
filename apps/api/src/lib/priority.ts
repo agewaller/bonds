@@ -19,6 +19,8 @@ export type FocusInput = {
   hasFacets: boolean;
   hasDigest: boolean;
   hasGoal: boolean;
+  sourceHits: number; // 取込・名寄せで同じ方に行き当たった延べ回数 (くり返し登場)
+  focusPreference: string | null; // pinned / excluded / null (ユーザーの意思が最優先)
 };
 
 export type FocusPick = {
@@ -36,8 +38,19 @@ export function pickFocusContacts(people: FocusInput[], maxItems = 20): FocusPic
   const out: FocusPick[] = [];
   for (const p of people) {
     if (!p.name.trim()) continue;
+    // ユーザーが「外す」と決めた方は選ばない (意思が自動判定より常に強い)
+    if (p.focusPreference === "excluded") continue;
     let score = 0;
     const reasons: string[] = [];
+    if (p.focusPreference === "pinned") {
+      score += 100; // 閾値を必ず越え、先頭側に並ぶ
+      reasons.push("あなたが大切と印を付けた方");
+    }
+    // 名簿・SNS・トーク履歴など複数の取込にくり返し登場する = 生活圏で実際に接点が多い
+    if (p.sourceHits >= 2) {
+      score += Math.min(p.sourceHits - 1, 4) * 8;
+      reasons.push("取り込みにくり返し登場");
+    }
     // ユーザーの意思がいちばん強い信号: 目標を決めた・距離を近いと置いた・自分で登録した
     if (p.hasGoal) {
       score += 50;

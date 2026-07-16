@@ -175,6 +175,8 @@ model Contact {
   profileFacetsAt DateTime? @map("profile_facets_at") // 論点の最終更新
   goal            String? // 暗号化: 関係の目標 (用途・目標距離感・ねらい・設定時距離) の JSON。恋活婚活等の要配慮情報を含みうる
   source          String    @default("manual") // manual / csv / vcard / sns / eight / nengajo
+  sourceHits      Int       @default(1) @map("source_hits") // 取込・名寄せで同じ方に行き当たった延べ回数 (くり返し登場 = 重要の弱いシグナル)
+  focusPreference String?   @map("focus_preference") // pinned / excluded — 優先リストへのユーザーの意思 (null = 自動判定)
   state           String    @default("active") // active / archived (ソフト削除)
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
@@ -482,6 +484,24 @@ model TimeBooking {
   @@index([ownerUid, status])
   @@index([offerId, status])
   @@map("time_bookings")
+}
+
+/// あなたへの提案 (優先度に基づく自動ケアの受け箱)。毎時 sweep が優先リスト上位の方に
+/// ついて「次の一手」を提案として置き、ユーザーが実行/済み/見送りを選ぶ (最終判断はユーザー)。
+/// 本文は相手の状況に触れうるため暗号化。
+model CareSuggestion {
+  id        String   @id @default(uuid())
+  ownerUid  String   @map("owner_uid")
+  contactId String   @map("contact_id")
+  kind      String // import_talk / set_goal / reach_out / meet / capture_note
+  body      String? // 暗号化 (提案のひとこと)
+  status    String   @default("proposed") // proposed / done / dismissed
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([ownerUid, status])
+  @@index([contactId, kind, status])
+  @@map("care_suggestions")
 }
 
 /// 公人 (dd_subjects) と人脈 (contacts) の任意リンク (DESIGN-HANDOVER §2 の将来項目)。

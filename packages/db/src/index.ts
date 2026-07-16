@@ -49,6 +49,8 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
   // 日程調整の提案・時間の予約: 相手 (第三者) の名乗り・連絡先・メッセージは PII = 暗号化
   scheduleShareProposal: ["guestName", "guestContact", "message"],
   timeBooking: ["guestName", "guestContact", "message"],
+  // あなたへの提案: 本文は相手の状況に触れうる = 暗号化
+  careSuggestion: ["body"],
 };
 
 // data ({ field: value } / { field: { set: value } } / 配列) を in-place で暗号化。

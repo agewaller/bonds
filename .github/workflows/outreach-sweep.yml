@@ -43,3 +43,6 @@ jobs:
           # 時間の予約の取りこぼし再照合 (支払い済みの確定漏れを拾い、期限切れは枠を開放する)
           curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/schedule/reconcile-bookings?batch=20" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
+          # 優先度に基づく自動ケア (優先リスト上位の方への提案の受け箱 + 材料の自動整理)
+          curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/relationship/priority-care?batch=5" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"

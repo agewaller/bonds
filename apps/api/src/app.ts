@@ -31,6 +31,7 @@ import { firstMoves, type OnboardPerson } from "./lib/onboarding.js";
 import { recentMeetings, pickDailyQuestion, type DailyPerson } from "./lib/capture.js";
 import { parseGoalField, serializeGoal, goalPlan, validateGoalInput, PURPOSE_LABEL } from "./lib/goals.js";
 import { pickFocusContacts, type FocusInput } from "./lib/priority.js";
+import { planCareActions, shouldSuggestAgain, type CarePlanInput } from "./lib/care.js";
 import { contactMatches } from "./lib/search.js";
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
@@ -1027,6 +1028,9 @@ export function createApp(deps: AppDeps) {
     // 距離は最も近い (小さい) 値を採用
     const minDistance = Math.min(primary.distance, ...others.map((o) => o.distance));
     if (minDistance < primary.distance) fill.distance = minDistance;
+    // くり返し登場のカウントは合算する (別々の取込で作られた = それだけ登場した)
+    const mergedHits = others.reduce((n, o) => n + (o.sourceHits ?? 1), 0);
+    if (mergedHits > 0) fill.sourceHits = { increment: mergedHits };
     // プロフィール系は primary の既存 + others を改行でつなぐ (重複はそのまま許容し上限で切る)
     for (const f of appendKeys) {
       if (appended[f]!.length === 0) continue;
@@ -1142,6 +1146,17 @@ export function createApp(deps: AppDeps) {
     const toCreate: Array<Record<string, unknown>> = [];
     const pending = new Set<string>();
     const pendingUpdates = new Map<string, Record<string, unknown>>(); // 既存 (永続) 行の後追い更新をまとめる
+    // くり返し登場のカウント (優先リストの弱いシグナル)。新しい情報が無くても
+    // 「また出てきた」こと自体が生活圏での接点の多さを示す。
+    const hitCounts = new Map<string, number>();
+    const countHit = (target: Row) => {
+      if (pending.has(target.id)) {
+        (target as unknown as { sourceHits?: number }).sourceHits =
+          ((target as unknown as { sourceHits?: number }).sourceHits ?? 1) + 1;
+      } else {
+        hitCounts.set(target.id, (hitCounts.get(target.id) ?? 0) + 1);
+      }
+    };
 
     // 既存の相手に、空いている項目の補完とメモの書き足しだけ行う (上書きしない)。
     const enrichContact = (target: Row, r: ParsedContact): boolean => {
@@ -1180,6 +1195,7 @@ export function createApp(deps: AppDeps) {
       // 1) メール/電話が既存と一致 = 同一人物。名前が違っても結合する。
       const strong = (rk.email && byEmail.get(rk.email)) || (rk.phone && byPhone.get(rk.phone));
       if (strong) {
+        countHit(strong);
         if (enrichContact(strong, r)) enriched++;
         else skipped++;
         byName.set(name, strong.id); // この名前で来た接触記録は結合先にひもづける
@@ -1190,7 +1206,10 @@ export function createApp(deps: AppDeps) {
         sameName.add(name);
         if (nameCount.get(name) === 1) {
           const target = existing.find((e) => e.name === name);
-          if (target && enrichContact(target, r)) enriched++;
+          if (target) {
+            countHit(target);
+            if (enrichContact(target, r)) enriched++;
+          }
         }
         skipped++;
         continue;
@@ -1219,6 +1238,10 @@ export function createApp(deps: AppDeps) {
     // 既存行の補完はまとめて (件数は通常少ない)。
     for (const [id, data] of pendingUpdates) {
       await prisma.contact.update({ where: { id }, data: data as never });
+    }
+    // くり返し登場のカウントを反映 (補完の有無に関わらず数える)
+    for (const [id, hits] of hitCounts) {
+      await prisma.contact.update({ where: { id }, data: { sourceHits: { increment: hits } } });
     }
 
     let interactionsAdded = 0;
@@ -2171,11 +2194,12 @@ export function createApp(deps: AppDeps) {
   // 大切にしたい方々 — 取り込んだリストの大半は動かない名簿である前提で、実際の
   // やりとり・ユーザーの意思 (目標/距離/手入力)・記録の厚みから、関係を高める価値の
   // ありそうな方を選んで返す (AI 不要・毎回無料)。残りは消さずに静かに置いておく。
-  app.get("/api/relationship/focus", async (c) => {
-    const contacts = await prisma.contact.findMany({
-      where: { ownerUid: c.get("ownerUid"), state: "active" },
-    });
-    if (contacts.length === 0) return c.json({ items: [], total: 0 });
+  // 優先リストの計算 (focus 表示と自動ケア sweep の共用)。
+  const buildFocusPicks = async (ownerUid: string) => {
+    const contacts = await prisma.contact.findMany({ where: { ownerUid, state: "active" } });
+    const byId = new Map(contacts.map((x) => [x.id, x]));
+    const inter = new Map<string, { count: number; lastAt: Date | null }>();
+    if (contacts.length === 0) return { byId, inter, picks: [] as ReturnType<typeof pickFocusContacts>, total: 0 };
     const ids = contacts.map((x) => x.id);
     const [interactions, gifts, exchanges] = await Promise.all([
       prisma.contactInteraction.groupBy({
@@ -2187,13 +2211,13 @@ export function createApp(deps: AppDeps) {
       prisma.contactGift.groupBy({ by: ["contactId"], where: { contactId: { in: ids } }, _count: { contactId: true } }),
       prisma.exchange.groupBy({ by: ["contactId"], where: { contactId: { in: ids } }, _count: { contactId: true } }),
     ]);
-    const interBy = new Map(interactions.map((x) => [x.contactId, x]));
+    for (const x of interactions) inter.set(x.contactId, { count: x._count.contactId, lastAt: x._max.occurredAt });
     const giftBy = new Map(gifts.map((x) => [x.contactId, x._count.contactId]));
     const exBy = new Map(exchanges.map((x) => [x.contactId, x._count.contactId]));
     const now = Date.now();
     const people: FocusInput[] = contacts.map((ct) => {
-      const inter = interBy.get(ct.id);
-      const lastAt = inter?._max.occurredAt ?? null;
+      const it = inter.get(ct.id);
+      const lastAt = it?.lastAt ?? null;
       return {
         id: ct.id,
         name: ct.name,
@@ -2203,15 +2227,83 @@ export function createApp(deps: AppDeps) {
         hasPhone: !!ct.phone,
         distance: ct.distance,
         source: ct.source,
-        interactionCount: inter?._count.contactId ?? 0,
+        interactionCount: it?.count ?? 0,
         lastContactDays: lastAt ? Math.floor((now - lastAt.getTime()) / 86_400_000) : null,
         giftExchangeCount: (giftBy.get(ct.id) ?? 0) + (exBy.get(ct.id) ?? 0),
         hasFacets: !!ct.profileFacets,
         hasDigest: !!ct.profileDigest,
         hasGoal: !!ct.goal,
+        sourceHits: ct.sourceHits,
+        focusPreference: ct.focusPreference,
       };
     });
-    return c.json({ items: pickFocusContacts(people), total: contacts.length });
+    return { byId, inter, picks: pickFocusContacts(people), total: contacts.length };
+  };
+
+  app.get("/api/relationship/focus", async (c) => {
+    const { byId, picks, total } = await buildFocusPicks(c.get("ownerUid"));
+    // 優先リストはユーザーがその場でカスタムできるよう、距離感・目標・意思も同梱する
+    const items = picks.map((pick) => {
+      const ct = byId.get(pick.contactId)!;
+      const goal = parseGoalField(ct.goal);
+      return {
+        ...pick,
+        distance: ct.distance,
+        focusPreference: ct.focusPreference,
+        goal: goal ? { purpose: goal.purpose, targetDistance: goal.targetDistance } : null,
+      };
+    });
+    return c.json({ items, total });
+  });
+
+  // あなたへの提案 (優先度に基づく自動ケアの受け箱) — 一覧と、実行済み/見送りの記録
+  app.get("/api/relationship/care-suggestions", async (c) => {
+    const rows = await prisma.careSuggestion.findMany({
+      where: { ownerUid: c.get("ownerUid"), status: "proposed" },
+      orderBy: { createdAt: "desc" },
+      take: 30,
+    });
+    const contacts = await prisma.contact.findMany({
+      where: { id: { in: rows.map((r) => r.contactId) } },
+      select: { id: true, name: true },
+    });
+    const nameBy = new Map(contacts.map((x) => [x.id, x.name]));
+    return c.json({
+      items: rows
+        .filter((r) => nameBy.has(r.contactId))
+        .map((r) => ({ id: r.id, contactId: r.contactId, name: nameBy.get(r.contactId), kind: r.kind, body: r.body, createdAt: r.createdAt })),
+    });
+  });
+
+  app.post("/api/relationship/care-suggestions/:id/resolve", async (c) => {
+    const row = await prisma.careSuggestion.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid"), status: "proposed" },
+    });
+    if (!row) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<{ status?: string }>().catch(() => ({}) as { status?: string });
+    const status = b.status === "done" ? "done" : "dismissed";
+    await prisma.careSuggestion.update({ where: { id: row.id }, data: { status } });
+    return c.json({ status });
+  });
+
+  // 優先リストへのユーザーの意思: pinned (必ず載せる) / excluded (載せない) / null (自動判定)。
+  // 「外す」は消すことではない — 記録はそのまま残り、いつでも戻せる。
+  app.put("/api/contacts/:id/focus-preference", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<{ preference?: string | null }>().catch(() => ({}) as { preference?: string | null });
+    const preference = b.preference === "pinned" || b.preference === "excluded" ? b.preference : null;
+    await prisma.contact.update({ where: { id: contact.id }, data: { focusPreference: preference } });
+    // 外した方への未対応の提案は片付ける (見せ続けない)
+    if (preference === "excluded") {
+      await prisma.careSuggestion.updateMany({
+        where: { contactId: contact.id, status: "proposed" },
+        data: { status: "dismissed" },
+      });
+    }
+    return c.json({ focusPreference: preference });
   });
 
   // 会った直後のひとこと伺い — 直近に会った方で、まだその後のメモが無い方を挙げる。
@@ -3681,6 +3773,60 @@ export function createApp(deps: AppDeps) {
       enriched++;
     }
     return c.json({ enriched, skipped, candidates: candidates.length });
+  });
+
+  // 優先度に基づく自動ケア (毎時 sweep)。優先リスト上位の方について、
+  // ①「次の一手」の提案を受け箱に置く (AI 不要・無料。実行は常にユーザーが選ぶ)
+  // ② 論点整理がまだ無い方の材料を AI で整える (蓄積した記録のみ・web 検索なし =
+  //    相手の尊厳。月次キャップ 422 で停止・少数ずつ)。
+  app.post("/api/admin/relationship/priority-care", async (c) => {
+    const batch = Math.min(Math.max(parseInt(c.req.query("batch") ?? "5", 10) || 5, 1), 20);
+    const owners = await prisma.contact.groupBy({ by: ["ownerUid"], where: { state: "active" } });
+    let suggested = 0;
+    let enriched = 0;
+    let capped = false;
+    for (const o of owners) {
+      const { byId, inter, picks } = await buildFocusPicks(o.ownerUid);
+      for (const pick of picks) {
+        const ct = byId.get(pick.contactId)!;
+        const it = inter.get(ct.id);
+        const lastAt = it?.lastAt ?? null;
+        const input: CarePlanInput = {
+          contactId: ct.id,
+          name: ct.name,
+          distance: ct.distance,
+          hasGoal: !!ct.goal,
+          interactionCount: it?.count ?? 0,
+          lastContactDays: lastAt ? Math.floor((Date.now() - lastAt.getTime()) / 86_400_000) : null,
+          hasEmailOrPhone: !!(ct.email || ct.phone),
+          hasDigest: !!ct.profileDigest,
+          hasFacets: !!ct.profileFacets,
+        };
+        for (const action of planCareActions(input)) {
+          // 同じ提案の出し直しは、見送り/済みから一定期間そっとしておく (しつこくしない)
+          const prev = await prisma.careSuggestion.findFirst({
+            where: { contactId: ct.id, kind: action.kind },
+            orderBy: { updatedAt: "desc" },
+            select: { status: true, updatedAt: true },
+          });
+          if (!shouldSuggestAgain(prev)) continue;
+          await prisma.careSuggestion.create({
+            data: { ownerUid: o.ownerUid, contactId: ct.id, kind: action.kind, body: action.body },
+          });
+          suggested++;
+        }
+        // 材料の自動更新 (優先リストの方だけ・蓄積データのみ・web 検索なし)
+        if (generate && !capped && enriched < batch && !ct.profileFacets) {
+          const hasMaterial = !!(ct.company || ct.title || ct.notes || ct.personalProfile || ct.profileDigest);
+          if (hasMaterial) {
+            const r = await generateAndSaveFacets(ct.ownerUid, ct.id, "ja", { ownerUid: ct.ownerUid, isOwner: true });
+            if (r.ok) enriched++;
+            else if (r.status === 422) capped = true;
+          }
+        }
+      }
+    }
+    return c.json({ suggested, enriched, owners: owners.length, capped });
   });
 
   // 近況メモ・いただいた返信のワンタップ還流。書けば接触記録になり、論点整理にも
