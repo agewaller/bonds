@@ -31,6 +31,7 @@ import { firstMoves, type OnboardPerson } from "./lib/onboarding.js";
 import { recentMeetings, pickDailyQuestion, type DailyPerson } from "./lib/capture.js";
 import { parseGoalField, serializeGoal, goalPlan, validateGoalInput, PURPOSE_LABEL } from "./lib/goals.js";
 import { pickFocusContacts, type FocusInput } from "./lib/priority.js";
+import { contactMatches } from "./lib/search.js";
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { identityKeys, normalizeName } from "./lib/identity.js";
@@ -681,13 +682,28 @@ export function createApp(deps: AppDeps) {
     notes: typeof b.notes === "string" ? b.notes.trim() || null : null,
   });
 
+  // 一覧 + 検索。q があれば全員を対象に、名前・ふりがな・ローマ字・メール・電話・
+  // 会社・メモまで横断して探す (暗号化列は SQL で検索できないため、復号済みの行に
+  // アプリ内で照合する)。q が無いときは従来どおり近しい順の一覧 (500 件まで)。
   app.get("/api/contacts", async (c) => {
-    const contacts = await prisma.contact.findMany({
-      where: { ownerUid: c.get("ownerUid"), state: "active" },
-      orderBy: [{ distance: "asc" }, { name: "asc" }],
-      take: 500,
-    });
-    return c.json({ contacts });
+    const q = (c.req.query("q") ?? "").trim();
+    if (q) {
+      const all = await prisma.contact.findMany({
+        where: { ownerUid: c.get("ownerUid"), state: "active" },
+        orderBy: [{ distance: "asc" }, { name: "asc" }],
+      });
+      const contacts = all.filter((ct) => contactMatches(q, ct)).slice(0, 100);
+      return c.json({ contacts, total: all.length });
+    }
+    const [contacts, total] = await Promise.all([
+      prisma.contact.findMany({
+        where: { ownerUid: c.get("ownerUid"), state: "active" },
+        orderBy: [{ distance: "asc" }, { name: "asc" }],
+        take: 500,
+      }),
+      prisma.contact.count({ where: { ownerUid: c.get("ownerUid"), state: "active" } }),
+    ]);
+    return c.json({ contacts, total });
   });
 
   app.post("/api/contacts", async (c) => {

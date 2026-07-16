@@ -394,3 +394,35 @@ describe("名寄せ (identity resolution)", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("連絡先の検索 (GET /api/contacts?q= 全員が対象)", () => {
+  it("名前・ふりがな・ローマ字・メール・電話・会社で見つかり、総数も返る", async () => {
+    await prisma.contact.create({
+      data: {
+        ownerUid: "owner", name: "田中 太郎", furigana: "たなか たろう",
+        company: "エイト商事", email: "taro@example.co.jp", phone: "090-1234-5678",
+      },
+    });
+    await prisma.contact.create({ data: { ownerUid: "owner", name: "渋沢 栄一", furigana: "しぶさわ えいいち" } });
+    await prisma.contact.create({ data: { ownerUid: "owner", name: "無関係 三郎" } });
+
+    const q = async (word: string) =>
+      (await (await app.request(`/api/contacts?q=${encodeURIComponent(word)}`, { headers: H })).json()) as {
+        contacts: Array<{ name: string }>;
+        total: number;
+      };
+
+    expect((await q("たなか")).contacts.map((x) => x.name)).toEqual(["田中 太郎"]);
+    expect((await q("shibusawa")).contacts.map((x) => x.name)).toEqual(["渋沢 栄一"]);
+    expect((await q("taro@example")).contacts.map((x) => x.name)).toEqual(["田中 太郎"]);
+    expect((await q("09012345678")).contacts.map((x) => x.name)).toEqual(["田中 太郎"]);
+    expect((await q("エイト商事")).contacts.map((x) => x.name)).toEqual(["田中 太郎"]);
+    const miss = await q("該当なしのことば");
+    expect(miss.contacts).toEqual([]);
+    expect(miss.total).toBe(3);
+
+    // q なしの一覧にも総数が付く
+    const list = await (await app.request("/api/contacts", { headers: H })).json();
+    expect(list.total).toBe(3);
+  });
+});

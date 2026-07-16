@@ -133,9 +133,24 @@ export default function ContactsPage() {
   const [focusItems, setFocusItems] = useState<
     { contactId: string; name: string; company: string | null; reasons: string[] }[]
   >([]);
-  // みなさんの一覧は既定で畳む (大半は動かない名簿のため)。名前検索でいつでも探せる
+  // みなさんの一覧は既定で畳む (大半は動かない名簿のため)。検索でいつでも探せる
   const [showAll, setShowAll] = useState(false);
   const [nameFilter, setNameFilter] = useState("");
+  // サーバ検索 (全員が対象。名前・ふりがな・ローマ字・メール・電話・会社・メモ)。
+  // 一覧 API は 500 件までのため、検索は必ずサーバに聞く。
+  const [searchResults, setSearchResults] = useState<Contact[] | null>(null);
+  const [totalContacts, setTotalContacts] = useState<number | null>(null);
+  useEffect(() => {
+    if (!nameFilter.trim()) {
+      setSearchResults(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const res = await apiFetch(`contacts?q=${encodeURIComponent(nameFilter.trim())}`);
+      if (res.ok) setSearchResults((await res.json()).contacts ?? []);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [nameFilter]);
   // 関係の目標 (目標を持つ方の、差と次の一手)。AI 不要なので自動で読み込む。
   const [goalItems, setGoalItems] = useState<
     { contactId: string; name: string; purposeLabel: string; current: number; target: number; plan: { paceLabel: string; nextMove: string; overdue: boolean; progress: number } }[]
@@ -201,7 +216,11 @@ export default function ContactsPage() {
       apiFetch("contacts/duplicates"),
       apiFetch("exchanges"),
     ]);
-    if (cRes.ok) setContacts((await cRes.json()).contacts);
+    if (cRes.ok) {
+      const cBody = await cRes.json();
+      setContacts(cBody.contacts);
+      setTotalContacts(typeof cBody.total === "number" ? cBody.total : null);
+    }
     if (sRes.ok) setSummary(await sRes.json());
     if (pRes.ok) setProgress(await pRes.json());
     if (gRes.ok) setGiftOccasions((await gRes.json()).occasions ?? []);
@@ -1574,12 +1593,12 @@ export default function ContactsPage() {
         )}
       </Fold>
 
-      <Fold k="cl20" title={<>{t("everyone")} ({contacts.length})</>}>
+      <Fold k="cl20" title={<>{t("everyone")} ({totalContacts ?? contacts.length})</>}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
           <input
             value={nameFilter}
             onChange={(e) => setNameFilter(e.target.value)}
-            placeholder="お名前や会社で探す"
+            placeholder="お名前・ふりがな・ローマ字・メール・電話・会社などで探す"
             style={{ flex: 1, minWidth: 200, padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14 }}
           />
           {contacts.length > 30 && !nameFilter && (
@@ -1593,16 +1612,17 @@ export default function ContactsPage() {
         </div>
         {contacts.length > 30 && !showAll && !nameFilter && (
           <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 8px" }}>
-            人数が多いため一覧は畳んでいます。上の「大切にしたい方々」から開くか、お名前で探してください。全員の記録はそのまま残っています。
+            人数が多いため一覧は畳んでいます。上の「大切にしたい方々」から開くか、検索してください。全員の記録はそのまま残っています。
+          </p>
+        )}
+        {nameFilter.trim() && searchResults && (
+          <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 8px" }}>
+            全員の中から {searchResults.length} 名が見つかりました{searchResults.length >= 100 ? " (多いため先頭の100名まで)" : ""}
           </p>
         )}
         <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 6 }}>
-          {(nameFilter
-            ? contacts.filter(
-                (c) =>
-                  c.name.toLowerCase().includes(nameFilter.toLowerCase()) ||
-                  (c.company ?? "").toLowerCase().includes(nameFilter.toLowerCase()),
-              )
+          {(nameFilter.trim()
+            ? (searchResults ?? [])
             : contacts.length > 30 && !showAll
               ? []
               : contacts
