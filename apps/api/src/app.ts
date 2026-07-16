@@ -29,6 +29,7 @@ import { nominateIntroPairs, type IntroPerson } from "./lib/introductions.js";
 import { detectDrift } from "./lib/drift.js";
 import { firstMoves, type OnboardPerson } from "./lib/onboarding.js";
 import { recentMeetings, pickDailyQuestion, type DailyPerson } from "./lib/capture.js";
+import { parseGoalField, serializeGoal, goalPlan, validateGoalInput, PURPOSE_LABEL } from "./lib/goals.js";
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { identityKeys, normalizeName } from "./lib/identity.js";
@@ -899,7 +900,14 @@ export function createApp(deps: AppDeps) {
       profileFacets: contact.profileFacets,
       profileDigest: contact.profileDigest,
     });
-    return c.json({ contact, interactions, gifts, linkedSubjects, relationshipScore });
+    // 関係の目標と、現状との差から出す接触ペース・次の一手
+    const goal = parseGoalField(contact.goal);
+    const lastContactDays =
+      interactions.length > 0
+        ? Math.floor((Date.now() - interactions[0]!.occurredAt.getTime()) / 86_400_000)
+        : null;
+    const plan = goal ? goalPlan(goal, { distance: contact.distance, lastContactDays }) : null;
+    return c.json({ contact, interactions, gifts, linkedSubjects, relationshipScore, goal, goalPlan: plan });
   });
 
   app.put("/api/contacts/:id", async (c) => {
@@ -2453,6 +2461,12 @@ export function createApp(deps: AppDeps) {
       contact.personalProfile ? `近況・状況: ${contact.personalProfile}` : "",
       contact.valuesProfile ? `価値観・大切にしていること: ${contact.valuesProfile}` : "",
       contact.notes ? `メモ: ${contact.notes}` : "",
+      (() => {
+        // 関係の目標を接地する。「対応を考える」や発信文面が目標に向かって一貫する
+        const goal = parseGoalField(contact.goal);
+        if (!goal) return "";
+        return `この関係の目標 (ユーザーが設定): ${PURPOSE_LABEL[goal.purpose]}の間柄として距離感 ${goal.targetDistance} を目指す (いまは ${contact.distance})${goal.note ? `。ねらい: ${goal.note}` : ""}。提案はこの目標に沿わせ、相手の気持ちとペースを尊重した進め方にすること`;
+      })(),
       contact.profileDigest ? `いまのこの方 (蓄積した記録からの見立て): ${contact.profileDigest}` : "",
       (() => {
         const accounts = parseSnsField(contact.sns);
@@ -2948,6 +2962,82 @@ export function createApp(deps: AppDeps) {
       { interaction: { id: interaction.id, type: interaction.type, occurredAt: interaction.occurredAt }, facetsUpdated },
       201,
     );
+  });
+
+  // 関係の目標 — 「この方とはどこまで近づきたいか」を用途 (お仕事・友人・恋活婚活・家族・
+  // 地域) とあわせて設定し、現状との差から接触ペースと次の一手を出す。進捗は設定時の
+  // 距離を基準に測る。最終判断は常にユーザー (目標はいつでも変更・削除できる)。
+  app.put("/api/contacts/:id/goal", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const input = validateGoalInput(b);
+    if (!input) {
+      return c.json({ error: "invalid_goal", detail: "用途と目標の距離感 (1〜5) を選んでください" }, 400);
+    }
+    // 進捗の基準 (設定時の距離) は、目標を微調整しても引き継ぐ
+    const existing = parseGoalField(contact.goal);
+    const goal = {
+      ...input,
+      setAt: existing?.setAt || new Date().toISOString(),
+      startDistance: existing?.startDistance ?? contact.distance,
+    };
+    await prisma.contact.update({ where: { id: contact.id }, data: { goal: serializeGoal(goal) } });
+    const last = await prisma.contactInteraction.findFirst({
+      where: { contactId: contact.id },
+      orderBy: { occurredAt: "desc" },
+    });
+    const lastContactDays = last ? Math.floor((Date.now() - last.occurredAt.getTime()) / 86_400_000) : null;
+    return c.json({ goal, plan: goalPlan(goal, { distance: contact.distance, lastContactDays }) });
+  });
+
+  app.delete("/api/contacts/:id/goal", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    await prisma.contact.update({ where: { id: contact.id }, data: { goal: null } });
+    return c.json({ ok: true });
+  });
+
+  // 目標を持つ関係の一覧 — 現状との差・接触ペースの遅れ・次の一手を毎回無料で出す。
+  app.get("/api/relationship/goals", async (c) => {
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid: c.get("ownerUid"), state: "active", goal: { not: null } },
+      take: 100,
+    });
+    if (contacts.length === 0) return c.json({ items: [] });
+    const lastByContact = await prisma.contactInteraction.groupBy({
+      by: ["contactId"],
+      where: { contactId: { in: contacts.map((x) => x.id) } },
+      _max: { occurredAt: true },
+    });
+    const lastMap = new Map(lastByContact.map((x) => [x.contactId, x._max.occurredAt]));
+    const items = contacts
+      .map((ct) => {
+        const goal = parseGoalField(ct.goal);
+        if (!goal) return null;
+        const lastAt = lastMap.get(ct.id) ?? null;
+        const lastContactDays = lastAt ? Math.floor((Date.now() - lastAt.getTime()) / 86_400_000) : null;
+        const plan = goalPlan(goal, { distance: ct.distance, lastContactDays });
+        return {
+          contactId: ct.id,
+          name: ct.name,
+          purpose: goal.purpose,
+          purposeLabel: PURPOSE_LABEL[goal.purpose],
+          current: ct.distance,
+          target: goal.targetDistance,
+          note: goal.note,
+          plan,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      // 間が空いている方 → 差が大きい方、の順で気づけるように
+      .sort((a, b) => Number(b.plan.overdue) - Number(a.plan.overdue) || b.plan.gap - a.plan.gap)
+      .slice(0, 20);
+    return c.json({ items });
   });
 
   // 会社の最近の動き — 相手個人ではなく所属先の公開ニュースを検索して要約し、

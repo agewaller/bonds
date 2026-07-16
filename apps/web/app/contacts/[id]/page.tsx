@@ -186,6 +186,14 @@ export default function ContactDetailPage() {
   const [quickKind, setQuickKind] = useState("note");
   // 会社の最近の動き (所属先の公開ニュースの要約 + 連絡のきっかけ)
   const [companyNews, setCompanyNews] = useState<{ news: string; hook: string; sources: string[]; detail?: string } | null>(null);
+  // 関係の目標 (用途 × 目標距離感 → ペースと次の一手)
+  type GoalPlanView = { direction: string; paceLabel: string; nextMove: string; overdue: boolean; progress: number; gap: number };
+  const [goal, setGoal] = useState<{ purpose: string; targetDistance: number; note: string } | null>(null);
+  const [goalPlanView, setGoalPlanView] = useState<GoalPlanView | null>(null);
+  const [goalEdit, setGoalEdit] = useState(false);
+  const [gPurpose, setGPurpose] = useState("business");
+  const [gTarget, setGTarget] = useState("3");
+  const [gNote, setGNote] = useState("");
 
   const load = useCallback(async () => {
     const res = await apiFetch(`contacts/${id}`);
@@ -199,6 +207,13 @@ export default function ContactDetailPage() {
     setGifts(body.gifts ?? []);
     setLinkedSubjects(body.linkedSubjects ?? []);
     setRelScore(body.relationshipScore ?? null);
+    setGoal(body.goal ?? null);
+    setGoalPlanView(body.goalPlan ?? null);
+    if (body.goal) {
+      setGPurpose(body.goal.purpose);
+      setGTarget(String(body.goal.targetDistance));
+      setGNote(body.goal.note ?? "");
+    }
     const exRes = await apiFetch(`contacts/${id}/exchanges`);
     if (exRes.ok) {
       const exBody = await exRes.json();
@@ -451,6 +466,113 @@ export default function ContactDetailPage() {
           )}
         </section>
       )}
+
+      <section style={{ marginTop: 20, border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <h2 style={{ fontSize: 18, margin: 0 }}>この関係の目標</h2>
+          {goal && !goalEdit && (
+            <button
+              style={{ padding: "4px 10px", background: "transparent", color: "#7c3aed", border: "1px solid #ddd6fe", borderRadius: 8, cursor: "pointer", fontSize: 12 }}
+              onClick={() => setGoalEdit(true)}
+            >
+              目標を変える
+            </button>
+          )}
+        </div>
+        {!goal && !goalEdit && (
+          <div>
+            <p style={{ fontSize: 13, color: "#6b21a8", margin: "6px 0 8px" }}>
+              この方とどこまで近づきたいか (お仕事・友人・恋活婚活・家族など) を決めておくと、
+              いまの間合いとの差から、連絡のペースと次の一手をご提案し続けます。
+            </p>
+            <button style={btn(true)} onClick={() => setGoalEdit(true)}>目標を決める</button>
+          </div>
+        )}
+        {goal && !goalEdit && goalPlanView && (
+          <div style={{ marginTop: 8 }}>
+            <p style={{ margin: 0, fontSize: 14, color: "#334155" }}>
+              {{ business: "お仕事", friend: "友人・プライベート", romance: "恋活・婚活", family: "家族", community: "地域・コミュニティ", other: "その他" }[goal.purpose] ?? goal.purpose}
+              の間柄として、距離感 {contact.distance} から {goal.targetDistance} ({DISTANCE_LABEL[goal.targetDistance] ?? ""}) へ。
+              連絡の目安は{goalPlanView.paceLabel}。
+              {goalPlanView.progress > 0 && ` 設定時から ${goalPlanView.progress} 段階、目標に近づいています。`}
+            </p>
+            <p style={{ margin: "8px 0 0", fontSize: 14, color: "#0f766e", lineHeight: 1.8, background: "#fff", border: "1px solid #e9d5ff", borderRadius: 10, padding: "8px 12px" }}>
+              次の一手: {goalPlanView.nextMove}
+            </p>
+            {goal.note && <p style={{ margin: "6px 0 0", fontSize: 13, color: "#6b21a8" }}>ねらい: {goal.note}</p>}
+          </div>
+        )}
+        {goalEdit && (
+          <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <select value={gPurpose} onChange={(e) => setGPurpose(e.target.value)} style={{ padding: "6px 8px", border: "1px solid #ddd6fe", borderRadius: 8, fontSize: 13 }}>
+                <option value="business">お仕事</option>
+                <option value="friend">友人・プライベート</option>
+                <option value="romance">恋活・婚活</option>
+                <option value="family">家族</option>
+                <option value="community">地域・コミュニティ</option>
+                <option value="other">その他</option>
+              </select>
+              <select value={gTarget} onChange={(e) => setGTarget(e.target.value)} style={{ padding: "6px 8px", border: "1px solid #ddd6fe", borderRadius: 8, fontSize: 13 }}>
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <option key={n} value={n}>目標の距離感 {n} ({DISTANCE_LABEL[n]})</option>
+                ))}
+              </select>
+            </div>
+            <input
+              value={gNote}
+              onChange={(e) => setGNote(e.target.value)}
+              placeholder="ねらい (任意。例: 来期の協業につなげたい / まずは友人として仲良くなりたい)"
+              style={{ padding: "6px 8px", border: "1px solid #ddd6fe", borderRadius: 8, fontSize: 13 }}
+            />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                style={btn(true)}
+                disabled={!!busy}
+                onClick={async () => {
+                  const body = await call(
+                    `contacts/${contact.id}/goal`,
+                    { method: "PUT", body: JSON.stringify({ purpose: gPurpose, targetDistance: Number(gTarget), note: gNote }) },
+                    "目標を決めました。ここから先は、差を縮める一手をご提案し続けます",
+                  );
+                  if (body) {
+                    setGoal(body.goal);
+                    setGoalPlanView(body.plan);
+                    setGoalEdit(false);
+                  }
+                }}
+              >
+                この目標にする
+              </button>
+              <button
+                style={{ padding: "8px 14px", background: "transparent", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+                onClick={() => setGoalEdit(false)}
+              >
+                やめる
+              </button>
+              {goal && (
+                <button
+                  style={{ padding: "8px 14px", background: "transparent", color: "#b91c1c", border: "1px solid #fecaca", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+                  disabled={!!busy}
+                  onClick={async () => {
+                    const body = await call(`contacts/${contact.id}/goal`, { method: "DELETE" }, "目標を外しました");
+                    if (body) {
+                      setGoal(null);
+                      setGoalPlanView(null);
+                      setGoalEdit(false);
+                    }
+                  }}
+                >
+                  目標を外す
+                </button>
+              )}
+            </div>
+            <p style={{ margin: 0, fontSize: 12, color: "#6b21a8" }}>
+              目標はいつでも変えられます。どの用途でも、相手の気持ちとペースを尊重した進め方だけをご提案します。
+            </p>
+          </div>
+        )}
+      </section>
 
       <section style={{ marginTop: 20, border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
         <h2 style={{ fontSize: 18, margin: "0 0 4px" }}>近況メモ・いただいた返信を残す</h2>

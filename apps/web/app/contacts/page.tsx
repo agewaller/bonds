@@ -128,6 +128,10 @@ export default function ContactsPage() {
   const [recentMet, setRecentMet] = useState<{ contactId: string; name: string; metAt: string }[]>([]);
   const [metNotes, setMetNotes] = useState<Record<string, string>>({});
   const [metSaved, setMetSaved] = useState<Record<string, boolean>>({});
+  // 関係の目標 (目標を持つ方の、差と次の一手)。AI 不要なので自動で読み込む。
+  const [goalItems, setGoalItems] = useState<
+    { contactId: string; name: string; purposeLabel: string; current: number; target: number; plan: { paceLabel: string; nextMove: string; overdue: boolean; progress: number } }[]
+  >([]);
   // 1日1問 (今日のひとこと質問)。定型なので AI 不要・毎回無料。
   const [dailyQ, setDailyQ] = useState<{ contactId: string; name: string; question: string } | null>(null);
   const [dailyAnswer, setDailyAnswer] = useState("");
@@ -203,6 +207,8 @@ export default function ContactsPage() {
     if (fmRes.ok) setFirstMoves((await fmRes.json()).moves ?? []);
     const rmRes = await apiFetch("relationship/recent-meetings");
     if (rmRes.ok) setRecentMet((await rmRes.json()).items ?? []);
+    const glRes = await apiFetch("relationship/goals");
+    if (glRes.ok) setGoalItems((await glRes.json()).items ?? []);
     const dqRes = await apiFetch("relationship/daily-question");
     if (dqRes.ok) setDailyQ((await dqRes.json()).question ?? null);
   }, []);
@@ -832,6 +838,30 @@ export default function ContactsPage() {
                   {d.name}
                 </Link>
                 <span style={{ color: "#7c2d12" }}> — {d.reason}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {goalItems.length > 0 && (
+        <section style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
+          <h2 style={{ fontSize: 17, marginTop: 0 }}>目標に向かっている関係</h2>
+          <p style={{ fontSize: 13, color: "#6b21a8", margin: "4px 0 8px" }}>
+            目標を決めた方との、いまの間合いと次の一手です。間が空いてきた方から並べています。
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
+            {goalItems.map((g) => (
+              <li key={g.contactId} style={{ fontSize: 14 }}>
+                <Link href={`/contacts/${g.contactId}`} style={{ color: "#7c3aed", fontWeight: 600 }}>
+                  {g.name}
+                </Link>
+                <span style={{ color: "#6b21a8", fontSize: 12, marginLeft: 6 }}>
+                  {g.purposeLabel}・いま {g.current} → 目標 {g.target}
+                  {g.plan.progress > 0 ? `・${g.plan.progress} 段階前進` : ""}
+                  {g.plan.overdue ? "・間が空いています" : ""}
+                </span>
+                <div style={{ color: "#4c1d95", marginTop: 2 }}>{g.plan.nextMove}</div>
               </li>
             ))}
           </ul>

@@ -28,6 +28,8 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
     "profileDigest",
     // 記録から整理した論点 (JSON) も人物情報そのもの = 暗号化
     "profileFacets",
+    // 関係の目標 (用途・目標距離感・ねらい)。恋活婚活など要配慮の意図を含みうる = 暗号化
+    "goal",
   ],
   contactInteraction: ["notes"],
   contactGift: ["notes"],
