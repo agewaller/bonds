@@ -3780,7 +3780,10 @@ export function createApp(deps: AppDeps) {
   // ② 論点整理がまだ無い方の材料を AI で整える (蓄積した記録のみ・web 検索なし =
   //    相手の尊厳。月次キャップ 422 で停止・少数ずつ)。
   app.post("/api/admin/relationship/priority-care", async (c) => {
-    const batch = Math.min(Math.max(parseInt(c.req.query("batch") ?? "5", 10) || 5, 1), 20);
+    // batch = AI で材料を整える人数の上限。0 なら提案だけ (AI なし・数秒で返る。監査や
+    // 動作確認はこちらを使う。本番の実データでは AI 整理を含むと数分かかりうるため)。
+    const rawBatch = parseInt(c.req.query("batch") ?? "5", 10);
+    const batch = Math.min(Math.max(Number.isNaN(rawBatch) ? 5 : rawBatch, 0), 20);
     const owners = await prisma.contact.groupBy({ by: ["ownerUid"], where: { state: "active" } });
     let suggested = 0;
     let enriched = 0;
@@ -3816,7 +3819,7 @@ export function createApp(deps: AppDeps) {
           suggested++;
         }
         // 材料の自動更新 (優先リストの方だけ・蓄積データのみ・web 検索なし)
-        if (generate && !capped && enriched < batch && !ct.profileFacets) {
+        if (batch > 0 && generate && !capped && enriched < batch && !ct.profileFacets) {
           const hasMaterial = !!(ct.company || ct.title || ct.notes || ct.personalProfile || ct.profileDigest);
           if (hasMaterial) {
             const r = await generateAndSaveFacets(ct.ownerUid, ct.id, "ja", { ownerUid: ct.ownerUid, isOwner: true });

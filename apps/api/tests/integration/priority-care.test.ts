@@ -129,6 +129,26 @@ describe("優先度に基づく自動ケア (POST /api/admin/relationship/priori
     expect(again).toHaveLength(0);
   });
 
+  it("batch=0 は提案だけを置き、AI を一切呼ばない (監査・動作確認用の速い経路)", async () => {
+    let aiCalls = 0;
+    const app = createApp({
+      prisma,
+      generate: async () => {
+        aiCalls++;
+        return { text: "{}", model: "claude-sonnet-5", inputTokens: 1, outputTokens: 1 };
+      },
+    });
+    const ct = await seedFocusContact();
+    // 材料 (会社) を足して、AI 整理の対象になりうる状態にしておく
+    await prisma.contact.update({ where: { id: ct.id }, data: { company: "商事会社" } });
+    const r = await (
+      await app.request("/api/admin/relationship/priority-care?batch=0", { method: "POST", headers: H })
+    ).json();
+    expect(r.suggested).toBeGreaterThan(0);
+    expect(r.enriched).toBe(0);
+    expect(aiCalls).toBe(0);
+  });
+
   it("excluded にすると未対応の提案も片付き、以後は対象にならない", async () => {
     const app = makeApp();
     const ct = await seedFocusContact();
