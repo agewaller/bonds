@@ -78,6 +78,10 @@ export type ExtractedFileText = { file: string; kind: string; text: string };
 // 名刺・名簿・スクショなどの画像。Vision で人物を読み取るため base64 で持つ。
 export type ExtractedFileImage = { file: string; base64: string; mediaType: string };
 
+// トーク履歴 (LINE/WhatsApp) の生本文。構造化パースは接触日しか拾わないため、
+// 中身 (相手の近況) を AI で整理する呼び出し側のために原文も返す。
+export type ExtractedTalk = { file: string; partner: string; text: string };
+
 export type FileImportResult = ParsedImport & {
   // どのファイル/形式から何名拾えたか (画面のフィードバック用)
   foundIn: Array<{ file: string; contacts: number }>;
@@ -85,10 +89,21 @@ export type FileImportResult = ParsedImport & {
   texts: ExtractedFileText[];
   // 画像 (名刺・名簿・スクショ) — Vision で人物を読み取る
   images: ExtractedFileImage[];
+  // トーク履歴の生本文 (近況整理用)。新しい側を優先して末尾を切り出す
+  talks: ExtractedTalk[];
 };
 
 const MAX_TEXT_FILES = 30; // 1 取込 (ZIP) から AI に回すファイル数の上限
 const MAX_IMAGE_FILES = 10; // 1 取込から Vision に回す画像数の上限 (コスト保護)
+const MAX_TALK_FILES = 5; // 1 取込から近況整理に回すトーク数の上限 (コスト保護)
+const MAX_TALK_CHARS = 15000; // 1 トークから AI に渡す文字数 (新しい末尾を優先)
+
+// トーク履歴のパース結果か (先頭の相手が line/whatsapp 由来か) を見て原文を残す。
+function talkOf(r: ParsedImport, file: string, text: string): ExtractedTalk | null {
+  const first = r.contacts[0];
+  if (!first || (first.source !== "line" && first.source !== "whatsapp")) return null;
+  return { file, partner: first.name, text: text.slice(-MAX_TALK_CHARS) };
+}
 
 // OOXML (docx/xlsx/pptx) も ZIP 容器のため、SNS アーカイブ ZIP と取り違えない。
 // [Content_Types].xml は OOXML に必ずある。
@@ -108,14 +123,14 @@ export function parseImportFile(bytes: Uint8Array, filename?: string): FileImpor
         filter: (f) => f.originalSize <= MAX_ZIP_ENTRY_BYTES && !/(^|\/)(__MACOSX|\.)/.test(f.name),
       });
     } catch {
-      return { contacts: [], interactions: [], foundIn: [], texts: [], images: [] };
+      return { contacts: [], interactions: [], foundIn: [], texts: [], images: [], talks: [] };
     }
     // docx/xlsx/pptx がそのまま置かれたケース: ZIP としてではなく 1 文書として読む
     if (looksLikeOoxml(entries)) {
       const t = extractFileText(bytes, name);
       return {
         contacts: [], interactions: [], foundIn: [],
-        texts: t ? [{ file: name, kind: t.kind, text: t.text }] : [], images: [],
+        texts: t ? [{ file: name, kind: t.kind, text: t.text }] : [], images: [], talks: [],
       };
     }
     const contacts: ParsedContact[] = [];
@@ -123,6 +138,7 @@ export function parseImportFile(bytes: Uint8Array, filename?: string): FileImpor
     const foundIn: FileImportResult["foundIn"] = [];
     const texts: ExtractedFileText[] = [];
     const images: ExtractedFileImage[] = [];
+    const talks: ExtractedTalk[] = [];
     let textChars = 0;
     for (const [path, data] of Object.entries(entries)) {
       const r = parseZipEntry(path, data);
@@ -130,6 +146,10 @@ export function parseImportFile(bytes: Uint8Array, filename?: string): FileImpor
         contacts.push(...r.contacts);
         interactions.push(...r.interactions);
         foundIn.push({ file: path, contacts: r.contacts.length });
+        if (talks.length < MAX_TALK_FILES) {
+          const talk = talkOf(r, path, decode(data));
+          if (talk) talks.push(talk);
+        }
         continue;
       }
       // 画像 (名刺・名簿・スクショ) は Vision へ
@@ -146,24 +166,25 @@ export function parseImportFile(bytes: Uint8Array, filename?: string): FileImpor
         textChars += t.text.length;
       }
     }
-    return { contacts, interactions, foundIn, texts, images };
+    return { contacts, interactions, foundIn, texts, images, talks };
   }
   // 単一の画像ファイル (名刺・名簿・スクショの写真) は Vision へ
   const mediaType = detectImageMediaType(bytes, name);
   if (mediaType) {
     const images = bytes.length <= MAX_IMAGE_BYTES ? [{ file: name, base64: toBase64(bytes), mediaType }] : [];
-    return { contacts: [], interactions: [], foundIn: [], texts: [], images };
+    return { contacts: [], interactions: [], foundIn: [], texts: [], images, talks: [] };
   }
   const t = extractFileText(bytes, name);
   // Office 文書・PDF・メールなど「テキスト化してから判定」する形式は抽出後の本文でも構造化を試す
   const structured = t && (t.kind === "excel" || t.kind === "text") ? parseImportText(t.text, filename) : null;
   const r = structured && structured.contacts.length > 0 ? structured : parseImportText(decode(bytes), filename);
   if (r.contacts.length > 0) {
-    return { ...r, foundIn: [{ file: name, contacts: r.contacts.length }], texts: [], images: [] };
+    const talk = talkOf(r, name, structured && r === structured ? t!.text : decode(bytes));
+    return { ...r, foundIn: [{ file: name, contacts: r.contacts.length }], texts: [], images: [], talks: talk ? [talk] : [] };
   }
   return {
     contacts: [], interactions: [], foundIn: [],
-    texts: t ? [{ file: name, kind: t.kind, text: t.text }] : [], images: [],
+    texts: t ? [{ file: name, kind: t.kind, text: t.text }] : [], images: [], talks: [],
   };
 }
 

@@ -181,6 +181,11 @@ export default function ContactDetailPage() {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // 近況メモ・いただいた返信の還流 (書けば接触記録 + 論点整理の自動更新)
+  const [quickText, setQuickText] = useState("");
+  const [quickKind, setQuickKind] = useState("note");
+  // 会社の最近の動き (所属先の公開ニュースの要約 + 連絡のきっかけ)
+  const [companyNews, setCompanyNews] = useState<{ news: string; hook: string; sources: string[]; detail?: string } | null>(null);
 
   const load = useCallback(async () => {
     const res = await apiFetch(`contacts/${id}`);
@@ -440,6 +445,91 @@ export default function ContactDetailPage() {
               {playbook.caution && (
                 <p style={{ marginTop: 8, fontSize: 13, color: "#92400e", background: "#fffbeb", borderRadius: 8, padding: "6px 10px" }}>
                   {playbook.caution}
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      <section style={{ marginTop: 20, border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
+        <h2 style={{ fontSize: 18, margin: "0 0 4px" }}>近況メモ・いただいた返信を残す</h2>
+        <p style={{ fontSize: 13, color: "#075985", margin: "0 0 8px" }}>
+          会ったときのひとことや、いただいた返信をそのまま貼り付けてください。接触の記録になり、この方の論点整理にも自動で反映されます。
+        </p>
+        <textarea
+          value={quickText}
+          onChange={(e) => setQuickText(e.target.value)}
+          rows={3}
+          placeholder="例: 久しぶりにお会いした。秋に部署が変わるかもしれないとのこと。腰の調子はだいぶ良いそう"
+          style={{ width: "100%", padding: "8px 10px", border: "1px solid #bae6fd", borderRadius: 8, fontSize: 14, boxSizing: "border-box" }}
+        />
+        <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <select
+            value={quickKind}
+            onChange={(e) => setQuickKind(e.target.value)}
+            style={{ padding: "6px 8px", border: "1px solid #bae6fd", borderRadius: 8, fontSize: 13 }}
+          >
+            <option value="note">近況のメモ</option>
+            <option value="reply">いただいた返信の貼り付け</option>
+          </select>
+          <button
+            style={btn(true)}
+            disabled={!!busy || !quickText.trim()}
+            onClick={async () => {
+              const body = await call(
+                `contacts/${contact.id}/note`,
+                { method: "POST", body: JSON.stringify({ text: quickText, kind: quickKind }) },
+                "残しました。論点整理にも反映していきます",
+              );
+              if (body) {
+                setQuickText("");
+                await load();
+              }
+            }}
+          >
+            {busy.includes("/note") ? "残しています…" : "残す"}
+          </button>
+        </div>
+      </section>
+
+      {contact.company && (
+        <section style={{ marginTop: 20, border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <h2 style={{ fontSize: 18, margin: 0 }}>{contact.company} の最近の動き</h2>
+            <button
+              style={btn(true)}
+              disabled={!!busy}
+              onClick={async () => {
+                const body = await call(`contacts/${contact.id}/company-news`, { method: "POST", body: JSON.stringify({}) });
+                if (body) setCompanyNews(body);
+              }}
+            >
+              {busy.includes("company-news") ? "調べています…" : "調べる"}
+            </button>
+          </div>
+          <p style={{ fontSize: 13, color: "#64748b", margin: "6px 0 0" }}>
+            所属先の公開ニュースだけを調べます。お祝いや近況伺いなど、自然なご連絡のきっかけが見つかります。
+          </p>
+          {companyNews && (
+            <div style={{ marginTop: 10, background: "#f8fafc", borderRadius: 10, padding: "10px 12px" }}>
+              {companyNews.news ? (
+                <p style={{ margin: 0, fontSize: 14, color: "#334155", lineHeight: 1.8 }}>{companyNews.news}</p>
+              ) : (
+                <p style={{ margin: 0, fontSize: 14, color: "#64748b" }}>{companyNews.detail ?? "最近の公開ニュースは見つかりませんでした"}</p>
+              )}
+              {companyNews.hook && (
+                <p style={{ margin: "8px 0 0", fontSize: 14, color: "#0f766e", lineHeight: 1.8 }}>
+                  きっかけの一案: {companyNews.hook}
+                </p>
+              )}
+              {companyNews.sources.length > 0 && (
+                <p style={{ margin: "8px 0 0", fontSize: 12, color: "#94a3b8", wordBreak: "break-all" }}>
+                  出典: {companyNews.sources.map((u, i) => (
+                    <a key={i} href={u} target="_blank" rel="noreferrer" style={{ color: "#64748b", marginRight: 8 }}>
+                      {new URL(u).hostname}
+                    </a>
+                  ))}
                 </p>
               )}
             </div>

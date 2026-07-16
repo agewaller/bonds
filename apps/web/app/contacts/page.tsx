@@ -124,6 +124,14 @@ export default function ContactsPage() {
   const [firstMoves, setFirstMoves] = useState<
     { contactId: string; name: string; kind: string; reason: string }[]
   >([]);
+  // 会った直後のひとこと伺い (最近お会いした方)。AI 不要なので自動で読み込む。
+  const [recentMet, setRecentMet] = useState<{ contactId: string; name: string; metAt: string }[]>([]);
+  const [metNotes, setMetNotes] = useState<Record<string, string>>({});
+  const [metSaved, setMetSaved] = useState<Record<string, boolean>>({});
+  // 1日1問 (今日のひとこと質問)。定型なので AI 不要・毎回無料。
+  const [dailyQ, setDailyQ] = useState<{ contactId: string; name: string; question: string } | null>(null);
+  const [dailyAnswer, setDailyAnswer] = useState("");
+  const [dailySaved, setDailySaved] = useState(false);
   const [proposals, setProposals] = useState<
     { name: string; note: string; date: string | null; contactId: string | null; selected: boolean }[]
   >([]);
@@ -193,6 +201,21 @@ export default function ContactsPage() {
     if (driftRes.ok) setDrift((await driftRes.json()).items ?? []);
     const fmRes = await apiFetch("relationship/first-moves");
     if (fmRes.ok) setFirstMoves((await fmRes.json()).moves ?? []);
+    const rmRes = await apiFetch("relationship/recent-meetings");
+    if (rmRes.ok) setRecentMet((await rmRes.json()).items ?? []);
+    const dqRes = await apiFetch("relationship/daily-question");
+    if (dqRes.ok) setDailyQ((await dqRes.json()).question ?? null);
+  }, []);
+
+  // ひとことメモを相手に還流する (接触記録 + 論点整理の自動更新)
+  const saveQuickNote = useCallback(async (contactId: string, text: string): Promise<boolean> => {
+    if (!text.trim()) return false;
+    const res = await apiFetch(`contacts/${contactId}/note`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    return res.ok;
   }, []);
 
   const loadJobs = useCallback(async (): Promise<number> => {
@@ -815,6 +838,82 @@ export default function ContactsPage() {
         </section>
       )}
 
+      {recentMet.length > 0 && (
+        <section style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
+          <h2 style={{ fontSize: 17, marginTop: 0 }}>最近お会いした方</h2>
+          <p style={{ fontSize: 13, color: "#075985", margin: "4px 0 8px" }}>
+            お変わりありませんでしたか。覚えているうちにひとことだけ残しておくと、この先の一手がぐっと的確になります。
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
+            {recentMet.map((m) => (
+              <li key={m.contactId} style={{ fontSize: 14, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                <Link href={`/contacts/${m.contactId}`} style={{ color: "#0369a1", fontWeight: 600 }}>
+                  {m.name}
+                </Link>
+                <span style={{ color: "#0c4a6e", fontSize: 12 }}>{m.metAt} にお会いした記録</span>
+                {metSaved[m.contactId] ? (
+                  <span style={{ color: "#047857", fontSize: 13 }}>残しました。ありがとうございます</span>
+                ) : (
+                  <span style={{ display: "flex", gap: 6, flex: 1, minWidth: 220 }}>
+                    <input
+                      value={metNotes[m.contactId] ?? ""}
+                      onChange={(e) => setMetNotes((s) => ({ ...s, [m.contactId]: e.target.value }))}
+                      placeholder="ご様子をひとことだけ (例: お元気そう。秋に異動があるかもとのこと)"
+                      style={{ flex: 1, padding: "6px 8px", border: "1px solid #bae6fd", borderRadius: 8, fontSize: 13 }}
+                    />
+                    <button
+                      style={{ padding: "6px 12px", background: "#0284c7", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+                      onClick={async () => {
+                        if (await saveQuickNote(m.contactId, metNotes[m.contactId] ?? "")) {
+                          setMetSaved((s) => ({ ...s, [m.contactId]: true }));
+                        }
+                      }}
+                    >
+                      残す
+                    </button>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {dailyQ && !dailySaved && (
+        <section style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
+          <h2 style={{ fontSize: 17, marginTop: 0 }}>今日のひとこと</h2>
+          <p style={{ fontSize: 14, color: "#78350f", margin: "4px 0 8px" }}>{dailyQ.question}</p>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <input
+              value={dailyAnswer}
+              onChange={(e) => setDailyAnswer(e.target.value)}
+              placeholder="ひとことだけで大丈夫です (分からなければ空のままで)"
+              style={{ flex: 1, minWidth: 220, padding: "6px 8px", border: "1px solid #fde68a", borderRadius: 8, fontSize: 13 }}
+            />
+            <button
+              style={{ padding: "6px 14px", background: "#d97706", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+              onClick={async () => {
+                if (await saveQuickNote(dailyQ.contactId, dailyAnswer)) {
+                  setDailySaved(true);
+                  setNotice(`${dailyQ.name}さんのことをひとつ覚えました。明日もひとつだけお聞きします`);
+                }
+              }}
+            >
+              残す
+            </button>
+            <button
+              style={{ padding: "6px 10px", background: "transparent", color: "#92400e", border: "1px solid #fcd34d", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+              onClick={() => setDailySaved(true)}
+            >
+              今日はやめておく
+            </button>
+          </div>
+          <p style={{ fontSize: 12, color: "#92400e", margin: "8px 0 0" }}>
+            毎日ひとりについて、まだ書き留めていないことをひとつだけお聞きします。積み重なるほど、提案が的確になります。
+          </p>
+        </section>
+      )}
+
       {firstMoves.length > 0 && (
         <section style={{ margin: "16px 0", border: "1px solid #a7f3d0", background: "#ecfdf5", borderRadius: 12, padding: "12px 16px" }}>
           <h2 style={{ fontSize: 17, marginTop: 0 }}>新しく迎えた方へ、はじめの一手</h2>
@@ -1169,6 +1268,7 @@ export default function ContactsPage() {
                 <div>
                   <strong>LINE</strong> — トーク画面の右上メニュー → 設定 → トーク履歴を送信、で作られる
                   テキストファイルをここに置いてください。お相手の登録と、やりとりの記録が一度に入ります。
+                  トークの中身からお相手の近況 (引っ越し・お仕事・体調など) も短いメモに自動で整理して添えます。
                 </div>
                 <div>
                   <strong>LinkedIn</strong> —{" "}

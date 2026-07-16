@@ -28,6 +28,7 @@ import { clampDistance, calculateIsolationScore, todaySuggestions, suggestDistan
 import { nominateIntroPairs, type IntroPerson } from "./lib/introductions.js";
 import { detectDrift } from "./lib/drift.js";
 import { firstMoves, type OnboardPerson } from "./lib/onboarding.js";
+import { recentMeetings, pickDailyQuestion, type DailyPerson } from "./lib/capture.js";
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { identityKeys, normalizeName } from "./lib/identity.js";
@@ -56,7 +57,7 @@ import { extractJson } from "./lib/dd-spec.js";
 import { calcCostJpy } from "./lib/cost.js";
 import { PERSON_DD_MAX_TOKENS, PERSON_DD_TIMEOUT_MS } from "./lib/person-eval.js";
 import { authorizeAdmin, authorizeUser, type VerifyIdTokenFn } from "./lib/auth.js";
-import { buildTavilySearch, type SearchFn } from "./lib/tavily.js";
+import { buildTavilySearch, type SearchFn, type SearchResult } from "./lib/tavily.js";
 import { sanitizeProse } from "./lib/plain-text.js";
 import {
   IDENTIFY_SYSTEM_PROMPT,
@@ -1163,8 +1164,49 @@ export function createApp(deps: AppDeps) {
         sameName: string[];
         foundIn?: Array<{ file: string; contacts: number }>;
         aiPeople?: number;
+        talkNotes?: number;
       }
     | { ok: false; status: 422 | 503 | 502; error: string; detail: string };
+
+  // トーク履歴 (LINE/WhatsApp) の中身から相手の近況を整理し、取込に添える。
+  // 接触日だけでなく「何が起きているか」を拾う (ユーザーが自分で持ち込んだ会話であり
+  // web 検索はしない)。AI 未設定・失敗なら静かにスキップ = 取込自体は従来どおり通る。
+  const TALK_DIGEST_INSTRUCTION =
+    '出力は JSON オブジェクト 1 個だけ: {"note": "相手の近況の短い散文 (材料が無ければ空文字)"}';
+  const applyTalkDigests = async (
+    talks: Array<{ file: string; partner: string; text: string }>,
+    contacts: ParsedContact[],
+    locale: string,
+    actor: AiActor,
+  ): Promise<number> => {
+    if (!generate || talks.length === 0) return 0;
+    let added = 0;
+    for (const talk of talks.slice(0, 5)) {
+      const target = contacts.find((ct) => ct.name === talk.partner);
+      if (!target) continue;
+      const r = await runRelationshipAi(
+        "talk_digest",
+        TALK_DIGEST_INSTRUCTION,
+        `トークのお相手: ${talk.partner}\nトーク履歴 (下ほど新しい):\n${talk.text}`,
+        "talk_digest",
+        locale,
+        { actor },
+      );
+      if (!r.ok) {
+        if (r.status === 422) break; // 月次キャップ到達: これ以上回さない
+        continue;
+      }
+      const parsed = extractJson(r.text) as { note?: unknown } | null;
+      const note = sanitizeProse(typeof parsed?.note === "string" ? parsed.note : "")
+        .trim()
+        .slice(0, 1000);
+      if (!note) continue;
+      // applyImport が既存の方へは「まだ無いメモだけ書き足す」ので、再取込でも重複しにくい
+      target.notes = target.notes ? `${target.notes}\n${note}` : note;
+      added++;
+    }
+    return added;
+  };
 
   const importPastedText = async (
     ownerUid: string,
@@ -1196,6 +1238,17 @@ export function createApp(deps: AppDeps) {
       }
       toApply = { contacts: r.contacts, interactions: r.interactions };
     }
+    // 貼り付けがトーク履歴なら、中身から相手の近況も整理して添える
+    const first = toApply.contacts[0];
+    let talkNotes = 0;
+    if (first && (first.source === "line" || first.source === "whatsapp")) {
+      talkNotes = await applyTalkDigests(
+        [{ file: filename ?? "paste", partner: first.name, text: content.slice(-15000) }],
+        toApply.contacts,
+        locale,
+        actor,
+      );
+    }
     const result = await applyImport(ownerUid, toApply);
     return {
       ok: true,
@@ -1204,6 +1257,7 @@ export function createApp(deps: AppDeps) {
       interactionsAdded: result.interactionsAdded,
       skipped: result.skipped,
       sameName: result.sameName,
+      talkNotes,
     };
   };
 
@@ -1236,6 +1290,8 @@ export function createApp(deps: AppDeps) {
       contacts: [...parsed.contacts, ...aiContacts],
       interactions: [...parsed.interactions, ...aiInteractions],
     };
+    // トーク履歴 (単体/ZIP 内) は中身から相手の近況も整理して添える
+    const talkNotes = await applyTalkDigests(parsed.talks, merged.contacts, locale, actor);
     if (merged.contacts.length === 0) {
       if (aiUnavailable) {
         return {
@@ -1262,6 +1318,7 @@ export function createApp(deps: AppDeps) {
       sameName: result.sameName,
       foundIn: parsed.foundIn,
       aiPeople: aiContacts.length,
+      talkNotes,
     };
   };
 
@@ -1288,6 +1345,7 @@ export function createApp(deps: AppDeps) {
       interactionsAdded: out.interactionsAdded,
       skipped: out.skipped,
       sameName: out.sameName,
+      talkNotes: out.talkNotes ?? 0,
     });
   });
 
@@ -1324,6 +1382,7 @@ export function createApp(deps: AppDeps) {
       sameName: out.sameName,
       foundIn: out.foundIn,
       aiPeople: out.aiPeople,
+      talkNotes: out.talkNotes ?? 0,
     });
   });
 
@@ -1995,6 +2054,71 @@ export function createApp(deps: AppDeps) {
       };
     });
     return c.json({ moves: firstMoves(people) });
+  });
+
+  // 会った直後のひとこと伺い — 直近に会った方で、まだその後のメモが無い方を挙げる。
+  // 会った直後は記憶が新しく、ここで拾えなかった近況は二度と記録されない (AI 不要)。
+  app.get("/api/relationship/recent-meetings", async (c) => {
+    const since = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid: c.get("ownerUid"), state: "active" },
+      select: { id: true, name: true },
+    });
+    if (contacts.length === 0) return c.json({ items: [] });
+    const rows = await prisma.contactInteraction.findMany({
+      where: { contactId: { in: contacts.map((x) => x.id) }, occurredAt: { gte: since } },
+      select: { contactId: true, type: true, occurredAt: true, notes: true },
+    });
+    const items = recentMeetings(
+      contacts,
+      rows.map((r) => ({ contactId: r.contactId, type: r.type, occurredAt: r.occurredAt, hasNote: !!r.notes })),
+    );
+    return c.json({ items });
+  });
+
+  // 1日1問 — 毎日ひとりについて、まだ知らない論点をひとつだけ聞く (定型・AI 不要)。
+  // 1年続けば 365 個の事実が溜まる。答えは /api/contacts/:id/note で還流する。
+  app.get("/api/relationship/daily-question", async (c) => {
+    const contacts = await prisma.contact.findMany({
+      where: { ownerUid: c.get("ownerUid"), state: "active" },
+      orderBy: { createdAt: "desc" },
+      take: 500,
+    });
+    if (contacts.length === 0) return c.json({ question: null });
+    const ids = contacts.map((x) => x.id);
+    const counts = await prisma.contactInteraction.groupBy({
+      by: ["contactId"],
+      where: { contactId: { in: ids } },
+      _count: { contactId: true },
+    });
+    const countBy = new Map(counts.map((x) => [x.contactId, x._count.contactId]));
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    const todays = await prisma.contactInteraction.findMany({
+      where: { contactId: { in: ids }, type: "note", occurredAt: { gte: dayStart } },
+      select: { contactId: true },
+    });
+    const answered = new Set(todays.map((x) => x.contactId));
+    const people: DailyPerson[] = contacts.map((ct) => {
+      let facets: DailyPerson["facets"] = null;
+      if (ct.profileFacets) {
+        try {
+          facets = JSON.parse(ct.profileFacets) as DailyPerson["facets"];
+        } catch {
+          // 壊れた facets は「まだ知らない」扱い
+        }
+      }
+      return {
+        id: ct.id,
+        name: ct.name,
+        distance: ct.distance,
+        interactionCount: countBy.get(ct.id) ?? 0,
+        answeredToday: answered.has(ct.id),
+        facets,
+      };
+    });
+    const dateKey = new Date().toISOString().slice(0, 10);
+    return c.json({ question: pickDailyQuestion(people, dateKey) });
   });
 
   // 距離感 (1〜5) の自動レーティング。やりとりの多さ・新しさ・贈り物から推し量る。
@@ -2796,6 +2920,92 @@ export function createApp(deps: AppDeps) {
       enriched++;
     }
     return c.json({ enriched, skipped, candidates: candidates.length });
+  });
+
+  // 近況メモ・いただいた返信のワンタップ還流。書けば接触記録になり、論点整理にも
+  // 自動で反映される。返信と会った直後のひとことは、いちばん新鮮で深い情報源。
+  app.post("/api/contacts/:id/note", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const b = await c.req
+      .json<{ text?: string; kind?: string; locale?: string }>()
+      .catch(() => ({}) as { text?: string; kind?: string; locale?: string });
+    const text = typeof b.text === "string" ? b.text.trim() : "";
+    if (!text) return c.json({ error: "text_required", detail: "内容がありません" }, 400);
+    const type = b.kind === "reply" ? "message" : "note";
+    const interaction = await prisma.contactInteraction.create({
+      data: { contactId: contact.id, type, occurredAt: new Date(), notes: text.slice(0, 4000) },
+    });
+    // 論点整理へ自動反映 (AI 未設定・失敗でも記録そのものは残る)
+    let facetsUpdated = false;
+    if (generate) {
+      const r = await generateAndSaveFacets(contact.ownerUid, contact.id, normalizeLocale(b.locale), actorOf(c));
+      facetsUpdated = r.ok;
+    }
+    return c.json(
+      { interaction: { id: interaction.id, type: interaction.type, occurredAt: interaction.occurredAt }, facetsUpdated },
+      201,
+    );
+  });
+
+  // 会社の最近の動き — 相手個人ではなく所属先の公開ニュースを検索して要約し、
+  // 自然な連絡のきっかけを添える。個人を自動で web 検索しない原則はそのまま
+  // (会社は公開の企業情報であり、仕事上の連絡の口実として最も使いやすい)。
+  const COMPANY_NEWS_INSTRUCTION =
+    '出力は JSON オブジェクト 1 個だけ: {"news": "会社の最近の動きの散文 (無ければ空文字)", "hook": "連絡のきっかけの一文 (無ければ空文字)"}';
+  app.post("/api/contacts/:id/company-news", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const company = (contact.company ?? "").trim();
+    if (!company) {
+      return c.json(
+        { error: "no_company", detail: "所属 (会社) が登録されていない方です。プロフィールに所属を書き足すと調べられます" },
+        422,
+      );
+    }
+    if (!ddSearch) {
+      return c.json({ error: "search_unavailable", detail: "いまは会社の動きを調べられません (検索の準備中です)" }, 503);
+    }
+    const b = await c.req.json<{ locale?: string }>().catch(() => ({}) as { locale?: string });
+    const results: SearchResult[] = [];
+    try {
+      const batches = await Promise.all([
+        ddSearch(`${company} 最新 ニュース`),
+        ddSearch(`${company} 発表 プレスリリース`),
+      ]);
+      const seen = new Set<string>();
+      for (const item of batches.flat()) {
+        if (seen.has(item.url)) continue;
+        seen.add(item.url);
+        results.push(item);
+      }
+    } catch {
+      // 検索の一時失敗は「見つからなかった」として下で丁寧に返す
+    }
+    if (results.length === 0) {
+      return c.json({ news: "", hook: "", sources: [], detail: "最近の公開ニュースは見つかりませんでした" });
+    }
+    const digest = results
+      .slice(0, 8)
+      .map((r) => `出典 ${r.url} : ${r.title} ${r.snippet.slice(0, 300)}`)
+      .join("\n");
+    const r = await runRelationshipAi(
+      "company_news",
+      COMPANY_NEWS_INSTRUCTION,
+      `会社名: ${company}\nお相手: ${contact.name}${contact.title ? ` (${contact.title})` : ""}\n\nWeb 検索の抜粋:\n${digest}`,
+      "company_news",
+      normalizeLocale(b.locale),
+      { actor: actorOf(c) },
+    );
+    if (!r.ok) return c.json(r.body as never, r.status);
+    const parsed = extractJson(r.text) as { news?: unknown; hook?: unknown } | null;
+    const news = sanitizeProse(typeof parsed?.news === "string" ? parsed.news : "").trim().slice(0, 1500);
+    const hook = sanitizeProse(typeof parsed?.hook === "string" ? parsed.hook : "").trim().slice(0, 300);
+    return c.json({ news, hook, sources: results.slice(0, 5).map((x) => x.url) });
   });
 
   // 相手ノート (見立て) の生成 — 蓄積した記録に根拠を置き、希望があれば公開情報の検索を足す。
