@@ -9,6 +9,9 @@ import {
   parseGoogleConnections,
   buildGoogleClient,
   MAX_EVENT_ATTENDEES,
+  GOOGLE_SCOPES_BASE,
+  GOOGLE_SCOPES_EXTENDED,
+  GOOGLE_SCOPES_GUEST,
 } from "../../src/lib/google.js";
 
 beforeAll(() => {
@@ -188,10 +191,18 @@ describe("buildGoogleClient", () => {
     process.env.GOOGLE_OAUTH_CLIENT_SECRET = "real-secret";
     const client = buildGoogleClient();
     expect(client).not.toBeNull();
-    const url = client!.authUrl("STATE", "https://api.example.com/api/google/callback");
+    const url = client!.authUrl("STATE", "https://api.example.com/api/google/callback", GOOGLE_SCOPES_EXTENDED);
     expect(url).toContain("accounts.google.com");
     expect(url).toContain("access_type=offline");
     expect(url).toContain("gmail.metadata");
+    // 既定 (base) は制限付き区分 (Gmail/Drive) を含まない = 審査が軽く、警告を消しやすい
+    const base = client!.authUrl("STATE", "https://api.example.com/api/google/callback", GOOGLE_SCOPES_BASE);
+    expect(base).not.toContain("gmail.metadata");
+    expect(base).toContain("contacts.readonly");
+    // ゲスト (共有ページ) は空き情報のみ + refresh token を発行させない
+    const guest = client!.authUrl("STATE", "https://api.example.com/api/google/callback", GOOGLE_SCOPES_GUEST, { offline: false });
+    expect(guest).toContain("calendar.freebusy");
+    expect(guest).not.toContain("access_type=offline");
     delete process.env.GOOGLE_OAUTH_CLIENT_ID;
     delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   });

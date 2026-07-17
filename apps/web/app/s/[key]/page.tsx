@@ -14,6 +14,7 @@ type ShareInfo = {
   note?: string;
   slotMinutes?: number;
   participants?: string[];
+  googleReady?: boolean;
 };
 type IsoSlot = { start: string; end: string };
 
@@ -164,6 +165,7 @@ export default function PublicSchedulePage() {
   const [done, setDone] = useState(false);
   // あなたの予定表の重ね合わせ
   const [showOverlay, setShowOverlay] = useState(false);
+  const [showIcs, setShowIcs] = useState(false);
   const [pName, setPName] = useState("");
   const [pIcsUrl, setPIcsUrl] = useState("");
   const [pIcsText, setPIcsText] = useState("");
@@ -201,6 +203,31 @@ export default function PublicSchedulePage() {
       setMyKey(window.localStorage.getItem(storageKey) ?? "");
     } catch {
       // 記憶できない環境でも重ね合わせ自体は使える (更新・取り消しができないだけ)
+    }
+    // Google 同意からの戻り (?google=joined&participant=…) を受け取る
+    try {
+      const q = new URLSearchParams(window.location.search);
+      const g = q.get("google");
+      if (g === "joined") {
+        const pk = q.get("participant") ?? "";
+        if (pk) {
+          setMyKey(pk);
+          try {
+            window.localStorage.setItem(storageKey, pk);
+          } catch {
+            // 保存できなくても表示は共通の空きに切り替わる
+          }
+        }
+      } else if (g === "full") {
+        setShowOverlay(true);
+        setOverlayError("重ねられる人数がいっぱいになっています。リンクを送ってくれた方にご相談ください");
+      } else if (g === "error") {
+        setShowOverlay(true);
+        setOverlayError("Google との連携がうまくいきませんでした。もう一度お試しいただくか、下の予定表の貼り付けをお使いください");
+      }
+      if (g) window.history.replaceState(null, "", window.location.pathname);
+    } catch {
+      // URL を読めない環境でもページ自体は使える
     }
     void loadInfoAndSlots("");
   }, [loadInfoAndSlots, storageKey]);
@@ -273,6 +300,23 @@ export default function PublicSchedulePage() {
     setShowOverlay(false);
     setChosen([]);
     await loadInfoAndSlots(proof);
+  };
+
+  // 基本の入り口: Google に一度だけ空き情報 (freeBusy) を聞いて重ねる。予定の中身は見ない・鍵も保存しない
+  const connectGoogle = async () => {
+    setOverlayError("");
+    setOverlayBusy(true);
+    const q = new URLSearchParams();
+    if (proof) q.set("proof", proof);
+    if (myKey) q.set("participantKey", myKey);
+    const res = await fetch(`/api/bff/public/schedule/${key}/google-auth-url?${q.toString()}`);
+    const body = (await res.json().catch(() => ({}))) as { url?: string; detail?: string };
+    if (!res.ok || !body.url) {
+      setOverlayBusy(false);
+      setOverlayError(body.detail ?? "Google との連携がいま使えません。下の予定表の貼り付けをお使いください");
+      return;
+    }
+    window.location.href = body.url;
   };
 
   const leaveOverlay = async () => {
@@ -394,34 +438,55 @@ export default function PublicSchedulePage() {
         {showOverlay && (
           <div style={{ marginTop: 8 }}>
             <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.8, margin: "0 0 8px" }}>
-              お使いのカレンダーの「秘密のアドレス (ICS)」を貼ると、あなたの空きと重ねて、
-              おたがいに空いている時間だけが表示されます。予定の中身がこのページや相手に伝わることはありません。
+              あなたの空き時間と重ねると、おたがいに空いている時間だけが表示されます。
+              見るのは「空いているかどうか」だけで、予定の中身がこのページや相手に伝わることはありません。
             </p>
-            {!myKey && (
-              <label style={{ display: "block", margin: "8px 0" }}>
-                お名前
-                <input style={input} value={pName} onChange={(e) => setPName(e.target.value)} aria-label="重ねる方のお名前" />
-              </label>
-            )}
-            <label style={{ display: "block", margin: "8px 0" }}>
-              予定表のアドレス (https で始まる ICS)
-              <input style={input} value={pIcsUrl} onChange={(e) => setPIcsUrl(e.target.value)} aria-label="予定表のアドレス" placeholder="https://calendar.google.com/.../basic.ics" />
-            </label>
-            <label style={{ display: "block", margin: "8px 0" }}>
-              またはカレンダーから書き出した .ics ファイルの中身を貼り付け
-              <textarea style={input} rows={3} value={pIcsText} onChange={(e) => setPIcsText(e.target.value)} aria-label="予定表の貼り付け" placeholder="BEGIN:VCALENDAR …" />
-            </label>
             {overlayError && <p role="alert" style={{ color: "#b91c1c" }}>{overlayError}</p>}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button style={btn()} disabled={overlayBusy} onClick={() => void joinOverlay()}>
-                {overlayBusy ? "重ねています…" : myKey ? "予定表を入れ直す" : "予定表を重ねる"}
-              </button>
-              {myKey && (
+            {info.googleReady && (
+              <div style={{ margin: "8px 0" }}>
+                <button style={btn()} disabled={overlayBusy} onClick={() => void connectGoogle()}>
+                  {overlayBusy ? "つないでいます…" : "Google でカレンダーをつなぐ"}
+                </button>
+                <p style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.7, margin: "6px 0 0" }}>
+                  Google の画面で確認を押すだけで重なります。合い鍵は預かりません。
+                </p>
+              </div>
+            )}
+            {myKey && (
+              <div style={{ margin: "8px 0" }}>
                 <button style={{ ...btn(false), color: "#b91c1c" }} disabled={overlayBusy} onClick={() => void leaveOverlay()}>
                   重ねるのをやめる (あなたの分を消す)
                 </button>
-              )}
-            </div>
+              </div>
+            )}
+            {/* 代替: Google をお使いでない方向けの ICS (アドレス or 貼り付け) */}
+            <button
+              onClick={() => setShowIcs((v) => !v)}
+              style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", padding: 0, fontSize: 13, textDecoration: "underline" }}
+            >
+              Google をお使いでない方はこちら (予定表のアドレスや貼り付け)
+            </button>
+            {(showIcs || !info.googleReady) && (
+              <div style={{ marginTop: 8 }}>
+                {!myKey && (
+                  <label style={{ display: "block", margin: "8px 0" }}>
+                    お名前
+                    <input style={input} value={pName} onChange={(e) => setPName(e.target.value)} aria-label="重ねる方のお名前" />
+                  </label>
+                )}
+                <label style={{ display: "block", margin: "8px 0" }}>
+                  予定表のアドレス (https で始まる ICS)
+                  <input style={input} value={pIcsUrl} onChange={(e) => setPIcsUrl(e.target.value)} aria-label="予定表のアドレス" placeholder="https://calendar.google.com/.../basic.ics" />
+                </label>
+                <label style={{ display: "block", margin: "8px 0" }}>
+                  またはカレンダーから書き出した .ics ファイルの中身を貼り付け
+                  <textarea style={input} rows={3} value={pIcsText} onChange={(e) => setPIcsText(e.target.value)} aria-label="予定表の貼り付け" placeholder="BEGIN:VCALENDAR …" />
+                </label>
+                <button style={btn(false)} disabled={overlayBusy} onClick={() => void joinOverlay()}>
+                  {overlayBusy ? "重ねています…" : myKey ? "予定表を入れ直す" : "この予定表を重ねる"}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </section>

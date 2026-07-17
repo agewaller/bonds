@@ -14,15 +14,37 @@ import type { ParsedContact, ParsedInteraction } from "./contact-parsers.js";
 
 // ---------------- 設定 ----------------
 
-export const GOOGLE_SCOPES = [
+// 権限は三段に分ける (Google のアプリ確認 = 審査を軽くし、同意画面の警告を消すため):
+// - BASE: 既定の接続。「センシティブ」区分のみ (カレンダー + 連絡先) = 通常審査で警告が消える
+// - EXTENDED: 希望者だけの追加の許可。「制限付き」区分 (Gmail ヘッダ + Drive) を含む
+//   (制限付きは重い審査が必要なため、既定の同意画面から外す)
+// - GUEST: 日程調整の公開ページで相手が空きを重ねるときの最小権限 (空き情報 + 名乗りのみ)
+export const GOOGLE_SCOPES_BASE = [
   "openid",
   "email",
   "https://www.googleapis.com/auth/calendar.readonly",
-  "https://www.googleapis.com/auth/gmail.metadata",
-  "https://www.googleapis.com/auth/drive.metadata.readonly",
   // 連絡先 (アドレス帳) の読み取り = 最も確実な取込元。読み取り専用。
   "https://www.googleapis.com/auth/contacts.readonly",
 ];
+
+export const GOOGLE_SCOPES_EXTENDED = [
+  ...GOOGLE_SCOPES_BASE,
+  "https://www.googleapis.com/auth/gmail.metadata",
+  "https://www.googleapis.com/auth/drive.metadata.readonly",
+];
+
+export const GOOGLE_SCOPES_GUEST = [
+  "openid",
+  "email",
+  "profile",
+  // freeBusy 照会のみ = 予定の中身は読めない。相手 (第三者) に求める最小の権限
+  "https://www.googleapis.com/auth/calendar.freebusy",
+];
+
+/** 保存済みの許可スコープに Gmail/Drive (追加の許可) が含まれるか。 */
+export function hasExtendedScopes(scopes: string | null | undefined): boolean {
+  return !!scopes && scopes.includes("gmail.metadata");
+}
 
 // People API から取り込む連絡先の上限 (1 同期あたり)。
 export const CONTACTS_MAX = 2000;
@@ -284,13 +306,20 @@ export function parseGoogleConnections(response: unknown): ParsedContact[] {
 // ---------------- ネットワーク層 (注入可能) ----------------
 
 export type GoogleClient = {
-  authUrl: (state: string, redirectUri: string) => string;
+  authUrl: (state: string, redirectUri: string, scopes: string[], opts?: { offline?: boolean }) => string;
   exchangeCode: (
     code: string,
     redirectUri: string,
-  ) => Promise<{ refreshToken: string | null; accessToken: string; email: string | null }>;
+  ) => Promise<{
+    refreshToken: string | null;
+    accessToken: string;
+    email: string | null;
+    name: string | null; // id_token の name (profile スコープを求めたときだけ入る)
+    grantedScopes: string | null; // 実際に許可されたスコープ (space 区切り)
+  }>;
   refreshAccessToken: (refreshToken: string) => Promise<string>;
   apiGet: (url: string, accessToken: string) => Promise<unknown>;
+  apiPost: (url: string, accessToken: string, body: unknown) => Promise<unknown>;
 };
 
 // env (GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET) が無ければ null =
@@ -308,18 +337,21 @@ export function buildGoogleClient(): GoogleClient | null {
       signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) throw new Error(`google_token_error: ${res.status} ${await res.text().catch(() => "")}`);
-    return (await res.json()) as { access_token?: string; refresh_token?: string; id_token?: string };
+    return (await res.json()) as { access_token?: string; refresh_token?: string; id_token?: string; scope?: string };
   };
 
   return {
-    authUrl: (state, redirectUri) =>
+    authUrl: (state, redirectUri, scopes, opts) =>
       `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({
         client_id: clientId,
         redirect_uri: redirectUri,
         response_type: "code",
-        scope: GOOGLE_SCOPES.join(" "),
-        access_type: "offline",
-        prompt: "consent",
+        scope: scopes.join(" "),
+        // 追加の許可 (incremental auth): すでに許可済みのスコープは引き継ぐ
+        include_granted_scopes: "true",
+        ...(opts?.offline === false
+          ? {} // ゲストの一度きりの照会は refresh token を発行させない (立ち入った鍵を持たない)
+          : { access_type: "offline", prompt: "consent" }),
         state,
       }).toString()}`,
     exchangeCode: async (code, redirectUri) => {
@@ -331,19 +363,27 @@ export function buildGoogleClient(): GoogleClient | null {
         grant_type: "authorization_code",
       });
       if (!t.access_token) throw new Error("google_token_error: no access_token");
-      // email は id_token (JWT) の payload から取る (検証は不要 = 表示用途のみ)
+      // email / name は id_token (JWT) の payload から取る (検証は不要 = 表示用途のみ)
       let email: string | null = null;
+      let name: string | null = null;
       if (t.id_token) {
         try {
           const payload = JSON.parse(
             Buffer.from(t.id_token.split(".")[1] ?? "", "base64url").toString("utf-8"),
-          ) as { email?: string };
+          ) as { email?: string; name?: string };
           email = payload.email ?? null;
+          name = payload.name ?? null;
         } catch {
           email = null;
         }
       }
-      return { refreshToken: t.refresh_token ?? null, accessToken: t.access_token, email };
+      return {
+        refreshToken: t.refresh_token ?? null,
+        accessToken: t.access_token,
+        email,
+        name,
+        grantedScopes: t.scope ?? null,
+      };
     },
     refreshAccessToken: async (refreshToken) => {
       const t = await tokenReq({
@@ -358,6 +398,16 @@ export function buildGoogleClient(): GoogleClient | null {
     apiGet: async (url, accessToken) => {
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!res.ok) throw new Error(`google_api_error: ${res.status} ${url.split("?")[0]}`);
+      return res.json();
+    },
+    apiPost: async (url, accessToken, body) => {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(20000),
       });
       if (!res.ok) throw new Error(`google_api_error: ${res.status} ${url.split("?")[0]}`);

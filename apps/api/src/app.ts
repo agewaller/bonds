@@ -120,7 +120,10 @@ import {
   parseGoogleConnections,
   signState,
   verifyState,
-  GOOGLE_SCOPES,
+  GOOGLE_SCOPES_BASE,
+  GOOGLE_SCOPES_EXTENDED,
+  GOOGLE_SCOPES_GUEST,
+  hasExtendedScopes,
   GMAIL_MAX_MESSAGES,
   DRIVE_MAX_FILES,
   CONTACTS_MAX,
@@ -2997,6 +3000,8 @@ export function createApp(deps: AppDeps) {
             periodEnd: share.periodEnd,
             slotMinutes: share.slotMinutes,
             participants: participants.map((p) => p.name),
+            // ゲストが Google で予定表を重ねられるか (OAuth 未設定なら ICS だけ出す)
+            googleReady: !!google,
           }),
     });
   });
@@ -5089,8 +5094,10 @@ export function createApp(deps: AppDeps) {
     }));
 
     // Gmail (ヘッダのみ)。SENT = 自分が書いた相手 (強い信号)、INBOX = 受信相手。
+    // 追加の許可 (extended) が済んでいる接続だけ。無ければ静かに飛ばす (403 ノイズを出さない)
+    const extended = hasExtendedScopes(conn.scopes);
     const gmailMessages: GmailHeaderMessage[] = [];
-    for (const label of ["SENT", "INBOX"] as const) {
+    for (const label of extended ? (["SENT", "INBOX"] as const) : []) {
       const list = (await google
         .apiGet(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${GMAIL_MAX_MESSAGES}&labelIds=${label}`,
@@ -5120,13 +5127,15 @@ export function createApp(deps: AppDeps) {
       }
     }
 
-    // Drive (共有されているファイルの持ち主・最終更新者)
-    const drive = (await google
-      .apiGet(
-        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent("sharedWithMe=true")}&orderBy=modifiedTime%20desc&pageSize=${DRIVE_MAX_FILES}&fields=files(owners(displayName,emailAddress,me),lastModifyingUser(displayName,emailAddress,me))`,
-        accessToken,
-      )
-      .catch(() => ({}))) as { files?: DriveFile[] };
+    // Drive (共有されているファイルの持ち主・最終更新者) — 追加の許可が済んでいる接続だけ
+    const drive: { files?: DriveFile[] } = extended
+      ? ((await google
+          .apiGet(
+            `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent("sharedWithMe=true")}&orderBy=modifiedTime%20desc&pageSize=${DRIVE_MAX_FILES}&fields=files(owners(displayName,emailAddress,me),lastModifyingUser(displayName,emailAddress,me))`,
+            accessToken,
+          )
+          .catch(() => ({}))) as { files?: DriveFile[] })
+      : {};
 
     // Google 連絡先 (アドレス帳) — 最も確実な取込元。氏名・メール・電話・所属を直接持つ。
     const connectionsResp = await google
@@ -5177,7 +5186,7 @@ export function createApp(deps: AppDeps) {
     if (!google) return c.json({ available: false, connected: false });
     const conn = await prisma.googleConnection.findUnique({
       where: { ownerUid: c.get("ownerUid") },
-      select: { email: true, lastSyncAt: true, lastSyncNote: true },
+      select: { email: true, lastSyncAt: true, lastSyncNote: true, scopes: true },
     });
     return c.json({
       available: true,
@@ -5185,9 +5194,13 @@ export function createApp(deps: AppDeps) {
       email: conn?.email ?? null,
       lastSyncAt: conn?.lastSyncAt ?? null,
       lastSyncNote: conn?.lastSyncNote ?? null,
+      // 追加の許可 (メール・ドライブ) まで済んでいるか。web はこれで導線を出し分ける
+      extended: hasExtendedScopes(conn?.scopes),
     });
   });
 
+  // 既定はカレンダー + 連絡先だけ (審査の軽いセンシティブ区分のみ = 警告を消しやすい)。
+  // ?scope=extended でメール・ドライブの追加の許可 (制限付き区分。希望者だけ)。
   app.get("/api/google/auth-url", async (c) => {
     if (!google) {
       return c.json({ error: "unavailable", detail: "Google 連携は準備中です" }, 503);
@@ -5196,25 +5209,99 @@ export function createApp(deps: AppDeps) {
     if (!state) {
       return c.json({ error: "unavailable", detail: "サーバの設定が未完了です" }, 503);
     }
-    return c.json({ url: google.authUrl(state, googleRedirectUri()) });
+    const scopes = c.req.query("scope") === "extended" ? GOOGLE_SCOPES_EXTENDED : GOOGLE_SCOPES_BASE;
+    return c.json({ url: google.authUrl(state, googleRedirectUri(), scopes) });
   });
 
-  // OAuth コールバック (未認証)。state の署名で「誰の接続か」を確かめてから保存する。
+  // 日程調整の公開ページ用: 相手 (アカウント不要) が Google で空きを重ねるための同意 URL。
+  // 求めるのは空き情報 (freeBusy) と名乗りだけの最小権限。state に共有キーを署名して持ち回る。
+  app.get("/api/public/schedule/:shareKey/google-auth-url", async (c) => {
+    const share = await loadVisibleShare(c.req.param("shareKey"));
+    if (!share) return c.json({ error: "not_found" }, 404);
+    if (!shareUnlocked(share, c.req.query("proof"))) return c.json({ error: "locked" }, 403);
+    if (!google) return c.json({ error: "unavailable", detail: "Google での重ね合わせは準備中です" }, 503);
+    const participantKey = c.req.query("participantKey") || "-";
+    const state = signState(`share|${share.shareKey}|${participantKey}`, Math.floor(Date.now() / 1000) + 600);
+    if (!state) return c.json({ error: "unavailable", detail: "サーバの設定が未完了です" }, 503);
+    return c.json({ url: google.authUrl(state, googleRedirectUri(), GOOGLE_SCOPES_GUEST, { offline: false }) });
+  });
+
+  // 共有ページのゲスト同意の戻り: その場で期間内の空き情報 (freeBusy) を一度だけ照会して
+  // 参加者として保存する。トークンは保存しない (立ち入った鍵を持たない)。
+  const handleShareGoogleCallback = async (subject: string, code: string): Promise<string> => {
+    const [, shareKey, participantKeyRaw] = subject.split("|");
+    const backTo = (q: string) => `${webBaseUrl()}/s/${shareKey}?google=${q}`;
+    const share = await loadVisibleShare(shareKey ?? "");
+    if (!share || !google) return backTo("error");
+    const t = await google.exchangeCode(code, googleRedirectUri());
+    const fb = (await google.apiPost("https://www.googleapis.com/calendar/v3/freeBusy", t.accessToken, {
+      timeMin: new Date(Math.max(Date.now(), share.periodStart.getTime())).toISOString(),
+      timeMax: share.periodEnd.toISOString(),
+      items: [{ id: "primary" }],
+    })) as { calendars?: { primary?: { busy?: Array<{ start: string; end: string }> } } };
+    const busy = toIso(parseIsoIntervals(fb.calendars?.primary?.busy ?? []));
+    const name =
+      sanitizeProse(t.name ?? "").trim().slice(0, 60) || (t.email ? t.email.split("@")[0]! : "参加者");
+    const existing =
+      participantKeyRaw && participantKeyRaw !== "-"
+        ? await prisma.scheduleShareParticipant.findFirst({
+            where: { participantKey: participantKeyRaw, shareId: share.id },
+          })
+        : null;
+    if (existing) {
+      await prisma.scheduleShareParticipant.update({
+        where: { id: existing.id },
+        data: { busySlots: busy as never, name },
+      });
+      return backTo(`joined&participant=${existing.participantKey}`);
+    }
+    const count = await prisma.scheduleShareParticipant.count({ where: { shareId: share.id } });
+    if (count >= MAX_PARTICIPANTS_PER_SHARE) return backTo("full");
+    const participant = await prisma.scheduleShareParticipant.create({
+      data: {
+        shareId: share.id,
+        participantKey: randomUUID(),
+        name,
+        icsUrl: null,
+        busySlots: busy as never,
+      },
+    });
+    return backTo(`joined&participant=${participant.participantKey}`);
+  };
+
+  // OAuth コールバック (未認証)。state の署名で「誰の接続か / どの共有ページか」を確かめてから保存する。
   app.get("/api/google/callback", async (c) => {
     const back = (q: string) => c.redirect(`${webBaseUrl()}/contacts?google=${q}`, 302);
     if (!google) return back("error");
-    const ownerUid = verifyState(c.req.query("state"), Math.floor(Date.now() / 1000));
+    const subject = verifyState(c.req.query("state"), Math.floor(Date.now() / 1000));
     const code = c.req.query("code");
-    if (!ownerUid || !code) return back("error");
+    if (!subject || !code) return back("error");
+    // 共有ページのゲスト (subject = "share|<shareKey>|<participantKey|->")
+    if (subject.startsWith("share|")) {
+      try {
+        return c.redirect(await handleShareGoogleCallback(subject, code), 302);
+      } catch (err) {
+        console.error(
+          JSON.stringify({
+            event: "google_share_callback_failed",
+            detail: err instanceof Error ? err.message : String(err),
+          }),
+        );
+        return c.redirect(`${webBaseUrl()}/s/${subject.split("|")[1] ?? ""}?google=error`, 302);
+      }
+    }
+    const ownerUid = subject;
     try {
       const t = await google.exchangeCode(code, googleRedirectUri());
       const existing = await prisma.googleConnection.findUnique({ where: { ownerUid } });
       const refreshToken = t.refreshToken ?? existing?.refreshToken;
       if (!refreshToken) return back("error");
+      // 許可スコープは Google の申告値を保存する (追加の許可は include_granted_scopes で合算される)
+      const scopes = t.grantedScopes ?? existing?.scopes ?? GOOGLE_SCOPES_BASE.join(" ");
       await prisma.googleConnection.upsert({
         where: { ownerUid },
-        create: { ownerUid, email: t.email, refreshToken, scopes: GOOGLE_SCOPES.join(" ") },
-        update: { email: t.email ?? existing?.email, refreshToken, scopes: GOOGLE_SCOPES.join(" ") },
+        create: { ownerUid, email: t.email, refreshToken, scopes },
+        update: { email: t.email ?? existing?.email, refreshToken, scopes },
       });
       return back("connected");
     } catch (err) {

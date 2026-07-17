@@ -48,6 +48,11 @@ export default function Home() {
           {t("start_person_eval", locale)}
         </Link>
       </p>
+      <footer style={{ marginTop: 64, paddingTop: 16, borderTop: "1px solid #e2e8f0" }}>
+        <Link href="/privacy" style={{ color: "#64748b", fontSize: 13, textDecoration: "none" }}>
+          プライバシーポリシー
+        </Link>
+      </footer>
     </main>
   );
 }

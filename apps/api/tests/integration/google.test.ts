@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { createPrismaClient, type ExtendedPrismaClient, isEncrypted } from "@bonds/db";
 import { createApp } from "../../src/app.js";
-import { signState, type GoogleClient } from "../../src/lib/google.js";
+import { signState, GOOGLE_SCOPES_EXTENDED, type GoogleClient } from "../../src/lib/google.js";
 
 const ADMIN_TOKEN = "test-admin-token";
 process.env.ADMIN_BREAKGLASS_TOKEN = ADMIN_TOKEN;
@@ -17,7 +17,14 @@ const fakeGoogle: GoogleClient = {
     `https://accounts.google.com/o/oauth2/v2/auth?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`,
   exchangeCode: async (code) => {
     if (code === "bad") throw new Error("google_token_error: 400");
-    return { refreshToken: "refresh-token-1", accessToken: "at", email: "me@example.com" };
+    // フル許可 (旧来どおり) の接続を装う = 同期はカレンダー・メール・ドライブ全部を回す
+    return {
+      refreshToken: "refresh-token-1",
+      accessToken: "at",
+      email: "me@example.com",
+      name: "わたし",
+      grantedScopes: GOOGLE_SCOPES_EXTENDED.join(" "),
+    };
   },
   refreshAccessToken: async () => "at",
   apiGet: async (url) => {
@@ -55,7 +62,7 @@ const fakeGoogle: GoogleClient = {
         ],
       };
     }
-    if (url.includes("people.googleapis.com")) {
+    if (url.includes("people.googleapis.com")) {  // people
       return {
         connections: [
           {
@@ -65,6 +72,15 @@ const fakeGoogle: GoogleClient = {
           },
         ],
       };
+    }
+    return {};
+  },
+  apiPost: async (url) => {
+    if (url.includes("freeBusy")) {
+      const d = new Date();
+      d.setDate(d.getDate() + 1);
+      const at = (h: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), h).toISOString();
+      return { calendars: { primary: { busy: [{ start: at(9), end: at(12) }] } } };
     }
     return {};
   },
@@ -208,5 +224,100 @@ describe("同期 (人物データの取込)", () => {
     ).json();
     expect(all.picked).toBe(1);
     expect(all.synced).toBe(1);
+  });
+});
+
+describe("権限の分割 (既定はカレンダー + 連絡先のみ)", () => {
+  function nowSec2() {
+    return Math.floor(Date.now() / 1000);
+  }
+
+  it("既定の接続 (base スコープ) では Gmail / Drive を呼ばない", async () => {
+    const called: string[] = [];
+    const baseGoogle: GoogleClient = {
+      ...fakeGoogle,
+      exchangeCode: async () => ({
+        refreshToken: "rt",
+        accessToken: "at",
+        email: "me@example.com",
+        name: "わたし",
+        grantedScopes:
+          "openid email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/contacts.readonly",
+      }),
+      apiGet: async (url) => {
+        called.push(url);
+        return fakeGoogle.apiGet(url, "at");
+      },
+    };
+    const app = createApp({ prisma, generate: null, google: baseGoogle });
+    const state = signState("owner", nowSec2() + 600)!;
+    await app.request(`/api/google/callback?code=ok&state=${encodeURIComponent(state)}`);
+    const st = await (await app.request("/api/google/status", { headers: H })).json();
+    expect(st.extended).toBe(false);
+
+    const res = await app.request("/api/google/sync", { method: "POST", headers: H });
+    expect(res.status).toBe(200);
+    expect(called.some((u) => u.includes("gmail.googleapis.com"))).toBe(false);
+    expect(called.some((u) => u.includes("drive/v3"))).toBe(false);
+    expect(called.some((u) => u.includes("calendar/v3"))).toBe(true);
+    expect(called.some((u) => u.includes("people.googleapis.com"))).toBe(true);
+  });
+
+  it("auth-url は既定 base、?scope=extended で Gmail/Drive を含む", async () => {
+    const realish: GoogleClient = {
+      ...fakeGoogle,
+      authUrl: (state, redirectUri, scopes) =>
+        `https://accounts.google.com/o/oauth2/v2/auth?state=${state}&scope=${encodeURIComponent(scopes.join(" "))}&redirect_uri=${encodeURIComponent(redirectUri)}`,
+    };
+    const app = createApp({ prisma, generate: null, google: realish });
+    const base = await (await app.request("/api/google/auth-url", { headers: H })).json();
+    expect(base.url).not.toContain("gmail.metadata");
+    expect(base.url).toContain("contacts.readonly");
+    const ext = await (await app.request("/api/google/auth-url?scope=extended", { headers: H })).json();
+    expect(ext.url).toContain("gmail.metadata");
+  });
+});
+
+describe("共有ページのゲストが Google で空きを重ねる (最小権限・トークン非保存)", () => {
+  it("同意 URL → コールバックで freeBusy を一度だけ照会し、共通の空きに切り替わる", async () => {
+    const app = createApp({ prisma, generate: null, google: fakeGoogle });
+    const created = await (
+      await app.request("/api/schedule/shares", {
+        method: "POST",
+        headers: H,
+        body: JSON.stringify({ periodDays: 5 }),
+      })
+    ).json();
+
+    // 公開ページの情報に「Google で重ねられる」印が付く (web はこれで基本ボタンを出す)
+    const info = await (await app.request(`/api/public/schedule/${created.shareKey}`)).json();
+    expect(info.googleReady).toBe(true);
+
+    // 同意 URL (公開・認証不要)
+    const au = await (await app.request(`/api/public/schedule/${created.shareKey}/google-auth-url`)).json();
+    expect(au.url).toContain("accounts.google.com");
+    const state = new URL(au.url).searchParams.get("state")!;
+
+    // コールバック → 参加者が保存され、共有ページへ戻される
+    const cb = await app.request(`/api/google/callback?code=ok&state=${encodeURIComponent(state)}`);
+    expect(cb.status).toBe(302);
+    const loc = cb.headers.get("location")!;
+    expect(loc).toContain(`/s/${created.shareKey}?google=joined`);
+    expect(loc).toContain("participant=");
+
+    // 名乗りは Google プロフィール由来・busy は freeBusy 由来 (明日 9-12 時)
+    const slots = await (await app.request(`/api/public/schedule/${created.shareKey}/slots`)).json();
+    expect(slots.basis).toBe("common");
+    expect(slots.participants).toEqual(["わたし"]);
+    const day = new Date();
+    day.setDate(day.getDate() + 1);
+    const morning = (slots.options as { start: string }[]).filter((o) => {
+      const d = new Date(o.start);
+      return d.getDate() === day.getDate() && d.getHours() >= 9 && d.getHours() < 12;
+    });
+    expect(morning).toHaveLength(0);
+
+    // ゲストのトークンは保存していない (接続テーブルに増えない)
+    expect(await prisma.googleConnection.count()).toBe(0);
   });
 });

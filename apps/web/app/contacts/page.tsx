@@ -189,6 +189,7 @@ export default function ContactsPage() {
   const [googleStatus, setGoogleStatus] = useState<{
     available: boolean;
     connected: boolean;
+    extended?: boolean;
     email?: string | null;
     lastSyncNote?: string | null;
   } | null>(null);
@@ -1722,11 +1723,10 @@ export default function ContactsPage() {
         )}
       </Fold>
 
-      <Fold k="cl19" title={<>いちばん簡単: Google（Gmail・連絡先）からまとめて取り込む</>} style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+      <Fold k="cl19" title={<>いちばん簡単: Google（連絡先・カレンダー）からまとめて取り込む</>} style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
         <p style={{ color: "#64748b", margin: "4px 0 10px", fontSize: 14 }}>
-          ボタンをひとつ押すだけで、Google の連絡先（アドレス帳）に加えて、メールでやりとりした相手・カレンダーの同席者・
-          共有ファイルの仲間まで、連絡帳へ自動でまとまります。つないだあとはその場で取り込みが始まります。
-          読み取りだけの最小限の権限で、メールの本文は読みません。
+          ボタンをひとつ押すだけで、Google の連絡先（アドレス帳）とカレンダーの同席者が連絡帳へ自動でまとまります。
+          つないだあとはその場で取り込みが始まります。読み取りだけの最小限の権限で、予定やアドレス帳を書き換えることはありません。
         </p>
         {googleStatus === null && <p style={{ color: "#64748b" }}>確認しています…</p>}
         {googleStatus?.available === false && (
@@ -1760,6 +1760,26 @@ export default function ContactsPage() {
               style={{ padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
             >
               いま取り込む
+            </button>
+          </div>
+        )}
+        {googleStatus?.available && googleStatus.connected && !googleStatus.extended && (
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed #e2e8f0" }}>
+            <p style={{ color: "#64748b", margin: "0 0 8px", fontSize: 13, lineHeight: 1.8 }}>
+              さらに、メールでやりとりした相手や共有ファイルの仲間も拾えます（メールは宛先と件名だけで本文は読みません）。
+              こちらは追加の確認画面が出ます。使いたいときだけどうぞ。
+            </p>
+            <button
+              onClick={async () => {
+                const res = await apiFetch("google/auth-url?scope=extended");
+                const body = await res.json().catch(() => ({}));
+                if (res.ok && body.url) window.location.href = body.url;
+                else setError(body.detail ?? "いまはつなげませんでした");
+              }}
+              disabled={busy}
+              style={{ padding: "8px 16px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer" }}
+            >
+              メール・共有ファイルの相手も拾えるようにする
             </button>
           </div>
         )}
