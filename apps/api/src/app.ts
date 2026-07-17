@@ -2193,7 +2193,8 @@ export function createApp(deps: AppDeps) {
         facets,
       };
     });
-    return c.json({ moves: firstMoves(people) });
+    // 多めに返し、web 側が見送り (✖️) を除いて先頭 8 名を出す。見送っても次の方が繰り上がる
+    return c.json({ moves: firstMoves(people, new Date(), 24) });
   });
 
   // 大切にしたい方々 — 取り込んだリストの大半は動かない名簿である前提で、実際の
@@ -2289,6 +2290,37 @@ export function createApp(deps: AppDeps) {
     const status = b.status === "done" ? "done" : "dismissed";
     await prisma.careSuggestion.update({ where: { id: row.id }, data: { status } });
     return c.json({ status });
+  });
+
+  // 提案の見送り (✖️) — 連絡帳の各提案でユーザーが消したものを記録し、再表示しない。
+  // 記録そのものは何も消さない。key に日付や年を含む提案は次の機会にまた出る。
+  app.get("/api/relationship/dismissals", async (c) => {
+    const rows = await prisma.suggestionDismissal.findMany({
+      where: { ownerUid: c.get("ownerUid") },
+      orderBy: { createdAt: "desc" },
+      take: 2000,
+      select: { kind: true, key: true },
+    });
+    return c.json({ items: rows });
+  });
+
+  app.post("/api/relationship/dismissals", async (c) => {
+    const b = await c.req.json<{ kind?: string; key?: string }>().catch(() => ({}) as { kind?: string; key?: string });
+    const kind = (b.kind ?? "").trim().slice(0, 60);
+    const key = (b.key ?? "").trim().slice(0, 200);
+    if (!kind || !key) return c.json({ error: "invalid_input" }, 400);
+    await prisma.suggestionDismissal.upsert({
+      where: { ownerUid_kind_key: { ownerUid: c.get("ownerUid"), kind, key } },
+      update: {},
+      create: { ownerUid: c.get("ownerUid"), kind, key },
+    });
+    return c.json({ dismissed: true });
+  });
+
+  // 見送りをすべて取り消す (設定画面の「見送った提案をすべて戻す」)。
+  app.delete("/api/relationship/dismissals", async (c) => {
+    const r = await prisma.suggestionDismissal.deleteMany({ where: { ownerUid: c.get("ownerUid") } });
+    return c.json({ restored: r.count });
   });
 
   // 優先リストへのユーザーの意思: pinned (必ず載せる) / excluded (載せない) / null (自動判定)。

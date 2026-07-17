@@ -409,6 +409,41 @@ test("優先リスト: 距離感と目標をその場で直せて、あなたへ
   expect(errors, errors.join("\n")).toHaveLength(0);
 });
 
+test("提案の見送り: はじめの一手を ✖ で消すと、再読み込み後も出ない", async ({ page }) => {
+  const errors = collectErrors(page);
+  // 会社とメールのある新しい連絡先は「はじめの一手」の先頭グループに必ず入る
+  const name = `監査見送り 実 ${Date.now() % 100000}`;
+  const created = await page.request.post("/api/bff/contacts", {
+    data: { name, company: "見送り監査商事", email: `dismiss-${Date.now()}@example.com` },
+  });
+  expect(created.ok()).toBeTruthy();
+  await page.goto("/contacts");
+  const x = page.getByRole("button", { name: `${name}さんへのはじめの一手を見送る` });
+  await expect(x).toBeVisible();
+  await x.click();
+  await expect(x).toHaveCount(0);
+  // 再読み込みしても見送りは覚えている (サーバに記録)
+  await page.reload();
+  await expect(page.getByRole("heading", { name: /みなさん|連絡帳/ }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: `${name}さんへのはじめの一手を見送る` })).toHaveCount(0);
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
+test("設定: 設定ボタンから設定ページが開き、見送りの戻しと各項目がそろう", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/contacts");
+  await page.getByRole("link", { name: "設定", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "設定", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Google 連携" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "空き時間と日程調整" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "データの書き出し" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "管理者向け" })).toBeVisible();
+  // 見送った提案をすべて戻す (押すと件数つきの知らせが出る)
+  await page.getByRole("button", { name: "見送った提案をすべて戻す" }).click();
+  await expect(page.getByText(/戻しました/)).toBeVisible();
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
 test("連絡先詳細: 「いまのこの方」ノートの枠とまとめ直しボタンがある", async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto("/contacts");

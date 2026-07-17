@@ -409,6 +409,20 @@ model AvailabilitySlot {
   @@map("availability_slots")
 }
 
+// 提案の見送り (✖️)。連絡帳の各提案 (行事・督促・距離感・はじめの一手など) でユーザーが
+// 「今回は要らない」と消したものを記録し、再表示しない。key に日付や年を含む提案は、
+// 次の機会 (別の key) になれば自然にまた出る。記録そのものは何も消さない。
+model SuggestionDismissal {
+  id        String   @id @default(uuid())
+  ownerUid  String   @default("owner") @map("owner_uid")
+  kind      String // gift_occasion / exchange_reminder / distance / drift / goal_nudge / recent_meeting / daily_question / first_move など
+  key       String // 提案を特定する鍵 (contactId や日付・行事名の組)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([ownerUid, kind, key])
+  @@map("suggestion_dismissals")
+}
+
 /// 日程の共有リンク (timeshare の FreeTimeShare の概念を新規実装)。
 /// 推測不能な share_key の URL を相手 (アカウント不要の第三者) に送り、相手はこちらの
 /// 空き枠から候補を選んで提案し、ユーザーが承認して確定する (下書き→承認→実行の原則)。

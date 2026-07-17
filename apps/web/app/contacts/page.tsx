@@ -147,6 +147,16 @@ export default function ContactsPage() {
   const [careItems, setCareItems] = useState<
     { id: string; contactId: string; name: string; kind: string; body: string | null }[]
   >([]);
+  // 提案の見送り (✖️)。消した提案は再表示しない (サーバに記録・記録そのものは消さない)
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const isDismissed = (kind: string, key: string) => dismissed.has(`${kind}|${key}`);
+  const dismissSuggestion = (kind: string, key: string) => {
+    setDismissed((cur) => new Set(cur).add(`${kind}|${key}`));
+    void apiFetch("relationship/dismissals", {
+      method: "POST",
+      body: JSON.stringify({ kind, key }),
+    }).catch(() => null);
+  };
   // みなさんの一覧は既定で畳む (大半は動かない名簿のため)。検索でいつでも探せる
   const [showAll, setShowAll] = useState(false);
   const [nameFilter, setNameFilter] = useState("");
@@ -223,14 +233,19 @@ export default function ContactsPage() {
   const jobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
-    const [cRes, sRes, pRes, gRes, dRes, eRes] = await Promise.all([
+    const [cRes, sRes, pRes, gRes, dRes, eRes, xRes] = await Promise.all([
       apiFetch("contacts"),
       apiFetch("relationship/summary"),
       apiFetch("relationship/progress"),
       apiFetch("gifts/occasions"),
       apiFetch("contacts/duplicates"),
       apiFetch("exchanges"),
+      apiFetch("relationship/dismissals"),
     ]);
+    if (xRes.ok) {
+      const xBody = (await xRes.json()) as { items: { kind: string; key: string }[] };
+      setDismissed(new Set(xBody.items.map((x) => `${x.kind}|${x.key}`)));
+    }
     if (cRes.ok) {
       const cBody = await cRes.json();
       setContacts(cBody.contacts);
@@ -722,11 +737,40 @@ export default function ContactsPage() {
 
   const level = LEVEL_LABEL[summary?.isolation.level ?? "unknown"] ?? LEVEL_LABEL.unknown!;
 
+  // 提案の行の ✖️ (見送り)。押すとその提案は消え、以降も再表示しない
+  const dismissX = (label: string, onClick: () => void) => (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      style={{ marginLeft: "auto", flexShrink: 0, background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "0 4px" }}
+    >
+      ×
+    </button>
+  );
+
+  // 見送り済みを除いた表示用リスト (key に年や日付を含むものは次の機会にまた出る)
+  const thisYear = new Date().getFullYear();
+  const giftKey = (o: { kind: string; contactId: string | null; label: string }) =>
+    `${o.kind}:${o.contactId ?? o.label}:${thisYear}`;
+  const shownOccasions = giftOccasions.filter((o) => !isDismissed("gift_occasion", giftKey(o)));
+  const shownExReminders = exReminders.filter((r) => !isDismissed("exchange_reminder", r.id));
+  const shownDistanceSug = distanceSug.filter((s) => !isDismissed("distance", `${s.contactId}:${s.suggested}`));
+  const shownDrift = drift.filter((d) => !isDismissed("drift", d.contactId));
+  const shownGoalItems = goalItems.filter((g) => !isDismissed("goal_nudge", g.contactId));
+  const shownRecentMet = recentMet.filter((m) => !isDismissed("recent_meeting", `${m.contactId}:${m.metAt}`));
+  const shownFirstMoves = firstMoves.filter((m) => !isDismissed("first_move", m.contactId));
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const dailyQDismissed = dailyQ ? isDismissed("daily_question", `${dailyQ.contactId}:${todayKey}`) : false;
+
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
       <div style={{ display: "flex", justifyContent: "space-between" }}>
         <LanguageSelector />
-        <AuthBar />
+        <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+          <Link href="/settings" style={{ color: "#64748b", fontSize: 14 }}>設定</Link>
+          <AuthBar />
+        </div>
       </div>
       <p style={{ display: "flex", gap: 16 }}>
         <Link href="/" style={{ color: "#2563eb" }}>{t("back_home")}</Link>
@@ -824,41 +868,47 @@ export default function ContactsPage() {
         <p style={{ color: "#27ae60" }}>すべての方と適切な頻度でつながれています。素晴らしいですね。</p>
       )}
 
-      {giftOccasions.length > 0 && (
+      {shownOccasions.length > 0 && (
         <Fold k="cl3" title={<>いま贈るとよい方・行事</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
-            {giftOccasions.slice(0, 8).map((o, i) => (
-              <li key={i} style={{ fontSize: 14 }}>
-                {o.contactId ? (
-                  <Link href={`/contacts/${o.contactId}`} style={{ color: "#b45309", fontWeight: 600 }}>
-                    {o.label}
-                  </Link>
-                ) : (
-                  <span style={{ fontWeight: 600 }}>{o.label}</span>
-                )}
-                <span style={{ color: "#78716c" }}> — {o.note}</span>
+            {shownOccasions.slice(0, 8).map((o, i) => (
+              <li key={i} style={{ fontSize: 14, display: "flex", alignItems: "baseline", gap: 4 }}>
+                <span style={{ flex: 1 }}>
+                  {o.contactId ? (
+                    <Link href={`/contacts/${o.contactId}`} style={{ color: "#b45309", fontWeight: 600 }}>
+                      {o.label}
+                    </Link>
+                  ) : (
+                    <span style={{ fontWeight: 600 }}>{o.label}</span>
+                  )}
+                  <span style={{ color: "#78716c" }}> — {o.note}</span>
+                </span>
+                {dismissX(`${o.label} を見送る`, () => dismissSuggestion("gift_occasion", giftKey(o)))}
               </li>
             ))}
           </ul>
         </Fold>
       )}
 
-      {exReminders.length > 0 && (
+      {shownExReminders.length > 0 && (
         <Fold k="cl4" title={<>そろそろ区切りをつけたいこと</>} style={{ margin: "16px 0", border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 12, padding: "12px 16px" }}>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
-            {exReminders.slice(0, 8).map((r) => (
-              <li key={r.id} style={{ fontSize: 14 }}>
-                <Link href={`/contacts/${r.contactId}`} style={{ color: r.overdue ? "#b91c1c" : "#b45309", fontWeight: 600 }}>
-                  {r.contactName ?? "この方"}: {r.title}
-                </Link>
-                <span style={{ color: "#78716c" }}> — {r.note}</span>
+            {shownExReminders.slice(0, 8).map((r) => (
+              <li key={r.id} style={{ fontSize: 14, display: "flex", alignItems: "baseline", gap: 4 }}>
+                <span style={{ flex: 1 }}>
+                  <Link href={`/contacts/${r.contactId}`} style={{ color: r.overdue ? "#b91c1c" : "#b45309", fontWeight: 600 }}>
+                    {r.contactName ?? "この方"}: {r.title}
+                  </Link>
+                  <span style={{ color: "#78716c" }}> — {r.note}</span>
+                </span>
+                {dismissX(`${r.title} の知らせを見送る`, () => dismissSuggestion("exchange_reminder", r.id))}
               </li>
             ))}
           </ul>
         </Fold>
       )}
 
-      {distanceSug.length > 0 && (
+      {shownDistanceSug.length > 0 && (
         <Fold k="cl5" title={<>距離感の見直し</>} style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
             <button
@@ -885,7 +935,7 @@ export default function ContactsPage() {
             やりとりの多さや新しさから、いまの距離感（1が最も近く、5がたまに）を見直せます。反映するかはあなたが選べます。
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
-            {distanceSug.slice(0, 12).map((s) => (
+            {shownDistanceSug.slice(0, 12).map((s) => (
               <li key={s.contactId} style={{ fontSize: 14, display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
                 <Link href={`/contacts/${s.contactId}`} style={{ color: "#0369a1", fontWeight: 600 }}>
                   {s.name}
@@ -910,24 +960,28 @@ export default function ContactsPage() {
                 >
                   この通りにする
                 </button>
+                {dismissX(`${s.name}さんの距離感の提案を見送る`, () => dismissSuggestion("distance", `${s.contactId}:${s.suggested}`))}
               </li>
             ))}
           </ul>
         </Fold>
       )}
 
-      {drift.length > 0 && (
+      {shownDrift.length > 0 && (
         <Fold k="cl6" title={<>そっと気にかけたい関係</>} style={{ margin: "16px 0", border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#9a3412", margin: "4px 0 8px" }}>
             近しかった方や、いつもやりとりされていた方との間が、少し空いてきています。よろしければ、久しぶりのひとことから。
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
-            {drift.map((d) => (
-              <li key={d.contactId} style={{ fontSize: 14 }}>
-                <Link href={`/contacts/${d.contactId}`} style={{ color: "#c2410c", fontWeight: 600 }}>
-                  {d.name}
-                </Link>
-                <span style={{ color: "#7c2d12" }}> — {d.reason}</span>
+            {shownDrift.map((d) => (
+              <li key={d.contactId} style={{ fontSize: 14, display: "flex", alignItems: "baseline", gap: 4 }}>
+                <span style={{ flex: 1 }}>
+                  <Link href={`/contacts/${d.contactId}`} style={{ color: "#c2410c", fontWeight: 600 }}>
+                    {d.name}
+                  </Link>
+                  <span style={{ color: "#7c2d12" }}> — {d.reason}</span>
+                </span>
+                {dismissX(`${d.name}さんの気にかけを見送る`, () => dismissSuggestion("drift", d.contactId))}
               </li>
             ))}
           </ul>
@@ -1056,22 +1110,27 @@ export default function ContactsPage() {
         </Fold>
       )}
 
-      {goalItems.length > 0 && (
+      {shownGoalItems.length > 0 && (
         <Fold k="cl8" title={<>目標に向かっている関係</>} style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#6b21a8", margin: "4px 0 8px" }}>
             目標を決めた方との、いまの間合いと次の一手です。間が空いてきた方から並べています。
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
-            {goalItems.map((g) => (
+            {shownGoalItems.map((g) => (
               <li key={g.contactId} style={{ fontSize: 14 }}>
-                <Link href={`/contacts/${g.contactId}`} style={{ color: "#7c3aed", fontWeight: 600 }}>
-                  {g.name}
-                </Link>
-                <span style={{ color: "#6b21a8", fontSize: 12, marginLeft: 6 }}>
-                  {g.purposeLabel}・いま {g.current} → 目標 {g.target}
-                  {g.plan.progress > 0 ? `・${g.plan.progress} 段階前進` : ""}
-                  {g.plan.overdue ? "・間が空いています" : ""}
-                </span>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+                  <span style={{ flex: 1 }}>
+                    <Link href={`/contacts/${g.contactId}`} style={{ color: "#7c3aed", fontWeight: 600 }}>
+                      {g.name}
+                    </Link>
+                    <span style={{ color: "#6b21a8", fontSize: 12, marginLeft: 6 }}>
+                      {g.purposeLabel}・いま {g.current} → 目標 {g.target}
+                      {g.plan.progress > 0 ? `・${g.plan.progress} 段階前進` : ""}
+                      {g.plan.overdue ? "・間が空いています" : ""}
+                    </span>
+                  </span>
+                  {dismissX(`${g.name}さんの目標の知らせを見送る`, () => dismissSuggestion("goal_nudge", g.contactId))}
+                </div>
                 <div style={{ color: "#4c1d95", marginTop: 2 }}>{g.plan.nextMove}</div>
               </li>
             ))}
@@ -1079,18 +1138,19 @@ export default function ContactsPage() {
         </Fold>
       )}
 
-      {recentMet.length > 0 && (
+      {shownRecentMet.length > 0 && (
         <Fold k="cl9" title={<>最近お会いした方</>} style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#075985", margin: "4px 0 8px" }}>
             お変わりありませんでしたか。覚えているうちにひとことだけ残しておくと、この先の一手がぐっと的確になります。
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
-            {recentMet.map((m) => (
+            {shownRecentMet.map((m) => (
               <li key={m.contactId} style={{ fontSize: 14, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
                 <Link href={`/contacts/${m.contactId}`} style={{ color: "#0369a1", fontWeight: 600 }}>
                   {m.name}
                 </Link>
                 <span style={{ color: "#0c4a6e", fontSize: 12 }}>{m.metAt} にお会いした記録</span>
+                {dismissX(`${m.name}さんへのひとこと伺いを見送る`, () => dismissSuggestion("recent_meeting", `${m.contactId}:${m.metAt}`))}
                 {metSaved[m.contactId] ? (
                   <span style={{ color: "#047857", fontSize: 13 }}>残しました。ありがとうございます</span>
                 ) : (
@@ -1119,7 +1179,7 @@ export default function ContactsPage() {
         </Fold>
       )}
 
-      {dailyQ && !dailySaved && (
+      {dailyQ && !dailySaved && !dailyQDismissed && (
         <Fold k="cl10" title={<>今日のひとこと</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 14, color: "#78350f", margin: "4px 0 8px" }}>{dailyQ.question}</p>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -1142,7 +1202,11 @@ export default function ContactsPage() {
             </button>
             <button
               style={{ padding: "6px 10px", background: "transparent", color: "#92400e", border: "1px solid #fcd34d", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
-              onClick={() => setDailySaved(true)}
+              onClick={() => {
+                setDailySaved(true);
+                // 今日いっぱいは出さない (明日は別の一問がまた出る)
+                dismissSuggestion("daily_question", `${dailyQ.contactId}:${todayKey}`);
+              }}
             >
               今日はやめておく
             </button>
@@ -1153,18 +1217,21 @@ export default function ContactsPage() {
         </Fold>
       )}
 
-      {firstMoves.length > 0 && (
+      {shownFirstMoves.length > 0 && (
         <Fold k="cl11" title={<>新しく迎えた方へ、はじめの一手</>} style={{ margin: "16px 0", border: "1px solid #a7f3d0", background: "#ecfdf5", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#065f46", margin: "4px 0 8px" }}>
             最近お迎えした方のうち、いま動くとよさそうな方です。詳しい進め方は、お名前を開いて「この方への対応を考える」からどうぞ。
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
-            {firstMoves.map((m) => (
-              <li key={m.contactId} style={{ fontSize: 14 }}>
-                <Link href={`/contacts/${m.contactId}`} style={{ color: "#047857", fontWeight: 600 }}>
-                  {m.name}
-                </Link>
-                <span style={{ color: "#064e3b" }}> — {m.reason}</span>
+            {shownFirstMoves.slice(0, 8).map((m) => (
+              <li key={m.contactId} style={{ fontSize: 14, display: "flex", alignItems: "baseline", gap: 4 }}>
+                <span style={{ flex: 1 }}>
+                  <Link href={`/contacts/${m.contactId}`} style={{ color: "#047857", fontWeight: 600 }}>
+                    {m.name}
+                  </Link>
+                  <span style={{ color: "#064e3b" }}> — {m.reason}</span>
+                </span>
+                {dismissX(`${m.name}さんへのはじめの一手を見送る`, () => dismissSuggestion("first_move", m.contactId))}
               </li>
             ))}
           </ul>

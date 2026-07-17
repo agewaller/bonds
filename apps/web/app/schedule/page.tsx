@@ -256,7 +256,10 @@ export default function SchedulePage() {
 
   return (
     <main style={{ maxWidth: 860, margin: "0 auto", padding: "40px 16px" }}>
-      <AuthBar />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 16, alignItems: "center" }}>
+        <Link href="/settings" style={{ color: "#64748b", fontSize: 14 }}>設定</Link>
+        <AuthBar />
+      </div>
       <p><Link href="/contacts" style={{ color: "#2563eb" }}>連絡帳へ戻る</Link></p>
       <h1 style={{ fontSize: 24 }}>日程調整と時間の受け付け</h1>
       <p style={{ color: "#64748b", lineHeight: 1.8 }}>

@@ -15,6 +15,7 @@ export default function Home() {
       {/* サインイン/サインアウトの導線 (未ログインなら「サインイン」→/login)。
           登録・ログイン導線は摩擦を減らすため、ホームからも到達できるようにする。 */}
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 16 }}>
+        <Link href="/settings" style={{ color: "#64748b", fontSize: 14, textDecoration: "none" }}>設定</Link>
         <AuthBar />
         <LanguageSelector />
       </div>

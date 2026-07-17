@@ -111,6 +111,10 @@ export default function SubjectsPage() {
 
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 16, alignItems: "center" }}>
+        <Link href="/settings" style={{ color: "#64748b", fontSize: 14 }}>設定</Link>
+        <AuthBar />
+      </div>
       <h1 style={{ fontSize: 24 }}>評価対象の人物</h1>
       <p style={{ color: "#64748b" }}>
         政治家・経営者などの公人を登録すると、意識の七次元と社会価値創造の二つの視点から評価できます。
