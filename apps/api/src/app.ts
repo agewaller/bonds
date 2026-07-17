@@ -13,7 +13,7 @@ import { isDdType, DD_TYPES, type DdType } from "./lib/dd-spec.js";
 import {
   clampName,
   slugify,
-  PERSON_DD_MONTHLY_CAP_JPY,
+  ownerMonthlyCapJpy,
   PERSON_DD_MODEL_CONFIG_KEY,
   PERSON_DD_DEFAULT_MODEL_ID,
   AI_USER_CAP_CONFIG_KEY,
@@ -302,7 +302,7 @@ export function createApp(deps: AppDeps) {
   });
 
   // ---------------- 管理: AI コスト上限 (あなた以外の利用者) ----------------
-  // オーナー本人は無制限 (PERSON_DD_MONTHLY_CAP_JPY)。それ以外の利用者に月次上限を設ける。
+  // オーナー本人は無制限 (ownerMonthlyCapJpy)。それ以外の利用者に月次上限を設ける。
   // 0 = 上限なし、正の数 = その額 (円)、未設定 = 既定 AI_USER_CAP_DEFAULT_JPY。
 
   app.get("/api/admin/ai-cost-config", async (c) => {
@@ -355,7 +355,7 @@ export function createApp(deps: AppDeps) {
     return c.json({
       monthStart: monthStart.toISOString().slice(0, 10),
       totalJpy,
-      ownerCapUnlimited: !Number.isFinite(PERSON_DD_MONTHLY_CAP_JPY),
+      ownerCapUnlimited: !Number.isFinite(ownerMonthlyCapJpy()),
       userCapJpy: Number.isFinite(userCap) ? userCap : 0,
       userCapUnlimited: !Number.isFinite(userCap),
       perUser,
@@ -443,7 +443,7 @@ export function createApp(deps: AppDeps) {
       return c.json({ name, candidates: [], unavailable: true });
     }
     const cost = await getMonthlyCostJpy(prisma);
-    if (cost >= PERSON_DD_MONTHLY_CAP_JPY) {
+    if (cost >= ownerMonthlyCapJpy()) {
       return c.json({ error: "quota_exceeded", detail: "今月の評価枠は終了しました" }, 422);
     }
     const model = await resolveModel();
@@ -638,7 +638,7 @@ export function createApp(deps: AppDeps) {
       };
     }
     const cost = await getMonthlyCostJpy(prisma);
-    if (cost >= PERSON_DD_MONTHLY_CAP_JPY) {
+    if (cost >= ownerMonthlyCapJpy()) {
       return {
         status: 422,
         body: { error: "quota_exceeded", detail: "今月の評価枠は終了しました" },
@@ -3516,7 +3516,7 @@ export function createApp(deps: AppDeps) {
 
   // AI 実行の共通ラッパ (キャップ確認 → 生成 → 使用記録)。
   // images を渡すと Vision (名刺・名簿の読み取り) になる。
-  // 利用者にかける月次上限 (円)。オーナー本人は全体で無制限 (PERSON_DD_MONTHLY_CAP_JPY)、
+  // 利用者にかける月次上限 (円)。オーナー本人は全体で無制限 (ownerMonthlyCapJpy)、
   // それ以外は app_config の設定値 (既定 AI_USER_CAP_DEFAULT_JPY) を各自の消費に効かせる。
   const resolveUserCap = async (): Promise<number> => {
     const row = await prisma.appConfig.findUnique({ where: { key: AI_USER_CAP_CONFIG_KEY } });
@@ -3544,7 +3544,7 @@ export function createApp(deps: AppDeps) {
     const cost = actor.isOwner
       ? await getMonthlyCostJpy(prisma)
       : await getMonthlyCostJpyForUser(prisma, actor.ownerUid);
-    const cap = actor.isOwner ? PERSON_DD_MONTHLY_CAP_JPY : await resolveUserCap();
+    const cap = actor.isOwner ? ownerMonthlyCapJpy() : await resolveUserCap();
     if (cost >= cap) {
       return { ok: false, status: 422, body: { error: "quota_exceeded", detail: "今月の利用枠は終了しました" } };
     }

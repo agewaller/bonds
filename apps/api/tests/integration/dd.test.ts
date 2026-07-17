@@ -237,7 +237,10 @@ describe("run (両評価並列)", () => {
     expect(call).toBe(2);
   });
 
-  it("月次キャップ到達で 422 (フォールバックなし)", async () => {
+  it("月次キャップ到達で 422 (フォールバックなし)。既定 (env 未設定) は上限なし", async () => {
+    // 既定はオーナー無制限 (2026-07-17 オーナー指示)。キャップ機構そのものは
+    // env を明示的に入れたときだけ効く — このテストは機構が生きていることを確かめる
+    process.env.PERSON_DD_MONTHLY_CAP_JPY = "3000";
     await prisma.aiUsageLog.create({
       data: {
         provider: "anthropic",
@@ -248,14 +251,26 @@ describe("run (両評価並列)", () => {
         costJpy: 999999,
       },
     });
-    const app = createApp({ prisma, generate: validGenerate });
-    const s = await createSubject(app);
-    const res = await app.request(`/api/dd/subjects/${s.slug}/run`, {
-      method: "POST",
-      headers: adminHeaders,
-      body: JSON.stringify({}),
-    });
-    expect(res.status).toBe(422);
+    try {
+      const app = createApp({ prisma, generate: validGenerate });
+      const s = await createSubject(app);
+      const res = await app.request(`/api/dd/subjects/${s.slug}/run`, {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(422);
+      // env を外す (= 既定) と同じ消費でも通る = オーナーに利用枠は無い
+      delete process.env.PERSON_DD_MONTHLY_CAP_JPY;
+      const res2 = await app.request(`/api/dd/subjects/${s.slug}/run`, {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({}),
+      });
+      expect(res2.status).toBe(200);
+    } finally {
+      delete process.env.PERSON_DD_MONTHLY_CAP_JPY;
+    }
   });
 
   it("AI キー未設定 (generate=null) は 503", async () => {

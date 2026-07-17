@@ -290,18 +290,31 @@ describe("発信 (draft → approve → send)", () => {
     expect(res.status).toBe(502);
   });
 
-  it("月次キャップ到達で draft 生成は 422", async () => {
-    await prisma.aiUsageLog.create({
-      data: { provider: "anthropic", model: "claude-sonnet-4-6", purpose: "outreach_gen", inputTokens: 0, outputTokens: 0, costJpy: 999999 },
-    });
-    const app = makeApp();
-    const c = await createContact(app);
-    const res = await app.request("/api/outreach/draft", {
-      method: "POST",
-      headers: H,
-      body: JSON.stringify({ contactId: c.id }),
-    });
-    expect(res.status).toBe(422);
+  it("月次キャップは env を明示したときだけ効き、既定はオーナー無制限", async () => {
+    // 既定 (env 未設定) はオーナーに利用枠を設けない (2026-07-17 オーナー指示)
+    process.env.PERSON_DD_MONTHLY_CAP_JPY = "3000";
+    try {
+      await prisma.aiUsageLog.create({
+        data: { provider: "anthropic", model: "claude-sonnet-4-6", purpose: "outreach_gen", inputTokens: 0, outputTokens: 0, costJpy: 999999 },
+      });
+      const app = makeApp();
+      const c = await createContact(app);
+      const res = await app.request("/api/outreach/draft", {
+        method: "POST",
+        headers: H,
+        body: JSON.stringify({ contactId: c.id }),
+      });
+      expect(res.status).toBe(422);
+      delete process.env.PERSON_DD_MONTHLY_CAP_JPY;
+      const res2 = await app.request("/api/outreach/draft", {
+        method: "POST",
+        headers: H,
+        body: JSON.stringify({ contactId: c.id }),
+      });
+      expect(res2.status).toBe(201);
+    } finally {
+      delete process.env.PERSON_DD_MONTHLY_CAP_JPY;
+    }
   });
 });
 
