@@ -84,9 +84,11 @@ describe("startOptions", () => {
     expect(opts[0]!.end.getHours()).toBe(10);
   });
 
-  it("半端な開始 (9:10) は次の切りのよい時刻 (9:30) に揃える", () => {
+  it("半端な開始 (9:10) は次の切りのよい時刻 (9:30) に揃える (常にグリッド固定)", () => {
     const opts = startOptions([iv(9, 10, 11, 0)], 60);
     expect(opts[0]!.start.getMinutes()).toBe(30);
+    // 開始 9:00 ちょうどはそのまま 9:00
+    expect(startOptions([iv(9, 0, 11, 0)], 60)[0]!.start.getMinutes()).toBe(0);
   });
 
   it("上限で打ち切る", () => {

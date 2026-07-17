@@ -51,6 +51,7 @@ import {
   parseAvailability,
   availabilityToJson,
   freeIntervalsByAvailability,
+  fullDayAvailability,
   startOptions,
   filterValidCandidates,
   intervalsToIso,
@@ -2824,13 +2825,25 @@ export function createApp(deps: AppDeps) {
       where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
     });
     if (!share) return c.json({ error: "not_found" }, 404);
-    const proposals = await prisma.scheduleShareProposal.findMany({
-      where: { shareId: share.id },
-      orderBy: { createdAt: "desc" },
-      take: 100,
-    });
+    const [proposals, participants] = await Promise.all([
+      prisma.scheduleShareProposal.findMany({
+        where: { shareId: share.id },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+      prisma.scheduleShareParticipant.findMany({
+        where: { shareId: share.id },
+        orderBy: { createdAt: "asc" },
+      }),
+    ]);
     const { passwordHash: _ph, ...rest } = share;
-    return c.json({ ...rest, proposals, hasPassword: !!share.passwordHash, url: `${publicWebUrl}/s/${share.shareKey}` });
+    return c.json({
+      ...rest,
+      proposals,
+      participants: participants.map((p) => ({ id: p.id, name: p.name, updatedAt: p.updatedAt })),
+      hasPassword: !!share.passwordHash,
+      url: `${publicWebUrl}/s/${share.shareKey}`,
+    });
   });
 
   // 共有リンクの更新 (ひとこと・期間・パスワード・期限・閉じる)
@@ -2963,6 +2976,13 @@ export function createApp(deps: AppDeps) {
     const share = await loadVisibleShare(c.req.param("shareKey"));
     if (!share) return c.json({ error: "not_found", detail: "このページは終了したか、見つかりませんでした" }, 404);
     const locked = !shareUnlocked(share, c.req.query("proof"));
+    const participants = locked
+      ? []
+      : await prisma.scheduleShareParticipant.findMany({
+          where: { shareId: share.id },
+          orderBy: { createdAt: "asc" },
+          select: { name: true },
+        });
     return c.json({
       locked,
       title: share.title,
@@ -2976,6 +2996,7 @@ export function createApp(deps: AppDeps) {
             periodStart: share.periodStart,
             periodEnd: share.periodEnd,
             slotMinutes: share.slotMinutes,
+            participants: participants.map((p) => p.name),
           }),
     });
   });
@@ -2991,27 +3012,130 @@ export function createApp(deps: AppDeps) {
     return c.json({ proof: shareProof(share.shareKey, share.passwordHash) });
   });
 
-  // 相手に見せる選択肢 (空き枠を面談時間で刻んだ開始時刻)。予定の中身は一切出さない
+  // 相手に見せる選択肢 (空き枠を面談時間で刻んだ開始時刻)。予定の中身は一切出さない。
+  // 参加者 (同じ URL に入って予定表を重ねた方) がいれば、全員の共通の空きに絞る
+  // (timeshare の重なり表示の踏襲)。
   const shareStartOptions = async (share: {
+    id: string;
     ownerUid: string;
     periodStart: Date;
     periodEnd: Date;
     slotMinutes: number;
-  }): Promise<Interval[]> => {
-    const { free } = await myFreeIntervals(share.ownerUid, {
-      from: new Date(),
-      periodStart: share.periodStart,
-      periodEnd: share.periodEnd,
-    });
-    return startOptions(free, share.slotMinutes);
+  }): Promise<{ options: Interval[]; participantNames: string[] }> => {
+    const period = { from: new Date(), periodStart: share.periodStart, periodEnd: share.periodEnd };
+    const [{ free, avail }, participants] = await Promise.all([
+      myFreeIntervals(share.ownerUid, period),
+      prisma.scheduleShareParticipant.findMany({ where: { shareId: share.id }, orderBy: { createdAt: "asc" } }),
+    ]);
+    let common = free;
+    for (const p of participants) {
+      // 参加者の空き = 期間内の busy の補集合 (終日)。時間帯の制約は主催者の空きが担う
+      const pFree = freeIntervalsByAvailability(
+        parseIsoIntervals(p.busySlots),
+        period,
+        fullDayAvailability(avail.minMinutes),
+      );
+      common = intersectSlots(common, pFree, avail.minMinutes);
+    }
+    return { options: startOptions(common, share.slotMinutes), participantNames: participants.map((p) => p.name) };
   };
 
   app.get("/api/public/schedule/:shareKey/slots", async (c) => {
     const share = await loadVisibleShare(c.req.param("shareKey"));
     if (!share) return c.json({ error: "not_found" }, 404);
     if (!shareUnlocked(share, c.req.query("proof"))) return c.json({ error: "locked" }, 403);
-    const options = await shareStartOptions(share);
-    return c.json({ options: intervalsToIso(options), slotMinutes: share.slotMinutes });
+    const { options, participantNames } = await shareStartOptions(share);
+    return c.json({
+      options: intervalsToIso(options),
+      slotMinutes: share.slotMinutes,
+      participants: participantNames,
+      basis: participantNames.length > 0 ? "common" : "owner",
+    });
+  });
+
+  // 参加者の予定表の受け取り (ICS の URL / 貼り付け / 枠の配列)。予定の中身は保存せず
+  // busy の枠 (時刻) だけを預かる。名乗りと ICS URL は暗号化。
+  const MAX_PARTICIPANTS_PER_SHARE = 10;
+  const MAX_PARTICIPANT_BUSY = 2000;
+
+  const parseParticipantBusy = async (
+    body: Record<string, unknown>,
+  ): Promise<{ busy: ReturnType<typeof toIso>; icsUrl: string | null } | { error: string; detail: string }> => {
+    if (typeof body.icsUrl === "string" && body.icsUrl.trim()) {
+      const url = body.icsUrl.trim();
+      if (!/^https:\/\//.test(url)) return { error: "invalid_url", detail: "https の予定表アドレスを入れてください" };
+      if (!fetchText) return { error: "unavailable", detail: "いまは予定表を取得できません" };
+      let content: string;
+      try {
+        content = await fetchText(url);
+      } catch {
+        return { error: "ics_fetch_failed", detail: "予定表を取得できませんでした。アドレスを確かめてください" };
+      }
+      if (!looksLikeIcs(content)) return { error: "not_ics", detail: "予定表の形式を読み取れませんでした" };
+      return { busy: parseIcsBusy(content).slice(0, MAX_PARTICIPANT_BUSY), icsUrl: url };
+    }
+    if (typeof body.ics === "string" && body.ics.trim()) {
+      if (!looksLikeIcs(body.ics)) return { error: "not_ics", detail: "予定表の形式を読み取れませんでした" };
+      return { busy: parseIcsBusy(body.ics).slice(0, MAX_PARTICIPANT_BUSY), icsUrl: null };
+    }
+    return { busy: toIso(parseIsoIntervals(body.busySlots)).slice(0, MAX_PARTICIPANT_BUSY), icsUrl: null };
+  };
+
+  app.post("/api/public/schedule/:shareKey/participants", async (c) => {
+    const share = await loadVisibleShare(c.req.param("shareKey"));
+    if (!share) return c.json({ error: "not_found" }, 404);
+    const body = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    if (!shareUnlocked(share, typeof body.proof === "string" ? body.proof : undefined)) {
+      return c.json({ error: "locked" }, 403);
+    }
+    const name = sanitizeProse(typeof body.name === "string" ? body.name : "").trim().slice(0, 60);
+    if (!name) return c.json({ error: "name_required", detail: "お名前を入れてください" }, 400);
+    const count = await prisma.scheduleShareParticipant.count({ where: { shareId: share.id } });
+    if (count >= MAX_PARTICIPANTS_PER_SHARE) {
+      return c.json({ error: "too_many", detail: "重ねられる人数がいっぱいです" }, 429);
+    }
+    const parsed = await parseParticipantBusy(body);
+    if ("error" in parsed) return c.json(parsed, 400);
+    const participant = await prisma.scheduleShareParticipant.create({
+      data: {
+        shareId: share.id,
+        participantKey: randomUUID(),
+        name,
+        icsUrl: parsed.icsUrl,
+        busySlots: parsed.busy as never,
+      },
+    });
+    return c.json({ joined: true, participantKey: participant.participantKey }, 201);
+  });
+
+  // 自分の分の更新 (最新の予定表を入れ直す)。participantKey が本人の鍵
+  app.put("/api/public/schedule/:shareKey/participants/:participantKey", async (c) => {
+    const share = await loadVisibleShare(c.req.param("shareKey"));
+    if (!share) return c.json({ error: "not_found" }, 404);
+    const participant = await prisma.scheduleShareParticipant.findFirst({
+      where: { participantKey: c.req.param("participantKey"), shareId: share.id },
+    });
+    if (!participant) return c.json({ error: "not_found" }, 404);
+    const body = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const parsed = await parseParticipantBusy(body);
+    if ("error" in parsed) return c.json(parsed, 400);
+    await prisma.scheduleShareParticipant.update({
+      where: { id: participant.id },
+      data: { busySlots: parsed.busy as never, ...(parsed.icsUrl ? { icsUrl: parsed.icsUrl } : {}) },
+    });
+    return c.json({ updated: true });
+  });
+
+  // 自分の分を外す (1 件単位の削除の導線はゲストにも用意する = データ主権)
+  app.delete("/api/public/schedule/:shareKey/participants/:participantKey", async (c) => {
+    const share = await loadVisibleShare(c.req.param("shareKey"));
+    if (!share) return c.json({ error: "not_found" }, 404);
+    const participant = await prisma.scheduleShareParticipant.findFirst({
+      where: { participantKey: c.req.param("participantKey"), shareId: share.id },
+    });
+    if (!participant) return c.json({ error: "not_found" }, 404);
+    await prisma.scheduleShareParticipant.delete({ where: { id: participant.id } });
+    return c.json({ deleted: true });
   });
 
   const MAX_OPEN_PROPOSALS_PER_SHARE = 30;
@@ -3031,8 +3155,8 @@ export function createApp(deps: AppDeps) {
     if (open >= MAX_OPEN_PROPOSALS_PER_SHARE) {
       return c.json({ error: "too_many", detail: "受け付けがいっぱいです。しばらくしてからお試しください" }, 429);
     }
-    // サーバ側の最終検証: いま本当に空いている選択肢に一致する候補だけ通す
-    const options = await shareStartOptions(share);
+    // サーバ側の最終検証: いま本当に空いている選択肢 (参加者がいれば共通の空き) に一致する候補だけ通す
+    const { options } = await shareStartOptions(share);
     const valid = filterValidCandidates(input.candidates, options);
     if (valid.length === 0) {
       return c.json(

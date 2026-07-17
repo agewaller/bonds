@@ -48,6 +48,8 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
   exchange: ["title", "notes"],
   // 日程調整の提案・時間の予約: 相手 (第三者) の名乗り・連絡先・メッセージは PII = 暗号化
   scheduleShareProposal: ["guestName", "guestContact", "message"],
+  // 共有の参加者: 名乗りと予定表 URL (秘密のアドレス = 実質トークン) は暗号化
+  scheduleShareParticipant: ["name", "icsUrl"],
   timeBooking: ["guestName", "guestContact", "message"],
   // あなたへの提案: 本文は相手の状況に触れうる = 暗号化
   careSuggestion: ["body"],

@@ -416,10 +416,30 @@ model ScheduleShare {
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
-  proposals ScheduleShareProposal[]
+  proposals    ScheduleShareProposal[]
+  participants ScheduleShareParticipant[]
 
   @@index([ownerUid, state])
   @@map("schedule_shares")
+}
+
+/// 共有リンクの参加者 (timeshare の FreeTimeShareUser の概念を新規実装)。
+/// 同じ URL に入った相手が自分の予定表 (ICS) を重ねると、ページは全員の共通の
+/// 空き時間だけを表示する。名乗りと ICS URL (秘密のアドレス) は暗号化。
+/// busy の中身は枠 (時刻) のみで予定の中身は保存しない。
+model ScheduleShareParticipant {
+  id             String        @id @default(uuid())
+  shareId        String        @map("share_id")
+  share          ScheduleShare @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  participantKey String        @unique @map("participant_key") // 本人が自分の分を更新するための鍵
+  name           String // 暗号化 (第三者の名乗り)
+  icsUrl         String?       @map("ics_url") // 暗号化 (予定表の購読 URL = 実質トークン)
+  busySlots      Json          @map("busy_slots") // [{start, end}] 時刻のみ
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  @@index([shareId])
+  @@map("schedule_share_participants")
 }
 
 /// 共有リンクへの相手からの候補提案。相手 (第三者) の名乗り・連絡先・メッセージは PII = 暗号化。

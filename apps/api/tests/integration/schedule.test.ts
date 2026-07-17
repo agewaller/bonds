@@ -23,7 +23,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "schedule_share_proposals", "schedule_shares", "time_bookings", "time_offers", "availability_settings", "calendar_links", "contact_interactions", "contacts", "prompts", "app_config" CASCADE',
+    'TRUNCATE "schedule_share_participants", "schedule_share_proposals", "schedule_shares", "time_bookings", "time_offers", "availability_settings", "calendar_links", "contact_interactions", "contacts", "prompts", "app_config" CASCADE',
   );
   await seedDdPrompts(prisma);
 });
@@ -175,6 +175,132 @@ describe("共有リンクの日程調整 (一気通貫)", () => {
     const del = await app.request(`/api/schedule/shares/${created.id}`, { method: "DELETE", headers: H });
     expect(del.status).toBe(200);
     expect(await prisma.scheduleShare.count()).toBe(0);
+  });
+});
+
+describe("予定表の重ね合わせ (timeshare の共通空き時間の踏襲)", () => {
+  // 期間中の 1 日について ICS の busy を組み立てる (ローカル時刻)
+  const icsFor = (day: Date, ranges: Array<[number, number]>) => {
+    const d = `${day.getFullYear()}${String(day.getMonth() + 1).padStart(2, "0")}${String(day.getDate()).padStart(2, "0")}`;
+    const events = ranges
+      .map(
+        ([s, e]) =>
+          `BEGIN:VEVENT\nDTSTART:${d}T${String(s).padStart(2, "0")}0000\nDTEND:${d}T${String(e).padStart(2, "0")}0000\nEND:VEVENT`,
+      )
+      .join("\n");
+    return `BEGIN:VCALENDAR\n${events}\nEND:VCALENDAR`;
+  };
+
+  it("参加者が予定表を重ねると共通の空きだけになり、二人目でさらに絞られ、取り消すと戻る", async () => {
+    const app = makeApp();
+    // 期間 5 日 = 選択肢が上限 (200 件) に届かない長さにし、上限の窓ずれを排除して
+    // 「共通の空きは元の選択肢の部分集合」を厳密に確かめる
+    const created = await (
+      await app.request("/api/schedule/shares", { method: "POST", headers: H, body: JSON.stringify({ periodDays: 5 }) })
+    ).json();
+    const base = await (await app.request(`/api/public/schedule/${created.shareKey}/slots`)).json();
+    expect(base.basis).toBe("owner");
+    const ownerStarts = new Set((base.options as { start: string }[]).map((o) => o.start));
+
+    // 参加者A: 明後日の 9-12 時が埋まっている予定表を重ねる
+    const day = new Date();
+    day.setDate(day.getDate() + 2);
+    const joinA = await (
+      await app.request(`/api/public/schedule/${created.shareKey}/participants`, {
+        method: "POST",
+        headers: PUB,
+        body: JSON.stringify({ name: "参加 一郎", ics: icsFor(day, [[9, 12]]) }),
+      })
+    ).json();
+    expect(joinA.participantKey).toBeTruthy();
+
+    const afterA = await (await app.request(`/api/public/schedule/${created.shareKey}/slots`)).json();
+    expect(afterA.basis).toBe("common");
+    expect(afterA.participants).toEqual(["参加 一郎"]);
+    const startsA = (afterA.options as { start: string }[]).map((o) => o.start);
+    // 元の選択肢の部分集合で、明後日の午前 (9-12時) は消えている
+    for (const s of startsA) expect(ownerStarts.has(s)).toBe(true);
+    const morningGone = startsA.filter((s) => {
+      const d = new Date(s);
+      return d.getDate() === day.getDate() && d.getHours() >= 9 && d.getHours() < 12;
+    });
+    expect(morningGone).toHaveLength(0);
+    expect(startsA.length).toBeGreaterThan(0);
+    expect(startsA.length).toBeLessThan(ownerStarts.size);
+
+    // 名乗りは DB 上暗号化 (第三者の PII)
+    const raw = await prisma.$queryRawUnsafe<{ name: string }[]>("SELECT name FROM schedule_share_participants LIMIT 1");
+    expect(isEncrypted(raw[0]!.name)).toBe(true);
+
+    // 参加者B: 同じ日の 13-18 時も埋まっている → その日はさらに絞られる
+    await app.request(`/api/public/schedule/${created.shareKey}/participants`, {
+      method: "POST",
+      headers: PUB,
+      body: JSON.stringify({ name: "参加 二子", ics: icsFor(day, [[13, 18]]) }),
+    });
+    const afterB = await (await app.request(`/api/public/schedule/${created.shareKey}/slots`)).json();
+    expect(afterB.participants).toEqual(["参加 一郎", "参加 二子"]);
+    const dayStartsB = (afterB.options as { start: string }[]).filter((o) => new Date(o.start).getDate() === day.getDate());
+    // その日は 12-13 時に収まる開始時刻だけが残る (60 分面談なので実質 12:00 のみ)
+    for (const o of dayStartsB) {
+      const d = new Date(o.start);
+      expect(d.getHours()).toBe(12);
+    }
+
+    // 提案の検証も共通の空きに従う: 消えた時間 (9時台) は 409 で弾かれる
+    const gone = (base.options as { start: string; end: string }[]).find((o) => {
+      const d = new Date(o.start);
+      return d.getDate() === day.getDate() && d.getHours() === 9;
+    });
+    if (gone) {
+      const denied = await app.request(`/api/public/schedule/${created.shareKey}/proposals`, {
+        method: "POST",
+        headers: PUB,
+        body: JSON.stringify({ guestName: "参加 一郎", candidates: [gone] }),
+      });
+      expect(denied.status).toBe(409);
+    }
+
+    // 入れ直し (PUT): 空の予定表 → その参加者の制約が消える
+    await app.request(`/api/public/schedule/${created.shareKey}/participants/${joinA.participantKey}`, {
+      method: "PUT",
+      headers: PUB,
+      body: JSON.stringify({ ics: "BEGIN:VCALENDAR\nEND:VCALENDAR" }),
+    });
+    // 取り消し (DELETE): B も外すと元の選択肢に戻る
+    const afterUpdate = await (await app.request(`/api/public/schedule/${created.shareKey}`)).json();
+    expect(afterUpdate.participants).toHaveLength(2);
+    const keyB = (await prisma.scheduleShareParticipant.findMany()).find((p) => p.name === "参加 二子")!.participantKey;
+    await app.request(`/api/public/schedule/${created.shareKey}/participants/${keyB}`, { method: "DELETE" });
+    await app.request(`/api/public/schedule/${created.shareKey}/participants/${joinA.participantKey}`, {
+      method: "DELETE",
+    });
+    const restored = await (await app.request(`/api/public/schedule/${created.shareKey}/slots`)).json();
+    expect(restored.basis).toBe("owner");
+    expect((restored.options as unknown[]).length).toBe(ownerStarts.size);
+
+    // オーナーの詳細にも参加者が載る (この時点では 0 名)
+    const detail = await (await app.request(`/api/schedule/shares/${created.id}`, { headers: H })).json();
+    expect(detail.participants).toHaveLength(0);
+  });
+
+  it("名乗りは必須・予定表の形式が読めなければ 400・人数に上限がある", async () => {
+    const app = makeApp();
+    const created = await (
+      await app.request("/api/schedule/shares", { method: "POST", headers: H, body: "{}" })
+    ).json();
+    const noName = await app.request(`/api/public/schedule/${created.shareKey}/participants`, {
+      method: "POST",
+      headers: PUB,
+      body: JSON.stringify({ ics: "BEGIN:VCALENDAR\nEND:VCALENDAR" }),
+    });
+    expect(noName.status).toBe(400);
+    const badIcs = await app.request(`/api/public/schedule/${created.shareKey}/participants`, {
+      method: "POST",
+      headers: PUB,
+      body: JSON.stringify({ name: "参加 三郎", ics: "こんにちは" }),
+    });
+    expect(badIcs.status).toBe(400);
   });
 });
 

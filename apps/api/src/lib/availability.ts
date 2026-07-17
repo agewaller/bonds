@@ -125,10 +125,10 @@ export function startOptions(
   const stepMs = stepMinutes * 60 * 1000;
   const out: Interval[] = [];
   for (const iv of free) {
-    // 開始時刻を step の切りのよい時刻 (毎時 0 分 / 30 分など) に揃える
-    let t = Math.ceil(iv.start.getTime() / stepMs) * stepMs;
-    if (t > iv.start.getTime() && t - iv.start.getTime() < 60 * 1000) t = iv.start.getTime();
-    for (; t + slotMs <= iv.end.getTime(); t += stepMs) {
+    // 開始時刻は常に step の切りのよい時刻 (毎時 0 分 / 30 分など) に揃える。
+    // 「いま」由来の半端な開始をそのまま出すと、選択肢が呼び出し時刻に依存して
+    // 揺れる (重ね合わせの前後で別物になる) ため、グリッドに固定する
+    for (let t = Math.ceil(iv.start.getTime() / stepMs) * stepMs; t + slotMs <= iv.end.getTime(); t += stepMs) {
       out.push({ start: new Date(t), end: new Date(t + slotMs) });
       if (out.length >= maxOptions) return out;
     }
@@ -148,6 +148,17 @@ export function filterValidCandidates(candidates: Interval[], options: Interval[
     out.push(cand);
   }
   return out;
+}
+
+/**
+ * 参加者 (第三者) の空き計算用: 終日 (0:00-24:00)・余白なしの設定。
+ * 参加者は busy (予定表) だけを預かるので、空き = 期間内の busy の補集合とする。
+ * 受け付け時間帯の制約は主催者側の空きとの積集合が担ってくれる。
+ */
+export function fullDayAvailability(minMinutes: number): Availability {
+  const days = {} as Record<WeekdayKey, WeekdayWindow>;
+  for (const k of WEEKDAY_KEYS) days[k] = { enabled: true, startHour: 0, startMinute: 0, endHour: 24, endMinute: 0 };
+  return { days, bufferMinutes: 0, minMinutes };
 }
 
 /** JSON 保存用: Availability を DB の Json 列へ渡せる形にする。 */

@@ -34,7 +34,10 @@ type Proposal = {
   decidedSlot: { start: string; end: string } | null;
   createdAt: string;
 };
-type ShareDetail = ShareRow & { proposals: Proposal[] };
+type ShareDetail = ShareRow & {
+  proposals: Proposal[];
+  participants: { id: string; name: string; updatedAt: string }[];
+};
 type OfferRow = {
   id: string;
   url: string;
@@ -362,6 +365,12 @@ export default function SchedulePage() {
               </div>
               {detail?.id === s.id && (
                 <div style={{ marginTop: 8, background: "#fff", borderRadius: 8, padding: "8px 12px" }}>
+                  {detail.participants.length > 0 && (
+                    <p style={{ margin: "2px 0 6px", color: "#166534", fontSize: 13 }}>
+                      予定表を重ねている方: {detail.participants.map((p) => p.name).join("さん、")}さん
+                      (このページはみんなの共通の空きだけを表示しています)
+                    </p>
+                  )}
                   {detail.proposals.length === 0 && <p style={{ margin: 4, color: "#64748b" }}>まだ提案は届いていません。</p>}
                   {detail.proposals.map((p) => (
                     <div key={p.id} style={{ borderBottom: "1px solid #f1f5f9", padding: "6px 0" }}>
