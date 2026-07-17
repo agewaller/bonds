@@ -3,8 +3,9 @@
 // timeshare のインターフェイスを踏襲: 空き時間を週間カレンダーで見せ、同じ URL に
 // 入った相手が自分の予定表 (ICS) を重ねると、全員に共通の空き時間だけが表示される。
 // 予定の中身は互いに一切見えない (見えるのは空き枠だけ)。
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import ShareSlotCalendar from "../../../components/ShareSlotCalendar";
 
 type ShareInfo = {
   locked: boolean;
@@ -39,113 +40,7 @@ const btn = (primary = true): React.CSSProperties => ({
 
 const WD = ["日", "月", "火", "水", "木", "金", "土"];
 const dayLabel = (d: Date) => `${d.getMonth() + 1}月${d.getDate()}日(${WD[d.getDay()]})`;
-const shortDay = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
 const timeLabel = (d: Date) => `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
-
-// 週間カレンダー (timeshare 風)。空いている開始時刻をセルとして描き、タップで候補に選ぶ。
-function SlotCalendar({
-  options,
-  chosen,
-  onToggle,
-  common,
-}: {
-  options: IsoSlot[];
-  chosen: string[];
-  onToggle: (start: string) => void;
-  common: boolean;
-}) {
-  const { days, times, cellMap } = useMemo(() => {
-    const dayKeys: string[] = [];
-    const daySet = new Set<string>();
-    const map = new Map<string, IsoSlot>(); // `${dayKey}|${minutes}` → option
-    let minMin = 24 * 60;
-    let maxMin = 0;
-    for (const o of options) {
-      const d = new Date(o.start);
-      const dk = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-      if (!daySet.has(dk)) {
-        daySet.add(dk);
-        dayKeys.push(dk);
-      }
-      const minutes = d.getHours() * 60 + d.getMinutes();
-      minMin = Math.min(minMin, minutes);
-      maxMin = Math.max(maxMin, minutes);
-      map.set(`${dk}|${minutes}`, o);
-    }
-    const rows: number[] = [];
-    for (let t = Math.floor(minMin / 30) * 30; t <= maxMin; t += 30) rows.push(t);
-    return { days: dayKeys.slice(0, 28), times: rows, cellMap: map };
-  }, [options]);
-
-  if (options.length === 0) return null;
-  const firstOf = (dk: string) => {
-    const [y, m, d] = dk.split("-").map(Number);
-    return new Date(y!, m!, d!);
-  };
-
-  return (
-    <div style={{ overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 12, marginTop: 12 }}>
-      <table style={{ borderCollapse: "collapse", minWidth: days.length * 64 + 56 }}>
-        <thead>
-          <tr>
-            <th style={{ position: "sticky", left: 0, background: "#f8fafc", minWidth: 52 }} />
-            {days.map((dk) => {
-              const d = firstOf(dk);
-              return (
-                <th key={dk} style={{ padding: "6px 4px", fontSize: 12, color: [0, 6].includes(d.getDay()) ? "#b91c1c" : "#334155", fontWeight: 600, background: "#f8fafc", minWidth: 60 }}>
-                  {shortDay(d)}
-                  <br />
-                  <span style={{ fontWeight: 400 }}>{WD[d.getDay()]}</span>
-                </th>
-              );
-            })}
-          </tr>
-        </thead>
-        <tbody>
-          {times.map((t) => (
-            <tr key={t}>
-              <td style={{ position: "sticky", left: 0, background: "#f8fafc", fontSize: 11, color: "#64748b", padding: "2px 6px", textAlign: "right", verticalAlign: "top" }}>
-                {t % 60 === 0 ? `${t / 60}:00` : ""}
-              </td>
-              {days.map((dk) => {
-                const o = cellMap.get(`${dk}|${t}`);
-                if (!o) {
-                  return <td key={dk} style={{ borderTop: "1px solid #f1f5f9", borderLeft: "1px solid #f1f5f9", height: 26 }} />;
-                }
-                const on = chosen.includes(o.start);
-                const d = new Date(o.start);
-                return (
-                  <td key={dk} style={{ borderTop: "1px solid #f1f5f9", borderLeft: "1px solid #f1f5f9", padding: 1, height: 26 }}>
-                    <button
-                      onClick={() => onToggle(o.start)}
-                      aria-pressed={on}
-                      aria-label={`${dayLabel(d)} ${timeLabel(d)} から`}
-                      style={{
-                        display: "block",
-                        width: "100%",
-                        height: "100%",
-                        minHeight: 24,
-                        border: on ? "2px solid #1d4ed8" : "none",
-                        borderRadius: 4,
-                        background: on ? "#2563eb" : common ? "#bbf7d0" : "#bfdbfe",
-                        color: on ? "#fff" : "#1e3a5f",
-                        fontSize: 10,
-                        cursor: "pointer",
-                        padding: 0,
-                      }}
-                    >
-                      {timeLabel(d)}
-                    </button>
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 export default function PublicSchedulePage() {
   const { key } = useParams<{ key: string }>();
@@ -499,13 +394,13 @@ export default function PublicSchedulePage() {
         </p>
       )}
 
-      {/* 週間カレンダー (timeshare 風)。色つきのマスが空き、タップで候補に選ぶ */}
+      {/* 週間カレンダー (timeshare と同じ FullCalendar)。色つきのマスが空き、タップで候補に選ぶ */}
       {options && options.length > 0 && (
         <>
           <p style={{ color: "#64748b", fontSize: 13, margin: "12px 0 0" }}>
-            色のついた時間が{basis === "common" ? "みんなの共通の" : ""}空きです。よこにも動かせます。
+            色のついた時間が{basis === "common" ? "みんなの共通の" : ""}空きです。前後の週は矢印で動かせます。
           </p>
-          <SlotCalendar options={options} chosen={chosen} onToggle={toggle} common={basis === "common"} />
+          <ShareSlotCalendar options={options} chosen={chosen} onToggle={toggle} common={basis === "common"} maxChoices={3} />
         </>
       )}
 

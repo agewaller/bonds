@@ -4,6 +4,7 @@ import {
   defaultAvailability,
   parseAvailability,
   freeIntervalsByAvailability,
+  freeIntervalsWithExplicitSlots,
   startOptions,
   filterValidCandidates,
 } from "../../src/lib/availability.js";
@@ -73,6 +74,64 @@ describe("freeIntervalsByAvailability", () => {
     const free = freeIntervalsByAvailability([], { ...period, from: new Date(2026, 6, 20, 15, 0), periodEnd: new Date(2026, 6, 20, 23, 0) }, defaultAvailability());
     expect(free).toHaveLength(1);
     expect(free[0]!.start.getHours()).toBe(15);
+  });
+});
+
+describe("freeIntervalsWithExplicitSlots (カレンダーをなぞった明示枠)", () => {
+  // 期間: 月曜 7/20 0:00 〜 火曜 7/21 23:00。from は期間の頭 (過去の切り詰めなし)
+  const period = {
+    from: new Date(2026, 6, 20, 0, 0),
+    periodStart: new Date(2026, 6, 20, 0, 0),
+    periodEnd: new Date(2026, 6, 21, 23, 0),
+  };
+
+  it("なぞった日はその枠だけ・なぞっていない日は曜日窓 (日単位の優先)", () => {
+    // 月曜だけ 19:00-21:00 をなぞる → 月曜は夜だけ、火曜は既定の 9-18
+    const free = freeIntervalsWithExplicitSlots([], period, defaultAvailability(), [iv(19, 0, 21, 0)]);
+    expect(free).toHaveLength(2);
+    expect(free[0]!.start.getHours()).toBe(19);
+    expect(free[0]!.end.getHours()).toBe(21);
+    expect(free[1]!.start.getDate()).toBe(21);
+    expect(free[1]!.start.getHours()).toBe(9);
+  });
+
+  it("明示枠が無ければ従来の曜日窓と同じ", () => {
+    const a = freeIntervalsWithExplicitSlots([], period, defaultAvailability(), []);
+    const b = freeIntervalsByAvailability([], period, defaultAvailability());
+    expect(a).toEqual(b);
+  });
+
+  it("明示枠からも busy は引かれ、最低時間未満は捨てられる", () => {
+    // 月曜 19-21 の枠に 19:30-20:45 の予定 → 前 30 分だけ残り、後ろ 15 分は捨てる
+    const free = freeIntervalsWithExplicitSlots(
+      [iv(19, 30, 20, 45)],
+      period,
+      defaultAvailability(),
+      [iv(19, 0, 21, 0)],
+    );
+    const mondayParts = free.filter((f) => f.start.getDate() === 20);
+    expect(mondayParts).toHaveLength(1);
+    expect(mondayParts[0]!.start.getHours()).toBe(19);
+    expect(mondayParts[0]!.end.getMinutes()).toBe(30);
+  });
+
+  it("なぞった枠が過去に流れた日は曜日窓へ戻さない (その日はもう受けない)", () => {
+    // 月曜 9-10 をなぞったが、いまは月曜 12:00 → 月曜の残りは空きにしない。火曜は既定
+    const free = freeIntervalsWithExplicitSlots(
+      [],
+      { ...period, from: new Date(2026, 6, 20, 12, 0) },
+      defaultAvailability(),
+      [iv(9, 0, 10, 0)],
+    );
+    expect(free.every((f) => f.start.getDate() === 21)).toBe(true);
+  });
+
+  it("受けない曜日でも、なぞればその枠は空きになる", () => {
+    const avail = parseAvailability({ days: { mon: { enabled: false } } });
+    const free = freeIntervalsWithExplicitSlots([], period, avail, [iv(10, 0, 12, 0)]);
+    const monday = free.filter((f) => f.start.getDate() === 20);
+    expect(monday).toHaveLength(1);
+    expect(monday[0]!.start.getHours()).toBe(10);
   });
 });
 

@@ -51,6 +51,7 @@ import {
   parseAvailability,
   availabilityToJson,
   freeIntervalsByAvailability,
+  freeIntervalsWithExplicitSlots,
   fullDayAvailability,
   startOptions,
   filterValidCandidates,
@@ -2650,20 +2651,29 @@ export function createApp(deps: AppDeps) {
     return parseIsoIntervals(slots.filter(Boolean));
   };
 
-  // 自分の空き (busy + bonds 内の確定枠 + 設定) を期間で計算する共通ヘルパ
+  // 自分の空き (busy + bonds 内の確定枠 + 設定 + カレンダーでなぞった明示枠) を期間で計算する共通ヘルパ
   const myFreeIntervals = async (
     ownerUid: string,
     period: { from: Date; periodStart: Date; periodEnd: Date },
   ): Promise<{ free: Interval[]; hasMyCalendar: boolean; avail: Availability }> => {
-    const [mine, committed, avail] = await Promise.all([
+    const [mine, committed, avail, slots] = await Promise.all([
       prisma.calendarLink.findUnique({
         where: { ownerUid_contactId: { ownerUid, contactId: SELF_CALENDAR } },
       }),
       committedBusy(ownerUid),
       loadAvailability(ownerUid),
+      prisma.availabilitySlot.findMany({
+        where: { ownerUid, endAt: { gte: period.periodStart }, startAt: { lte: period.periodEnd } },
+        orderBy: { startAt: "asc" },
+      }),
     ]);
     const busy = [...parseIsoIntervals(mine?.busySlots), ...committed];
-    return { free: freeIntervalsByAvailability(busy, period, avail), hasMyCalendar: !!mine, avail };
+    const explicit = slots.map((s) => ({ start: s.startAt, end: s.endAt }));
+    return {
+      free: freeIntervalsWithExplicitSlots(busy, period, avail, explicit),
+      hasMyCalendar: !!mine,
+      avail,
+    };
   };
 
   // 二者空き重なり → 面談候補 (busy → 各自の free → 積集合)。自分側は空き時間の設定を反映する
@@ -2761,6 +2771,51 @@ export function createApp(deps: AppDeps) {
       },
     });
     return c.json(avail);
+  });
+
+  // カレンダーをドラッグしてなぞる明示の空き枠 (timeshare の free_times の踏襲)。
+  // なぞった日はその枠がそのまま空きになり、なぞっていない日は曜日別の受付時間が使われる。
+  app.get("/api/relationship/availability-slots", async (c) => {
+    const from = new Date(c.req.query("from") ?? "");
+    const to = new Date(c.req.query("to") ?? "");
+    const start = Number.isNaN(from.getTime()) ? new Date() : from;
+    const end = Number.isNaN(to.getTime()) ? new Date(start.getTime() + 90 * 86_400_000) : to;
+    const rows = await prisma.availabilitySlot.findMany({
+      where: { ownerUid: c.get("ownerUid"), endAt: { gte: start }, startAt: { lte: end } },
+      orderBy: { startAt: "asc" },
+    });
+    return c.json({ slots: rows.map((r) => ({ id: r.id, start: r.startAt, end: r.endAt })) });
+  });
+
+  app.post("/api/relationship/availability-slots", async (c) => {
+    const b = await c.req.json<{ start?: string; end?: string }>().catch(() => ({}) as { start?: string; end?: string });
+    const start = new Date(b.start ?? "");
+    const end = new Date(b.end ?? "");
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+      return c.json({ error: "invalid_input", detail: "時間の指定が読めませんでした" }, 400);
+    }
+    if (end.getTime() - start.getTime() > 24 * 60 * 60 * 1000) {
+      return c.json({ error: "invalid_input", detail: "ひとつの枠は 24 時間までにしてください" }, 400);
+    }
+    if (end < new Date()) return c.json({ error: "invalid_input", detail: "過ぎた時間はなぞれません" }, 400);
+    if (start.getTime() > Date.now() + 366 * 86_400_000) {
+      return c.json({ error: "invalid_input", detail: "1 年より先の枠はまだ受け付けられません" }, 400);
+    }
+    const count = await prisma.availabilitySlot.count({ where: { ownerUid: c.get("ownerUid") } });
+    if (count >= 500) return c.json({ error: "too_many", detail: "枠が多すぎます。古い枠を消してください" }, 400);
+    const row = await prisma.availabilitySlot.create({
+      data: { ownerUid: c.get("ownerUid"), startAt: start, endAt: end },
+    });
+    return c.json({ slot: { id: row.id, start: row.startAt, end: row.endAt } });
+  });
+
+  app.delete("/api/relationship/availability-slots/:id", async (c) => {
+    const row = await prisma.availabilitySlot.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!row) return c.json({ error: "not_found" }, 404);
+    await prisma.availabilitySlot.delete({ where: { id: row.id } });
+    return c.json({ deleted: true });
   });
 
   // 共有リンクの作成

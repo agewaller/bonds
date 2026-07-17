@@ -394,6 +394,21 @@ model AvailabilitySetting {
   @@map("availability_settings")
 }
 
+// カレンダーをドラッグしてなぞった「この日はここが空いている」の明示枠 (timeshare の
+// free_times の踏襲)。なぞった日はこの枠がそのまま空きになり、なぞっていない日は
+// 曜日別の受付時間 (AvailabilitySetting) が使われる。予定の中身は持たない (枠だけ)。
+model AvailabilitySlot {
+  id       String   @id @default(uuid())
+  ownerUid String   @default("owner") @map("owner_uid")
+  startAt  DateTime @map("start_at")
+  endAt    DateTime @map("end_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([ownerUid, startAt])
+  @@map("availability_slots")
+}
+
 /// 日程の共有リンク (timeshare の FreeTimeShare の概念を新規実装)。
 /// 推測不能な share_key の URL を相手 (アカウント不要の第三者) に送り、相手はこちらの
 /// 空き枠から候補を選んで提案し、ユーザーが承認して確定する (下書き→承認→実行の原則)。

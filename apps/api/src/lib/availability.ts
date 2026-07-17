@@ -70,6 +70,51 @@ export type AvailabilityPeriod = {
   periodEnd: Date; // この日まで (排他でなく、その日の窓の終わりまで)
 };
 
+const dayKeyOf = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+
+/** 窓のリストから、膨らませ済みの busy を引き、最低時間未満の細切れを捨てる。 */
+const subtractBusy = (windows: Interval[], inflated: Interval[], minMs: number): Interval[] => {
+  const out: Interval[] = [];
+  for (const w of windows) {
+    let cursor = w.start;
+    for (const b of inflated) {
+      if (b.end <= cursor || b.start >= w.end) continue;
+      if (b.start > cursor && b.start.getTime() - cursor.getTime() >= minMs) {
+        out.push({ start: cursor, end: new Date(b.start) });
+      }
+      if (b.end > cursor) cursor = new Date(Math.min(b.end.getTime(), w.end.getTime()));
+    }
+    if (w.end.getTime() - cursor.getTime() >= minMs) out.push({ start: cursor, end: w.end });
+  }
+  return out;
+};
+
+/** 期間内の各日について曜日窓を実時刻の区間に展開する (skip に入れた日は飛ばす)。 */
+const weekdayWindows = (period: AvailabilityPeriod, avail: Availability, skip?: Set<string>): Interval[] => {
+  const lower = period.from > period.periodStart ? period.from : period.periodStart;
+  const out: Interval[] = [];
+  const first = new Date(period.periodStart.getFullYear(), period.periodStart.getMonth(), period.periodStart.getDate());
+  for (let day = new Date(first); day <= period.periodEnd; day.setDate(day.getDate() + 1)) {
+    if (skip?.has(dayKeyOf(day))) continue;
+    const w = avail.days[WEEKDAY_KEYS[day.getDay()]!]!;
+    if (!w.enabled) continue;
+    let windowStart = new Date(day.getFullYear(), day.getMonth(), day.getDate(), w.startHour, w.startMinute, 0, 0);
+    let windowEnd = new Date(day.getFullYear(), day.getMonth(), day.getDate(), w.endHour, w.endMinute, 0, 0);
+    if (windowStart < lower) windowStart = new Date(lower);
+    if (windowEnd > period.periodEnd) windowEnd = new Date(period.periodEnd);
+    if (windowStart >= windowEnd) continue;
+    out.push({ start: windowStart, end: windowEnd });
+  }
+  return out;
+};
+
+const inflate = (busy: Interval[], bufferMinutes: number): Interval[] => {
+  const bufferMs = bufferMinutes * 60 * 1000;
+  return mergeIntervals(
+    busy.map((b) => ({ start: new Date(b.start.getTime() - bufferMs), end: new Date(b.end.getTime() + bufferMs) })),
+  );
+};
+
 /**
  * busy と設定から空き区間を計算する (新規実装)。
  * busy を余白ぶん膨らませる → 各日の曜日窓から引く → 最低時間未満を捨てる。
@@ -80,35 +125,51 @@ export function freeIntervalsByAvailability(
   period: AvailabilityPeriod,
   avail: Availability,
 ): Interval[] {
-  const bufferMs = avail.bufferMinutes * 60 * 1000;
-  const minMs = avail.minMinutes * 60 * 1000;
-  const inflated = mergeIntervals(
-    busy.map((b) => ({ start: new Date(b.start.getTime() - bufferMs), end: new Date(b.end.getTime() + bufferMs) })),
-  );
+  return subtractBusy(weekdayWindows(period, avail), inflate(busy, avail.bufferMinutes), avail.minMinutes * 60 * 1000);
+}
+
+/**
+ * カレンダーをドラッグしてなぞった明示の空き枠 (timeshare の free_times の踏襲) を
+ * 曜日窓に重ねる。規則は日単位: なぞった日 (枠が 1 つでもある日) はその枠だけが空きの
+ * もとになり、なぞっていない日は従来どおり曜日別の受付時間。busy の膨張と最低時間は共通。
+ * なぞった枠が過去に流れた日は「その日はもう受けない」であり、曜日窓には戻さない。
+ */
+export function freeIntervalsWithExplicitSlots(
+  busy: Interval[],
+  period: AvailabilityPeriod,
+  avail: Availability,
+  explicit: Interval[],
+): Interval[] {
+  if (explicit.length === 0) return freeIntervalsByAvailability(busy, period, avail);
   const lower = period.from > period.periodStart ? period.from : period.periodStart;
-  const out: Interval[] = [];
+  const periodStartDay = new Date(
+    period.periodStart.getFullYear(),
+    period.periodStart.getMonth(),
+    period.periodStart.getDate(),
+  );
 
-  const first = new Date(period.periodStart.getFullYear(), period.periodStart.getMonth(), period.periodStart.getDate());
-  for (let day = new Date(first); day <= period.periodEnd; day.setDate(day.getDate() + 1)) {
-    const w = avail.days[WEEKDAY_KEYS[day.getDay()]!]!;
-    if (!w.enabled) continue;
-    let windowStart = new Date(day.getFullYear(), day.getMonth(), day.getDate(), w.startHour, w.startMinute, 0, 0);
-    let windowEnd = new Date(day.getFullYear(), day.getMonth(), day.getDate(), w.endHour, w.endMinute, 0, 0);
-    if (windowStart < lower) windowStart = new Date(lower);
-    if (windowEnd > period.periodEnd) windowEnd = new Date(period.periodEnd);
-    if (windowStart >= windowEnd) continue;
-
-    let cursor = windowStart;
-    for (const b of inflated) {
-      if (b.end <= cursor || b.start >= windowEnd) continue;
-      if (b.start > cursor && b.start.getTime() - cursor.getTime() >= minMs) {
-        out.push({ start: cursor, end: new Date(b.start) });
-      }
-      if (b.end > cursor) cursor = new Date(Math.min(b.end.getTime(), windowEnd.getTime()));
+  // 「なぞった日」の集合は、時刻の切り詰め前の枠から日単位で拾う
+  // (枠が過去に流れても、その日が曜日窓へ戻ってしまわないように)。
+  const explicitDays = new Set<string>();
+  const windows: Interval[] = [];
+  for (const s of mergeIntervals(explicit)) {
+    if (s.end <= periodStartDay || s.start > period.periodEnd) continue;
+    for (
+      let day = new Date(s.start.getFullYear(), s.start.getMonth(), s.start.getDate());
+      day < s.end && day <= period.periodEnd;
+      day.setDate(day.getDate() + 1)
+    ) {
+      if (day >= periodStartDay) explicitDays.add(dayKeyOf(day));
     }
-    if (windowEnd.getTime() - cursor.getTime() >= minMs) out.push({ start: cursor, end: windowEnd });
+    const start = s.start < lower ? new Date(lower) : new Date(s.start);
+    const end = s.end > period.periodEnd ? new Date(period.periodEnd) : new Date(s.end);
+    if (start < end) windows.push({ start, end });
   }
-  return out;
+
+  const all = [...weekdayWindows(period, avail, explicitDays), ...windows].sort(
+    (a, b) => a.start.getTime() - b.start.getTime(),
+  );
+  return subtractBusy(all, inflate(busy, avail.bufferMinutes), avail.minMinutes * 60 * 1000);
 }
 
 /**

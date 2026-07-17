@@ -6,6 +6,7 @@ import Link from "next/link";
 import Fold from "../../components/Fold";
 import { apiFetch } from "../../lib/client-api";
 import { AuthBar } from "../../components/AuthBar";
+import AvailabilityCalendar, { type AvailabilitySlotRow } from "../../components/AvailabilityCalendar";
 
 type Availability = {
   days: Record<string, { enabled: boolean; startHour: number; startMinute: number; endHour: number; endMinute: number }>;
@@ -98,6 +99,7 @@ export default function SchedulePage() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [avail, setAvail] = useState<Availability | null>(null);
+  const [slots, setSlots] = useState<AvailabilitySlotRow[]>([]);
   const [shares, setShares] = useState<ShareRow[]>([]);
   const [detail, setDetail] = useState<ShareDetail | null>(null);
   const [offers, setOffers] = useState<OfferRow[]>([]);
@@ -134,13 +136,15 @@ export default function SchedulePage() {
   }, []);
 
   const load = useCallback(async () => {
-    const [a, s, o, b] = await Promise.all([
+    const [a, s, o, b, sl] = await Promise.all([
       apiFetch("relationship/availability").then((r) => (r.ok ? r.json() : null)),
       apiFetch("schedule/shares").then((r) => (r.ok ? r.json() : null)),
       apiFetch("schedule/offers").then((r) => (r.ok ? r.json() : null)),
       apiFetch("schedule/bookings").then((r) => (r.ok ? r.json() : null)),
+      apiFetch("relationship/availability-slots").then((r) => (r.ok ? r.json() : null)),
     ]);
     if (a) setAvail(a as Availability);
+    if (sl) setSlots((sl as { slots: AvailabilitySlotRow[] }).slots);
     if (s) setShares((s as { shares: ShareRow[] }).shares);
     if (o) {
       setOffers((o as { offers: OfferRow[] }).offers);
@@ -152,6 +156,20 @@ export default function SchedulePage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const createSlot = async (startIso: string, endIso: string) => {
+    const body = await call(
+      "relationship/availability-slots",
+      { method: "POST", body: JSON.stringify({ start: startIso, end: endIso }) },
+      "なぞった枠を空き時間にしました。この日はなぞった枠だけが相手に出ます",
+    );
+    if (body) setSlots((cur) => [...cur, (body as { slot: AvailabilitySlotRow }).slot]);
+  };
+
+  const deleteSlot = async (id: string) => {
+    const body = await call(`relationship/availability-slots/${id}`, { method: "DELETE" }, "枠を消しました");
+    if (body) setSlots((cur) => cur.filter((s) => s.id !== id));
+  };
 
   const saveAvailability = async () => {
     if (!avail) return;
@@ -249,13 +267,17 @@ export default function SchedulePage() {
       {notice && <p style={{ color: "#166534", background: "#f0fdf4", padding: 8, borderRadius: 8 }}>{notice}</p>}
       {error && <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>{error}</p>}
 
-      <Fold k="sc1" title={<>空き時間の設定 (受け付ける曜日と時間)</>} style={{ marginTop: 20, border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+      <Fold k="sc1" title={<>空き時間の設定 (カレンダーをなぞる・受け付ける曜日と時間)</>} style={{ marginTop: 20, border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+        <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.7, margin: "4px 0 10px" }}>
+          カレンダーの上をドラッグしてなぞると、その時間が空き枠になります (なぞった枠はタップで消せます)。
+          なぞった日はその枠だけが相手に出ます。なぞっていない日は、下の曜日ごとの受付時間が使われます。
+        </p>
+        <AvailabilityCalendar slots={slots} onCreate={(s, e) => void createSlot(s, e)} onDelete={(id) => void deleteSlot(id)} />
         {!avail && <p>読み込んでいます…</p>}
         {avail && (
-          <div>
+          <div style={{ marginTop: 14 }}>
             <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.7, margin: "4px 0 10px" }}>
-              ここで決めた時間の中から、予定の入っていない枠だけが相手に見えます。予定表の連携は各連絡先の
-              「お会いする日を探す」か、この設定と同じように使われます。
+              なぞっていない日の受付時間。ここで決めた時間の中から、予定の入っていない枠だけが相手に見えます。
             </p>
             {DAY_KEYS.map((k) => {
               const d = avail.days[k]!;

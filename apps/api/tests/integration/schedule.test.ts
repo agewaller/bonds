@@ -23,7 +23,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "schedule_share_participants", "schedule_share_proposals", "schedule_shares", "time_bookings", "time_offers", "availability_settings", "calendar_links", "contact_interactions", "contacts", "prompts", "app_config" CASCADE',
+    'TRUNCATE "schedule_share_participants", "schedule_share_proposals", "schedule_shares", "time_bookings", "time_offers", "availability_settings", "availability_slots", "calendar_links", "contact_interactions", "contacts", "prompts", "app_config" CASCADE',
   );
   await seedDdPrompts(prisma);
 });
@@ -45,6 +45,85 @@ describe("空き時間の設定 (/api/relationship/availability)", () => {
     expect(got.minMinutes).toBe(60);
     expect(got.days.sun.enabled).toBe(false);
     expect(got.days.mon.enabled).toBe(true);
+  });
+});
+
+describe("カレンダーをなぞった空き枠 (availability_slots・timeshare の free_times)", () => {
+  it("なぞった日はその枠だけが共有ページの選択肢になり、なぞっていない日は曜日窓", async () => {
+    const app = makeApp();
+    const d = new Date();
+    d.setDate(d.getDate() + 1); // 明日 19:00-21:00 をなぞる
+    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 19, 0);
+    const end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 21, 0);
+    const created = await app.request("/api/relationship/availability-slots", {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ start: start.toISOString(), end: end.toISOString() }),
+    });
+    expect(created.status).toBe(200);
+
+    const share = await (
+      await app.request("/api/schedule/shares", {
+        method: "POST",
+        headers: H,
+        body: JSON.stringify({ periodDays: 3, slotMinutes: 60 }),
+      })
+    ).json();
+    const slots = await (await app.request(`/api/public/schedule/${share.shareKey}/slots`)).json();
+    const opts = slots.options as { start: string }[];
+    const traced = opts.filter((o) => new Date(o.start).getDate() === d.getDate());
+    // なぞった日は 19:00-21:00 に収まる開始 (19:00/19:30/20:00) だけ。既定の 9-18 窓は使われない
+    expect(
+      traced
+        .map((o) => `${new Date(o.start).getHours()}:${new Date(o.start).getMinutes()}`)
+        .sort(),
+    ).toEqual(["19:0", "19:30", "20:0"]);
+    // なぞっていない日 (あさって) は従来どおり午前から出る
+    const dayAfter = new Date(d);
+    dayAfter.setDate(dayAfter.getDate() + 1);
+    const untouched = opts.filter((o) => new Date(o.start).getDate() === dayAfter.getDate());
+    expect(untouched.some((o) => new Date(o.start).getHours() === 9)).toBe(true);
+  });
+
+  it("一覧・削除ができ、過去の枠や逆さの時間は 400", async () => {
+    const app = makeApp();
+    const d = new Date();
+    d.setDate(d.getDate() + 2);
+    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 10, 0);
+    const end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0);
+    await app.request("/api/relationship/availability-slots", {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ start: start.toISOString(), end: end.toISOString() }),
+    });
+    const list = await (await app.request("/api/relationship/availability-slots", { headers: H })).json();
+    expect(list.slots).toHaveLength(1);
+    const del = await app.request(`/api/relationship/availability-slots/${list.slots[0].id}`, {
+      method: "DELETE",
+      headers: H,
+    });
+    expect(del.status).toBe(200);
+    expect(
+      ((await (await app.request("/api/relationship/availability-slots", { headers: H })).json()) as {
+        slots: unknown[];
+      }).slots,
+    ).toHaveLength(0);
+
+    const past = await app.request("/api/relationship/availability-slots", {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({
+        start: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+        end: new Date(Date.now() - 86_400_000).toISOString(),
+      }),
+    });
+    expect(past.status).toBe(400);
+    const upside = await app.request("/api/relationship/availability-slots", {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ start: end.toISOString(), end: start.toISOString() }),
+    });
+    expect(upside.status).toBe(400);
   });
 });
 
