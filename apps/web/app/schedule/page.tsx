@@ -110,6 +110,7 @@ export default function SchedulePage() {
   const [offers, setOffers] = useState<OfferRow[]>([]);
   const [paymentsReady, setPaymentsReady] = useState(false);
   const [stripeMode, setStripeMode] = useState<string | null>(null);
+  const [freeText, setFreeText] = useState<string | null>(null); // 空き時間のテキスト (コピー用)
   const [bookings, setBookings] = useState<BookingRow[]>([]);
 
   // 共有リンクの作成フォーム
@@ -228,6 +229,19 @@ export default function SchedulePage() {
       setNotice("コピーしました。メールなどに貼ってお使いください");
     } catch {
       setError("コピーできませんでした。リンクを長押し・右クリックでコピーしてください");
+    }
+  };
+
+  // 自分の空き時間をテキストで取り出す (timeshare 踏襲)。表示 → そのままコピーして LINE/メールへ。
+  const loadFreeText = async () => {
+    setError("");
+    const res = await apiFetch("relationship/free-slots-text?days=14&max=12");
+    const body = (await res.json().catch(() => ({}))) as { text?: string; count?: number };
+    if (res.ok) {
+      const t = (body.text ?? "").trim();
+      setFreeText(t || "いまは空いている時間が見つかりませんでした。受付時間や空き枠を設定してみてください");
+    } else {
+      setError("いまは取り出せませんでした。時間をおいてお試しください");
     }
   };
 
@@ -350,6 +364,32 @@ export default function SchedulePage() {
         )}
 
         <AvailabilityCalendar slots={slots} busy={busy} onCreate={(s, e) => void createSlot(s, e)} onDelete={(id) => void deleteSlot(id)} />
+
+        <div style={{ marginTop: 12, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, background: "#f8fafc" }}>
+          <p style={{ fontSize: 13, color: "#475569", margin: "0 0 8px" }}>
+            空いている時間を、そのまま文章にしてメールや LINE に貼れます（相手のアカウントは不要）。
+          </p>
+          {freeText === null ? (
+            <button style={{ ...btn(false), padding: "6px 14px", fontSize: 13 }} onClick={() => void loadFreeText()}>
+              空き時間を文章にする
+            </button>
+          ) : (
+            <div>
+              <textarea
+                readOnly
+                value={freeText}
+                rows={Math.min(10, Math.max(3, freeText.split("\n").length + 1))}
+                style={{ ...input, width: "100%", fontFamily: "inherit" }}
+                aria-label="空き時間の文章"
+              />
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                <button style={{ ...btn(), padding: "6px 14px", fontSize: 13 }} onClick={() => void copy(freeText)}>この文章をコピー</button>
+                <button style={{ ...btn(false), padding: "6px 14px", fontSize: 13 }} onClick={() => void loadFreeText()}>更新</button>
+                <button style={{ ...btn(false), padding: "6px 14px", fontSize: 13 }} onClick={() => setFreeText(null)}>閉じる</button>
+              </div>
+            </div>
+          )}
+        </div>
         {!avail && <p>読み込んでいます…</p>}
         {avail && (
           <div style={{ marginTop: 14 }}>
@@ -448,6 +488,20 @@ export default function SchedulePage() {
                 )}
                 <span style={{ flex: 1 }} />
                 <button style={{ ...btn(false), padding: "4px 10px", fontSize: 13 }} onClick={() => void copy(s.url)}>リンクをコピー</button>
+                <a
+                  href={`mailto:?subject=${encodeURIComponent((s.title || "日程のご相談") + "（ご都合のよい時間をお選びください）")}&body=${encodeURIComponent(`いつもお世話になっております。\n下のページから、ご都合のよいお時間をお選びいただけますでしょうか。\n\n${s.url}\n\nどうぞよろしくお願いいたします。`)}`}
+                  style={{ ...btn(false), padding: "4px 10px", fontSize: 13, textDecoration: "none" }}
+                >
+                  メールで送る
+                </a>
+                <a
+                  href={`https://line.me/R/msg/text/?${encodeURIComponent(`日程のご相談です。ご都合のよいお時間をお選びください。\n${s.url}`)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ ...btn(false), padding: "4px 10px", fontSize: 13, textDecoration: "none" }}
+                >
+                  LINEで送る
+                </a>
                 <button style={{ ...btn(false), padding: "4px 10px", fontSize: 13 }} onClick={() => void openDetail(s.id)}>提案を見る</button>
                 <button
                   style={{ ...btn(false), padding: "4px 10px", fontSize: 13, color: "#b91c1c" }}

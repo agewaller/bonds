@@ -2971,6 +2971,21 @@ export function createApp(deps: AppDeps) {
     return c.json({ text: formatFreeSlotText(slots), count: slots.length, basis, hasMyCalendar: true });
   });
 
+  // 自分の空き時間をそのままテキストで返す (timeshare 踏襲: メール/LINE に貼れる形)。
+  // 相手アカウント不要で「この時間どうですか」を送れる。予定の中身は出さない。
+  app.get("/api/relationship/free-slots-text", async (c) => {
+    const days = Math.min(30, Math.max(1, Number(c.req.query("days")) || 14));
+    const max = Math.min(20, Math.max(1, Number(c.req.query("max")) || 12));
+    const now = new Date();
+    const { free } = await myFreeIntervals(c.get("ownerUid"), {
+      from: now,
+      periodStart: now,
+      periodEnd: new Date(now.getTime() + days * 24 * 60 * 60 * 1000),
+    });
+    const slots = free.slice(0, max);
+    return c.json({ text: formatFreeSlotText(slots), count: slots.length });
+  });
+
   // ---------------- 日程調整の共有リンクと時間の出品 (timeshare の概念の新規実装) ----------------
   // 共有リンク: 推測不能な URL を相手に送る → 相手が空き枠から候補を提案 → ユーザーが承認して確定
   // (下書き→承認→実行の原則)。ページに出すのは空き枠と名乗りだけで、予定の中身は出さない。
