@@ -70,6 +70,21 @@ test("連絡帳: 追加 → つながりスコア → 今日のおすすめ → 
   expect(errors, errors.join("\n")).toHaveLength(0);
 });
 
+test("連絡帳: あなたが力になれること (申し出) を登録できる", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/contacts");
+  await expect(page.getByRole("heading", { name: "あなたが力になれること" })).toBeVisible();
+  await page.getByRole("button", { name: "力になれることを書く" }).click();
+  const title = `監査 英語を教えられます ${Date.now() % 100000}`;
+  await page.getByPlaceholder(/何ができますか/).fill(title);
+  await page.getByRole("button", { name: "登録する" }).click();
+  await expect(page.getByText(title).first()).toBeVisible();
+  // 消せる (データ主権: 1 件単位で削除)
+  await page.getByRole("button", { name: `${title} を消す` }).click();
+  await expect(page.getByText(title)).toBeHidden();
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
 test("連絡帳: 同じお名前は確認を挟み、別の人として追加できる", async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto("/contacts");

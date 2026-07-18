@@ -80,6 +80,15 @@ import {
   type StripeClient,
 } from "./lib/time-offers.js";
 import { parseSnsField, serializeSnsEntries, snsSearchQueries, snsPlatformLabel, type SnsEntry } from "./lib/sns.js";
+import {
+  parseOfferingInput,
+  matchOfferingToContacts,
+  OFFERING_KINDS,
+  OFFERING_KIND_LABEL,
+  LOGISTICS_OPTIONS,
+  type OfferingLike,
+  type ContactNeed,
+} from "./lib/offerings.js";
 import { randomUUID } from "node:crypto";
 import { parseIcsBusy, looksLikeIcs, buildMeetingInviteIcs } from "./lib/ics.js";
 import {
@@ -279,6 +288,8 @@ export function createApp(deps: AppDeps) {
   app.use("/api/gifts", requireUser);
   app.use("/api/exchanges/*", requireUser);
   app.use("/api/exchanges", requireUser);
+  app.use("/api/offerings/*", requireUser);
+  app.use("/api/offerings", requireUser);
   // 日程調整・時間の出品 (オーナー側)。公開側は /api/public/schedule/* と /api/public/offers/*
   // で、shareKey / offerKey (推測不能な URL) がそのままスコープになるため認証を掛けない。
   app.use("/api/schedule/*", requireUser);
@@ -2978,6 +2989,159 @@ export function createApp(deps: AppDeps) {
     if (!row) return c.json({ error: "not_found" }, 404);
     await prisma.availabilitySlot.delete({ where: { id: row.id } });
     return c.json({ deleted: true });
+  });
+
+  // ------- 申し出カタログ (あなたが力になれること) と、相手のニーズとのマッチング -------
+  // gift の「give/lend/teach/do/advise」の概念を bonds のミッション「貢献のためのアクション」
+  // に絞って新規実装。マーケットプレイス・ポイント経済は移植しない。マッチングは AI 不要
+  // (毎回無料・決定的) — 蓄積した相手の記録 (facets/プロフィール/メモ) との語の重なりで挙げる。
+  const serializeOffering = (row: {
+    id: string;
+    kind: string;
+    title: string;
+    description: string | null;
+    category: string | null;
+    situations: string | null;
+    logistics: string | null;
+    maxDistance: number | null;
+    active: boolean;
+    updatedAt: Date;
+  }) => ({
+    id: row.id,
+    kind: row.kind,
+    kindLabel: OFFERING_KIND_LABEL[row.kind] ?? row.kind,
+    title: row.title,
+    description: row.description,
+    category: row.category,
+    situations: row.situations ? (JSON.parse(row.situations) as string[]) : [],
+    logistics: row.logistics ? (JSON.parse(row.logistics) as string[]) : [],
+    maxDistance: row.maxDistance,
+    active: row.active,
+    updatedAt: row.updatedAt,
+  });
+
+  app.get("/api/offerings", async (c) => {
+    const rows = await prisma.offering.findMany({
+      where: { ownerUid: c.get("ownerUid") },
+      orderBy: { createdAt: "desc" },
+    });
+    return c.json({
+      offerings: rows.map(serializeOffering),
+      kinds: OFFERING_KINDS.map((k) => ({ value: k, label: OFFERING_KIND_LABEL[k] })),
+      logisticsOptions: LOGISTICS_OPTIONS,
+    });
+  });
+
+  app.post("/api/offerings", async (c) => {
+    const raw = await c.req.json<unknown>().catch(() => ({}));
+    const parsed = parseOfferingInput(raw);
+    if ("error" in parsed) return c.json(parsed, 400);
+    const count = await prisma.offering.count({ where: { ownerUid: c.get("ownerUid") } });
+    if (count >= 200) return c.json({ error: "too_many", detail: "申し出が多すぎます。使わないものを消してください" }, 400);
+    const row = await prisma.offering.create({
+      data: {
+        ownerUid: c.get("ownerUid"),
+        kind: parsed.kind,
+        title: parsed.title,
+        description: parsed.description,
+        category: parsed.category,
+        situations: parsed.situations.length ? JSON.stringify(parsed.situations) : null,
+        logistics: parsed.logistics.length ? JSON.stringify(parsed.logistics) : null,
+        maxDistance: parsed.maxDistance,
+      },
+    });
+    return c.json({ offering: serializeOffering(row) });
+  });
+
+  app.put("/api/offerings/:id", async (c) => {
+    const existing = await prisma.offering.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!existing) return c.json({ error: "not_found" }, 404);
+    const raw = (await c.req.json<Record<string, unknown>>().catch(() => ({}))) as Record<string, unknown>;
+    // active だけの切り替えも許す (title 必須の全体検証を回避)
+    if (Object.keys(raw).length === 1 && typeof raw.active === "boolean") {
+      const row = await prisma.offering.update({ where: { id: existing.id }, data: { active: raw.active } });
+      return c.json({ offering: serializeOffering(row) });
+    }
+    const parsed = parseOfferingInput(raw);
+    if ("error" in parsed) return c.json(parsed, 400);
+    const row = await prisma.offering.update({
+      where: { id: existing.id },
+      data: {
+        kind: parsed.kind,
+        title: parsed.title,
+        description: parsed.description,
+        category: parsed.category,
+        situations: parsed.situations.length ? JSON.stringify(parsed.situations) : null,
+        logistics: parsed.logistics.length ? JSON.stringify(parsed.logistics) : null,
+        maxDistance: parsed.maxDistance,
+        active: typeof raw.active === "boolean" ? raw.active : existing.active,
+      },
+    });
+    return c.json({ offering: serializeOffering(row) });
+  });
+
+  app.delete("/api/offerings/:id", async (c) => {
+    const row = await prisma.offering.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!row) return c.json({ error: "not_found" }, 404);
+    await prisma.offering.delete({ where: { id: row.id } });
+    return c.json({ deleted: true });
+  });
+
+  // 有効な申し出それぞれについて、ニーズが重なる連絡先を根拠つきで挙げる (AI 不要・毎回無料)。
+  // ニーズ源は蓄積した相手の記録のみ (facets の悩み/目標/機会/仕事 + プロフィール + メモ)。
+  // web 検索はしない = 相手の尊厳。距離ゲート (maxDistance) を尊重する。
+  app.get("/api/relationship/offering-matches", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const offerings = await prisma.offering.findMany({
+      where: { ownerUid, active: true },
+      orderBy: { createdAt: "desc" },
+    });
+    if (offerings.length === 0) return c.json({ matches: [] });
+    const contacts = await prisma.contact.findMany({ where: { ownerUid, state: "active" } });
+    const needs: ContactNeed[] = contacts.map((ct) => {
+      const texts: string[] = [];
+      if (ct.profileFacets) {
+        try {
+          const f = JSON.parse(ct.profileFacets) as Record<string, unknown>;
+          if (typeof f.work === "string") texts.push(f.work);
+          for (const key of ["goals", "opportunities", "concerns"]) {
+            const arr = f[key];
+            if (Array.isArray(arr)) for (const v of arr) if (typeof v === "string") texts.push(v);
+          }
+        } catch {
+          // 壊れた facets は無視
+        }
+      }
+      if (ct.personalProfile) texts.push(ct.personalProfile);
+      if (ct.valuesProfile) texts.push(ct.valuesProfile);
+      if (ct.notes) texts.push(ct.notes);
+      return { id: ct.id, name: ct.name, distance: ct.distance, needTexts: texts };
+    });
+    const matches = offerings
+      .map((o) => {
+        const like: OfferingLike = {
+          id: o.id,
+          kind: o.kind,
+          title: o.title,
+          description: o.description,
+          category: o.category,
+          situations: o.situations ? (JSON.parse(o.situations) as string[]) : [],
+          maxDistance: o.maxDistance,
+        };
+        return {
+          offeringId: o.id,
+          title: o.title,
+          kind: o.kind,
+          kindLabel: OFFERING_KIND_LABEL[o.kind] ?? o.kind,
+          contacts: matchOfferingToContacts(like, needs, 5),
+        };
+      })
+      .filter((m) => m.contacts.length > 0);
+    return c.json({ matches });
   });
 
   // 共有リンクの作成

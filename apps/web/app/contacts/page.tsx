@@ -147,6 +147,27 @@ export default function ContactsPage() {
   const [careItems, setCareItems] = useState<
     { id: string; contactId: string; name: string; kind: string; body: string | null }[]
   >([]);
+  // あなたが力になれること (申し出) と、ニーズが重なる連絡先のマッチング
+  type Offering = {
+    id: string;
+    kind: string;
+    kindLabel: string;
+    title: string;
+    description: string | null;
+    maxDistance: number | null;
+    active: boolean;
+  };
+  const [offerings, setOfferings] = useState<Offering[]>([]);
+  const [offerKinds, setOfferKinds] = useState<{ value: string; label: string }[]>([]);
+  const [offerMatches, setOfferMatches] = useState<
+    { offeringId: string; title: string; kindLabel: string; contacts: { contactId: string; name: string; reason: string }[] }[]
+  >([]);
+  const [showOfferForm, setShowOfferForm] = useState(false);
+  const [offerTitle, setOfferTitle] = useState("");
+  const [offerKind, setOfferKind] = useState("help");
+  const [offerDesc, setOfferDesc] = useState("");
+  const [offerMaxDist, setOfferMaxDist] = useState("");
+  const [offeredTo, setOfferedTo] = useState<Record<string, boolean>>({}); // 申し出済みの印 (offeringId:contactId)
   // 提案の見送り (✖️)。消した提案は再表示しない (サーバに記録・記録そのものは消さない)
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const isDismissed = (kind: string, key: string) => dismissed.has(`${kind}|${key}`);
@@ -272,7 +293,55 @@ export default function ContactsPage() {
     if (csRes.ok) setCareItems((await csRes.json()).items ?? []);
     const dqRes = await apiFetch("relationship/daily-question");
     if (dqRes.ok) setDailyQ((await dqRes.json()).question ?? null);
+    const ofRes = await apiFetch("offerings");
+    if (ofRes.ok) {
+      const ob = await ofRes.json();
+      setOfferings(ob.offerings ?? []);
+      setOfferKinds(ob.kinds ?? []);
+    }
+    const omRes = await apiFetch("relationship/offering-matches");
+    if (omRes.ok) setOfferMatches((await omRes.json()).matches ?? []);
   }, []);
+
+  // 申し出の登録・削除、および「この方に申し出る」(やり取り台帳に favor として下書き記録)。
+  const addOffering = async () => {
+    if (!offerTitle.trim()) return;
+    const res = await apiFetch("offerings", {
+      method: "POST",
+      body: JSON.stringify({
+        title: offerTitle.trim(),
+        kind: offerKind,
+        description: offerDesc.trim() || undefined,
+        maxDistance: offerMaxDist ? Number(offerMaxDist) : undefined,
+      }),
+    });
+    if (res.ok) {
+      setOfferTitle("");
+      setOfferDesc("");
+      setOfferMaxDist("");
+      setShowOfferForm(false);
+      setNotice("申し出を登録しました。力になれそうな方をお探しします");
+      await load();
+    } else {
+      setError("いまは登録できませんでした。時間をおいてお試しください");
+    }
+  };
+  const removeOffering = async (id: string) => {
+    const res = await apiFetch(`offerings/${id}`, { method: "DELETE" });
+    if (res.ok) await load();
+  };
+  const offerToContact = async (offeringId: string, contactId: string, title: string, kindLabel: string) => {
+    const res = await apiFetch(`contacts/${contactId}/exchanges`, {
+      method: "POST",
+      body: JSON.stringify({ kind: "favor", direction: "outbound", status: "open", title: `${title}（${kindLabel}）を申し出` }),
+    });
+    if (res.ok) {
+      setOfferedTo((s) => ({ ...s, [`${offeringId}:${contactId}`]: true }));
+      setNotice("台帳に「申し出」として控えました。実際の連絡は連絡先の画面からどうぞ");
+    } else {
+      setError("いまは控えられませんでした。時間をおいてお試しください");
+    }
+  };
 
   // 優先リストのその場カスタム — 距離感・関係の目標・ピン留め/外す。
   // ここで決めた内容に沿って、以降の自動ケア (提案・材料整理) が動く。
@@ -1240,6 +1309,132 @@ export default function ContactsPage() {
           </p>
         </Fold>
       )}
+
+      <Fold k="cl22" title={<>あなたが力になれること</>} style={{ margin: "16px 0", border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 12, padding: "12px 16px" }}>
+        <p style={{ fontSize: 13, color: "#166534", margin: "4px 0 8px" }}>
+          あなたが提供できること（譲れるもの・貸せるもの・教えられること・手伝えること・相談にのれること）を書いておくと、
+          それを必要としていそうな方を、これまでの記録からそっとお探しします。押しつけずに、最後はあなたが選べます。
+        </p>
+        {offerings.length > 0 && (
+          <ul style={{ listStyle: "none", padding: 0, margin: "0 0 10px", display: "grid", gap: 6 }}>
+            {offerings.map((o) => (
+              <li key={o.id} style={{ fontSize: 14, display: "flex", alignItems: "baseline", gap: 6 }}>
+                <span style={{ flex: 1 }}>
+                  <span style={{ color: "#15803d", fontWeight: 600 }}>{o.title}</span>
+                  <span style={{ color: "#166534", fontSize: 12, marginLeft: 6 }}>
+                    {o.kindLabel}
+                    {o.maxDistance ? `・近い方 (距離 ${o.maxDistance} まで)` : ""}
+                  </span>
+                </span>
+                <button
+                  aria-label={`${o.title} を消す`}
+                  onClick={() => void removeOffering(o.id)}
+                  style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 14, padding: 2 }}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {showOfferForm ? (
+          <div style={{ display: "grid", gap: 8, marginBottom: 8 }}>
+            <input
+              value={offerTitle}
+              onChange={(e) => setOfferTitle(e.target.value)}
+              placeholder="何ができますか (例: 英語を教えられます・使わない子ども服を譲れます)"
+              style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
+            />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <select
+                aria-label="申し出の種類"
+                value={offerKind}
+                onChange={(e) => setOfferKind(e.target.value)}
+                style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
+              >
+                {offerKinds.map((k) => (
+                  <option key={k.value} value={k.value}>{k.label}</option>
+                ))}
+              </select>
+              <select
+                aria-label="お声がけする範囲 (距離感)"
+                value={offerMaxDist}
+                onChange={(e) => setOfferMaxDist(e.target.value)}
+                style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
+              >
+                <option value="">どなたでも</option>
+                <option value="2">とても近い方だけ (2 まで)</option>
+                <option value="3">近い方まで (3 まで)</option>
+                <option value="4">ふだん付き合いのある方まで (4 まで)</option>
+              </select>
+            </div>
+            <input
+              value={offerDesc}
+              onChange={(e) => setOfferDesc(e.target.value)}
+              placeholder="補足があれば (例: 平日夜のオンラインなら・ビジネス英語も可)"
+              style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
+            />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={() => void addOffering()}
+                style={{ padding: "8px 16px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14 }}
+              >
+                登録する
+              </button>
+              <button
+                onClick={() => setShowOfferForm(false)}
+                style={{ padding: "8px 16px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 14 }}
+              >
+                やめる
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setShowOfferForm(true)}
+            style={{ padding: "6px 14px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, marginBottom: 8 }}
+          >
+            力になれることを書く
+          </button>
+        )}
+        {offerMatches.length > 0 && (
+          <div style={{ marginTop: 6 }}>
+            <p style={{ fontSize: 13, color: "#166534", margin: "8px 0 6px", fontWeight: 600 }}>
+              力になれそうな方が見つかりました
+            </p>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 10 }}>
+              {offerMatches.map((m) => (
+                <li key={m.offeringId} style={{ fontSize: 14 }}>
+                  <div style={{ color: "#15803d", fontWeight: 600, marginBottom: 4 }}>
+                    {m.title}
+                    <span style={{ color: "#166534", fontSize: 12, marginLeft: 6 }}>{m.kindLabel}</span>
+                  </div>
+                  <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 6 }}>
+                    {m.contacts.map((ct) => (
+                      <li key={ct.contactId} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, paddingLeft: 8 }}>
+                        <Link href={`/contacts/${ct.contactId}`} style={{ color: "#15803d", fontWeight: 600 }}>
+                          {ct.name}
+                        </Link>
+                        <span style={{ color: "#166534", fontSize: 12, flex: 1, minWidth: 180 }}>{ct.reason}</span>
+                        {offeredTo[`${m.offeringId}:${ct.contactId}`] ? (
+                          <span style={{ color: "#047857", fontSize: 13 }}>控えました</span>
+                        ) : (
+                          <button
+                            onClick={() => void offerToContact(m.offeringId, ct.contactId, m.title, m.kindLabel)}
+                            style={{ padding: "5px 12px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+                          >
+                            この方に申し出る
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </Fold>
 
       <Fold k="cl12" title={<>引き合わせるとよいお二人</>} style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>

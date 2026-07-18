@@ -53,6 +53,7 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
   timeBooking: ["guestName", "guestContact", "message"],
   // あなたへの提案: 本文は相手の状況に触れうる = 暗号化
   careSuggestion: ["body"],
+  offering: ["title", "description"],
 };
 
 // data ({ field: value } / { field: { set: value } } / 配列) を in-place で暗号化。

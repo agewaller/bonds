@@ -553,6 +553,28 @@ model CareSuggestion {
   @@map("care_suggestions")
 }
 
+// あなたが提供できること (申し出カタログ)。gift の item.action (give/lend/teach/do/advise)
+// の概念を bonds のミッション「貢献のためのアクション」に絞って新規実装。マーケットプレイス・
+// ポイント経済・FB 認証は移植しない。相手のニーズ (悩み・課題・夢) と突き合わせて
+// 「この申し出が役立ちそうな方」を提示する土台。title/description は暗号化 (資源情報の保護)。
+model Offering {
+  id          String   @id @default(uuid())
+  ownerUid    String   @default("owner") @map("owner_uid")
+  kind        String // give(譲る) / lend(貸す) / teach(教える) / help(手伝う) / advise(相談にのる) / other
+  title       String // 暗号化: 何ができるか (例: 英語を教えられる)
+  description String? // 暗号化: 補足
+  category    String? // 分類 (自由記述の一語)
+  situations  String? // JSON 文字列: 状況タグ
+  logistics   String? // JSON 文字列: 受け渡し方法 (対面/データ/貸与など)
+  maxDistance Int? @map("max_distance") // 距離ゲート (1〜5)。設定時はこの距離以内の方だけに提案
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([ownerUid, active])
+  @@map("offerings")
+}
+
 /// 公人 (dd_subjects) と人脈 (contacts) の任意リンク (DESIGN-HANDOVER §2 の将来項目)。
 model PersonLink {
   id        String   @id @default(uuid())
