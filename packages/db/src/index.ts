@@ -54,6 +54,8 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
   // あなたへの提案: 本文は相手の状況に触れうる = 暗号化
   careSuggestion: ["body"],
   offering: ["title", "description"],
+  // 公開掲示板への問い合わせ: 訪問者 (第三者) の名乗り・連絡先・本文は PII = 暗号化
+  offeringInterest: ["guestName", "guestContact", "message"],
 };
 
 // data ({ field: value } / { field: { set: value } } / 配列) を in-place で暗号化。

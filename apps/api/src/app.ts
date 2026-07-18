@@ -3005,6 +3005,7 @@ export function createApp(deps: AppDeps) {
     logistics: string | null;
     maxDistance: number | null;
     active: boolean;
+    published: boolean;
     updatedAt: Date;
   }) => ({
     id: row.id,
@@ -3017,6 +3018,8 @@ export function createApp(deps: AppDeps) {
     logistics: row.logistics ? (JSON.parse(row.logistics) as string[]) : [],
     maxDistance: row.maxDistance,
     active: row.active,
+    published: row.published,
+    marketUrl: row.published ? `${publicWebUrl}/market` : null,
     updatedAt: row.updatedAt,
   });
 
@@ -3033,7 +3036,7 @@ export function createApp(deps: AppDeps) {
   });
 
   app.post("/api/offerings", async (c) => {
-    const raw = await c.req.json<unknown>().catch(() => ({}));
+    const raw = (await c.req.json<Record<string, unknown>>().catch(() => ({}))) as Record<string, unknown>;
     const parsed = parseOfferingInput(raw);
     if ("error" in parsed) return c.json(parsed, 400);
     const count = await prisma.offering.count({ where: { ownerUid: c.get("ownerUid") } });
@@ -3048,6 +3051,7 @@ export function createApp(deps: AppDeps) {
         situations: parsed.situations.length ? JSON.stringify(parsed.situations) : null,
         logistics: parsed.logistics.length ? JSON.stringify(parsed.logistics) : null,
         maxDistance: parsed.maxDistance,
+        published: raw.published === true,
       },
     });
     return c.json({ offering: serializeOffering(row) });
@@ -3059,9 +3063,13 @@ export function createApp(deps: AppDeps) {
     });
     if (!existing) return c.json({ error: "not_found" }, 404);
     const raw = (await c.req.json<Record<string, unknown>>().catch(() => ({}))) as Record<string, unknown>;
-    // active だけの切り替えも許す (title 必須の全体検証を回避)
-    if (Object.keys(raw).length === 1 && typeof raw.active === "boolean") {
-      const row = await prisma.offering.update({ where: { id: existing.id }, data: { active: raw.active } });
+    // active / published だけの切り替えも許す (title 必須の全体検証を回避)
+    const keys = Object.keys(raw);
+    if (keys.length >= 1 && keys.every((k) => k === "active" || k === "published")) {
+      const data: { active?: boolean; published?: boolean } = {};
+      if (typeof raw.active === "boolean") data.active = raw.active;
+      if (typeof raw.published === "boolean") data.published = raw.published;
+      const row = await prisma.offering.update({ where: { id: existing.id }, data });
       return c.json({ offering: serializeOffering(row) });
     }
     const parsed = parseOfferingInput(raw);
@@ -3077,6 +3085,7 @@ export function createApp(deps: AppDeps) {
         logistics: parsed.logistics.length ? JSON.stringify(parsed.logistics) : null,
         maxDistance: parsed.maxDistance,
         active: typeof raw.active === "boolean" ? raw.active : existing.active,
+        published: typeof raw.published === "boolean" ? raw.published : existing.published,
       },
     });
     return c.json({ offering: serializeOffering(row) });
@@ -3142,6 +3151,86 @@ export function createApp(deps: AppDeps) {
       })
       .filter((m) => m.contacts.length > 0);
     return c.json({ matches });
+  });
+
+  // 公開掲示板 (/market) への問い合わせ (受け箱)。訪問者からの反応を一覧し、承認で
+  // 新しい連絡先として取り込む (収集の入口)。名乗り・連絡先・本文は復号して返す = オーナーのみ。
+  app.get("/api/relationship/offering-interests", async (c) => {
+    const rows = await prisma.offeringInterest.findMany({
+      where: { ownerUid: c.get("ownerUid"), status: "new" },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    // 暗号化列 (offering.title) は relation include では復号されないため、別 findMany で引く
+    const offs = rows.length
+      ? await prisma.offering.findMany({
+          where: { id: { in: [...new Set(rows.map((r) => r.offeringId))] } },
+          select: { id: true, title: true, kind: true },
+        })
+      : [];
+    const offById = new Map(offs.map((o) => [o.id, o]));
+    return c.json({
+      interests: rows.map((r) => {
+        const off = offById.get(r.offeringId);
+        return {
+          id: r.id,
+          offeringTitle: off?.title ?? "",
+          offeringKindLabel: off ? OFFERING_KIND_LABEL[off.kind] ?? off.kind : "",
+          guestName: r.guestName,
+          guestContact: r.guestContact,
+          message: r.message,
+          createdAt: r.createdAt,
+        };
+      }),
+    });
+  });
+
+  // 問い合わせを承認 → 新しい連絡先を作り、接触記録に還流。以後は連絡先画面から対応する。
+  app.post("/api/relationship/offering-interests/:id/approve", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const interest = await prisma.offeringInterest.findFirst({
+      where: { id: c.req.param("id"), ownerUid, status: "new" },
+    });
+    if (!interest) return c.json({ error: "not_found" }, 404);
+    // offering.title は暗号化列 = 別引きで復号する
+    const off = await prisma.offering.findUnique({
+      where: { id: interest.offeringId },
+      select: { title: true },
+    });
+    const offerTitle = off?.title ?? "掲示板";
+    const email = interest.guestContact && /@/.test(interest.guestContact) ? interest.guestContact.trim() : null;
+    const contact = await prisma.contact.create({
+      data: {
+        ownerUid,
+        name: interest.guestName,
+        email,
+        distance: 5, // 出会ったばかりの遠い距離から
+        source: "market",
+        notes: interest.message ? `掲示板「${offerTitle}」への問い合わせ: ${interest.message}` : null,
+      },
+    });
+    await prisma.contactInteraction.create({
+      data: {
+        contactId: contact.id,
+        type: "market_interest",
+        occurredAt: new Date(),
+        notes: `掲示板「${offerTitle}」から問い合わせ`,
+      },
+    });
+    await prisma.offeringInterest.update({
+      where: { id: interest.id },
+      data: { status: "approved", contactId: contact.id },
+    });
+    return c.json({ approved: true, contactId: contact.id });
+  });
+
+  app.post("/api/relationship/offering-interests/:id/dismiss", async (c) => {
+    const interest = await prisma.offeringInterest.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid"), status: "new" },
+    });
+    if (!interest) return c.json({ error: "not_found" }, 404);
+    await prisma.offeringInterest.update({ where: { id: interest.id }, data: { status: "dismissed" } });
+    return c.json({ dismissed: true });
   });
 
   // 共有リンクの作成
@@ -3600,9 +3689,11 @@ export function createApp(deps: AppDeps) {
         minutes: o.minutes,
         priceJpy: o.priceJpy,
         active: o.active,
+        listed: o.listed,
         confirmedBookings: o.bookings.filter((b) => b.status === "confirmed").length,
       })),
       paymentsReady: !!stripe,
+      marketUrl: `${publicWebUrl}/market`,
     });
   });
 
@@ -3620,6 +3711,7 @@ export function createApp(deps: AppDeps) {
       minutes: body.minutes ?? offer.minutes,
       priceJpy: body.priceJpy ?? offer.priceJpy,
       active: body.active ?? offer.active,
+      listed: body.listed ?? offer.listed,
     });
     if ("error" in input) return c.json(input, 400);
     await prisma.timeOffer.update({ where: { id: offer.id }, data: input });
@@ -3780,6 +3872,72 @@ export function createApp(deps: AppDeps) {
       return c.json({ status: "confirmed" });
     }
     return c.json({ status: "pending_payment" });
+  });
+
+  // ---- 公開掲示板 (/market) ----
+  // 単一オーナーの「時間の出品」と「力になれること (申し出)」を、アカウント不要の訪問者が
+  // 一覧して問い合わせ・予約できる公開ページ。PII は出さない (訪問者が名乗って初めて記録)。
+  app.get("/api/public/market", async (c) => {
+    const [offers, offerings] = await Promise.all([
+      prisma.timeOffer.findMany({
+        where: { listed: true, active: true },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+      prisma.offering.findMany({
+        where: { published: true, active: true },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+    ]);
+    return c.json({
+      timeOffers: offers.map((o) => ({
+        offerKey: o.offerKey,
+        title: o.title,
+        description: o.description,
+        displayName: o.displayName,
+        methodLabel: SHARE_METHOD_LABEL[o.method as ShareMethod] ?? o.method,
+        minutes: o.minutes,
+        priceJpy: o.priceJpy,
+        acceptingBookings: o.priceJpy === 0 || !!stripe,
+      })),
+      offerings: offerings.map((o) => ({
+        id: o.id,
+        kind: o.kind,
+        kindLabel: OFFERING_KIND_LABEL[o.kind] ?? o.kind,
+        title: o.title,
+        description: o.description,
+        category: o.category,
+      })),
+    });
+  });
+
+  // 申し出への問い合わせ (アカウント不要)。オーナーの受け箱に「新規」で入り、承認で連絡先へ。
+  app.post("/api/public/market/offerings/:id/interest", async (c) => {
+    if (!publicWriteLimiter.take(clientKey(c.req.raw.headers))) return tooMany(c);
+    const offering = await prisma.offering.findFirst({
+      where: { id: c.req.param("id"), published: true, active: true },
+    });
+    if (!offering) return c.json({ error: "not_found", detail: "この申し出は見つかりませんでした" }, 404);
+    const body = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const clamp = (v: unknown, n: number) => (typeof v === "string" ? v.trim().slice(0, n) : "");
+    const guestName = clamp(body.guestName, 60);
+    if (!guestName) return c.json({ error: "name_required", detail: "お名前を入れてください" }, 400);
+    const message = clamp(body.message, 500);
+    if (!message) return c.json({ error: "message_required", detail: "ひとことメッセージを入れてください" }, 400);
+    // 受け箱の詰まり防止 (未対応が多すぎる申し出は新規受付を止める)
+    const open = await prisma.offeringInterest.count({ where: { offeringId: offering.id, status: "new" } });
+    if (open >= 50) return c.json({ error: "too_many", detail: "受け付けがいっぱいです。しばらくしてお試しください" }, 429);
+    await prisma.offeringInterest.create({
+      data: {
+        offeringId: offering.id,
+        ownerUid: offering.ownerUid,
+        guestName,
+        guestContact: clamp(body.guestContact, 200) || null,
+        message,
+      },
+    });
+    return c.json({ received: true }, 201);
   });
 
   // 毎時 sweep: 支払い待ちの取りこぼしを Stripe に再照合し、期限切れは枠を開放する

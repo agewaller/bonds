@@ -139,6 +139,19 @@ export default function SettingsPage() {
       </section>
 
       <section style={card}>
+        <h2 style={h2}>できること・お時間の公開ページ</h2>
+        <p style={desc}>
+          「力になれること（申し出）」や「お時間の受け付け」を、公開の掲示板に載せられます。載せると、
+          この公開ページを見た方がひとことお寄せでき、承認すると新しい連絡先として迎えられます。
+          載せる・下ろすは、連絡帳の「あなたが力になれること」パネルと、日程調整の各出品の
+          「掲示板に載せる」から切り替えられます。
+        </p>
+        <a href="/market" target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", fontSize: 14 }}>
+          公開ページを見る
+        </a>
+      </section>
+
+      <section style={card}>
         <h2 style={h2}>ことば (表示の言語)</h2>
         <p style={desc}>画面の表示に使うことばを選べます。</p>
         <LanguageSelector />

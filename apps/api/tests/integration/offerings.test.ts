@@ -16,7 +16,9 @@ afterAll(async () => {
   await (prisma as unknown as { $disconnect: () => Promise<void> }).$disconnect();
 });
 beforeEach(async () => {
-  await prisma.$executeRawUnsafe('TRUNCATE "offerings", "contacts", "contact_interactions" CASCADE');
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE "offering_interests", "offerings", "time_offers", "contacts", "contact_interactions" CASCADE',
+  );
 });
 
 const makeApp = () => createApp({ prisma, generate: null });
@@ -134,5 +136,110 @@ describe("Offering: マッチング", () => {
     });
     const res = await (await app.request("/api/relationship/offering-matches", { headers: H })).json();
     expect(res.matches).toEqual([]);
+  });
+});
+
+describe("公開掲示板 (/market)", () => {
+  it("公開した申し出だけが掲示板に出て、訪問者の問い合わせ→承認で新しい連絡先になる", async () => {
+    const app = makeApp();
+    // 申し出を作成 (既定は非公開なので掲示板に出ない)
+    const off = await (
+      await app.request("/api/offerings", {
+        method: "POST",
+        headers: H,
+        body: JSON.stringify({ kind: "teach", title: "英語を教えられます", description: "英会話の練習相手" }),
+      })
+    ).json();
+
+    // 非公開のうちは掲示板に出ない
+    let market = await (await app.request("/api/public/market")).json();
+    expect(market.offerings.length).toBe(0);
+
+    // 公開に切り替え (published だけの PUT)
+    const pub = await app.request(`/api/offerings/${off.offering.id}`, {
+      method: "PUT",
+      headers: H,
+      body: JSON.stringify({ published: true }),
+    });
+    expect((await pub.json()).offering.published).toBe(true);
+
+    // 掲示板 (公開・認証不要) に出る。PII は無い
+    market = await (await app.request("/api/public/market")).json();
+    expect(market.offerings.length).toBe(1);
+    expect(market.offerings[0].title).toBe("英語を教えられます");
+
+    // 訪問者が問い合わせ (認証不要)
+    const interest = await app.request(`/api/public/market/offerings/${off.offering.id}/interest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guestName: "山本 太郎", guestContact: "taro@example.com", message: "ぜひ教わりたいです" }),
+    });
+    expect(interest.status).toBe(201);
+
+    // オーナーの受け箱に「新規」で入る。名乗り・本文は復号して返る
+    const inbox = await (await app.request("/api/relationship/offering-interests", { headers: H })).json();
+    expect(inbox.interests.length).toBe(1);
+    expect(inbox.interests[0].guestName).toBe("山本 太郎");
+    expect(inbox.interests[0].offeringTitle).toBe("英語を教えられます");
+
+    // 承認 → 新しい連絡先 + 接触記録ができる
+    const approve = await app.request(`/api/relationship/offering-interests/${inbox.interests[0].id}/approve`, {
+      method: "POST",
+      headers: H,
+      body: "{}",
+    });
+    const approved = await approve.json();
+    expect(approved.approved).toBe(true);
+    const contact = await prisma.contact.findUniqueOrThrow({ where: { id: approved.contactId } });
+    expect(contact.name).toBe("山本 太郎");
+    expect(contact.source).toBe("market");
+    expect(contact.email).toBe("taro@example.com");
+    expect(await prisma.contactInteraction.count({ where: { contactId: contact.id } })).toBe(1);
+
+    // 承認済みは受け箱から消える
+    const inbox2 = await (await app.request("/api/relationship/offering-interests", { headers: H })).json();
+    expect(inbox2.interests.length).toBe(0);
+  });
+
+  it("問い合わせは名前とメッセージが必須。DB では暗号化される", async () => {
+    const app = makeApp();
+    const off = await (
+      await app.request("/api/offerings", {
+        method: "POST",
+        headers: H,
+        body: JSON.stringify({ kind: "advise", title: "子育ての相談にのれます", published: true }),
+      })
+    ).json();
+    // 名前なしは 400
+    const noName = await app.request(`/api/public/market/offerings/${off.offering.id}/interest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "相談したいです" }),
+    });
+    expect(noName.status).toBe(400);
+    // 正常
+    await app.request(`/api/public/market/offerings/${off.offering.id}/interest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guestName: "鈴木", message: "相談したいです" }),
+    });
+    const raw = await prisma.$queryRawUnsafe<{ guest_name: string }[]>(
+      `SELECT guest_name FROM offering_interests LIMIT 1`,
+    );
+    expect(isEncrypted(raw[0].guest_name)).toBe(true);
+  });
+
+  it("問い合わせの受け箱と承認はオーナースコープ (ownerUid 分離)", async () => {
+    const app = makeApp();
+    // 別オーナーの申し出 + 問い合わせを直接作る
+    const other = await prisma.offering.create({
+      data: { ownerUid: "someone-else", kind: "help", title: "他人の申し出", published: true },
+    });
+    await prisma.offeringInterest.create({
+      data: { offeringId: other.id, ownerUid: "someone-else", guestName: "他人ゲスト", message: "x" },
+    });
+    // owner の受け箱には出ない
+    const inbox = await (await app.request("/api/relationship/offering-interests", { headers: H })).json();
+    expect(inbox.interests.length).toBe(0);
   });
 });

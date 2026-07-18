@@ -6,7 +6,7 @@ import { test, expect, request as pwRequest } from "@playwright/test";
 // 案内した先が切れていないことをユーザー到達前に確かめる。
 
 // 監査対象の主要画面 (ここから内部リンクを巡回し、外部リンクを収集する)。
-const ROUTES = ["/", "/subjects", "/contacts", "/partners", "/login", "/admin", "/admin/partners"];
+const ROUTES = ["/", "/subjects", "/contacts", "/partners", "/market", "/login", "/admin", "/admin/partners"];
 
 // 画面に <a href> として出ない外部リンク (SNS 連携ボタンは window.open のため DOM に無い)。
 // これらは案内の要なので静的に列挙して必ず生存確認する。

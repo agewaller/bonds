@@ -18,6 +18,7 @@ export type OfferInput = {
   minutes: number;
   priceJpy: number;
   active: boolean;
+  listed: boolean;
 };
 
 /** 出品の入力を検証・整形する。金額は円の整数 (JPY は最小単位 = 円) で 0〜100 万円。 */
@@ -41,6 +42,7 @@ export function parseOfferInput(raw: unknown): OfferInput | { error: string; det
     minutes: Math.min(480, Math.max(15, Math.round(Number(o.minutes)) || 60)),
     priceJpy,
     active: o.active !== false && o.active !== "false",
+    listed: o.listed === true || o.listed === "true",
   };
 }
 

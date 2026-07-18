@@ -503,6 +503,7 @@ model TimeOffer {
   minutes     Int      @default(60)
   priceJpy    Int      @default(0) @map("price_jpy")
   active      Boolean  @default(true)
+  listed      Boolean  @default(false) // 公開掲示板 (/market) に載せる。既定は非公開 (鍵付き URL のみ)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -568,11 +569,33 @@ model Offering {
   logistics   String? // JSON 文字列: 受け渡し方法 (対面/データ/貸与など)
   maxDistance Int? @map("max_distance") // 距離ゲート (1〜5)。設定時はこの距離以内の方だけに提案
   active      Boolean  @default(true)
+  published   Boolean  @default(false) // 公開掲示板 (/market) に載せる。既定は非公開 (既存連絡先へのマッチングのみ)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
+  interests OfferingInterest[]
+
   @@index([ownerUid, active])
   @@map("offerings")
+}
+
+// 公開掲示板 (/market) の申し出に対する、アカウント不要の訪問者からの問い合わせ。
+// 下書き→承認で新しい連絡先として取り込む (収集の入口)。名乗り・連絡先・本文は暗号化。
+model OfferingInterest {
+  id           String   @id @default(uuid())
+  offeringId   String   @map("offering_id")
+  offering     Offering @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+  ownerUid     String   @map("owner_uid")
+  guestName    String   @map("guest_name") // 暗号化
+  guestContact String?  @map("guest_contact") // 暗号化
+  message      String? // 暗号化
+  status       String   @default("new") // new / approved / dismissed
+  contactId    String?  @map("contact_id") // 承認で作った連絡先
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([ownerUid, status])
+  @@map("offering_interests")
 }
 
 /// 公人 (dd_subjects) と人脈 (contacts) の任意リンク (DESIGN-HANDOVER §2 の将来項目)。

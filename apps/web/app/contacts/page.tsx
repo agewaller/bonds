@@ -156,8 +156,13 @@ export default function ContactsPage() {
     description: string | null;
     maxDistance: number | null;
     active: boolean;
+    published: boolean;
   };
   const [offerings, setOfferings] = useState<Offering[]>([]);
+  const [offerInterests, setOfferInterests] = useState<
+    { id: string; offeringTitle: string; offeringKindLabel: string; guestName: string; guestContact: string | null; message: string | null }[]
+  >([]);
+  const [marketUrl, setMarketUrl] = useState<string | null>(null);
   const [offerKinds, setOfferKinds] = useState<{ value: string; label: string }[]>([]);
   const [offerMatches, setOfferMatches] = useState<
     { offeringId: string; title: string; kindLabel: string; contacts: { contactId: string; name: string; reason: string }[] }[]
@@ -301,6 +306,10 @@ export default function ContactsPage() {
     }
     const omRes = await apiFetch("relationship/offering-matches");
     if (omRes.ok) setOfferMatches((await omRes.json()).matches ?? []);
+    const oiRes = await apiFetch("relationship/offering-interests");
+    if (oiRes.ok) setOfferInterests((await oiRes.json()).interests ?? []);
+    const soRes = await apiFetch("schedule/offers");
+    if (soRes.ok) setMarketUrl((await soRes.json()).marketUrl ?? null);
   }, []);
 
   // 申し出の登録・削除、および「この方に申し出る」(やり取り台帳に favor として下書き記録)。
@@ -328,6 +337,24 @@ export default function ContactsPage() {
   };
   const removeOffering = async (id: string) => {
     const res = await apiFetch(`offerings/${id}`, { method: "DELETE" });
+    if (res.ok) await load();
+  };
+  const toggleOfferingPublished = async (id: string, published: boolean) => {
+    const res = await apiFetch(`offerings/${id}`, { method: "PUT", body: JSON.stringify({ published }) });
+    if (res.ok) {
+      setNotice(published ? "掲示板に載せました。困っている方の目に留まります" : "掲示板から下ろしました");
+      await load();
+    }
+  };
+  const approveInterest = async (id: string) => {
+    const res = await apiFetch(`relationship/offering-interests/${id}/approve`, { method: "POST", body: "{}" });
+    if (res.ok) {
+      setNotice("連絡先に迎えました。ここから関係を育てていけます");
+      await load();
+    }
+  };
+  const dismissInterest = async (id: string) => {
+    const res = await apiFetch(`relationship/offering-interests/${id}/dismiss`, { method: "POST", body: "{}" });
     if (res.ok) await load();
   };
   const offerToContact = async (offeringId: string, contactId: string, title: string, kindLabel: string) => {
@@ -1316,16 +1343,25 @@ export default function ContactsPage() {
           それを必要としていそうな方を、これまでの記録からそっとお探しします。押しつけずに、最後はあなたが選べます。
         </p>
         {offerings.length > 0 && (
-          <ul style={{ listStyle: "none", padding: 0, margin: "0 0 10px", display: "grid", gap: 6 }}>
+          <ul style={{ listStyle: "none", padding: 0, margin: "0 0 10px", display: "grid", gap: 8 }}>
             {offerings.map((o) => (
-              <li key={o.id} style={{ fontSize: 14, display: "flex", alignItems: "baseline", gap: 6 }}>
-                <span style={{ flex: 1 }}>
+              <li key={o.id} style={{ fontSize: 14, display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ flex: 1, minWidth: 200 }}>
                   <span style={{ color: "#15803d", fontWeight: 600 }}>{o.title}</span>
                   <span style={{ color: "#166534", fontSize: 12, marginLeft: 6 }}>
                     {o.kindLabel}
                     {o.maxDistance ? `・近い方 (距離 ${o.maxDistance} まで)` : ""}
+                    {o.published ? "・掲示板に公開中" : ""}
                   </span>
                 </span>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "#166534", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={o.published}
+                    onChange={(e) => void toggleOfferingPublished(o.id, e.target.checked)}
+                  />
+                  掲示板に載せる
+                </label>
                 <button
                   aria-label={`${o.title} を消す`}
                   onClick={() => void removeOffering(o.id)}
@@ -1336,6 +1372,49 @@ export default function ContactsPage() {
               </li>
             ))}
           </ul>
+        )}
+        {marketUrl && offerings.some((o) => o.published) && (
+          <p style={{ fontSize: 12, color: "#166534", margin: "0 0 10px" }}>
+            公開ページ:{" "}
+            <a href="/market" target="_blank" rel="noopener noreferrer" style={{ color: "#15803d" }}>
+              できること・お時間のご案内
+            </a>
+            （この URL を、届けたい方に共有できます）
+          </p>
+        )}
+        {offerInterests.length > 0 && (
+          <div style={{ margin: "10px 0", border: "1px solid #86efac", background: "#dcfce7", borderRadius: 10, padding: "10px 12px" }}>
+            <p style={{ fontSize: 13, color: "#166534", margin: "0 0 6px", fontWeight: 600 }}>
+              掲示板へのお問い合わせが {offerInterests.length} 件あります
+            </p>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
+              {offerInterests.map((it) => (
+                <li key={it.id} style={{ fontSize: 14 }}>
+                  <div>
+                    <span style={{ fontWeight: 600 }}>{it.guestName}</span>
+                    <span style={{ color: "#166534", fontSize: 12, marginLeft: 6 }}>
+                      「{it.offeringTitle}」{it.guestContact ? `・${it.guestContact}` : ""}
+                    </span>
+                  </div>
+                  {it.message && <div style={{ color: "#334155", marginTop: 2 }}>{it.message}</div>}
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                    <button
+                      onClick={() => void approveInterest(it.id)}
+                      style={{ padding: "5px 12px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+                    >
+                      連絡先に迎える
+                    </button>
+                    <button
+                      onClick={() => void dismissInterest(it.id)}
+                      style={{ padding: "5px 12px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+                    >
+                      今回は見送る
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         {showOfferForm ? (
           <div style={{ display: "grid", gap: 8, marginBottom: 8 }}>

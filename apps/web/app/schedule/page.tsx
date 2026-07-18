@@ -48,6 +48,7 @@ type OfferRow = {
   minutes: number;
   priceJpy: number;
   active: boolean;
+  listed: boolean;
   confirmedBookings: number;
 };
 type BookingRow = {
@@ -533,6 +534,17 @@ export default function SchedulePage() {
                 {o.active ? "" : "・停止中"}
               </span>
               <span style={{ flex: 1 }} />
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 13, color: "#166534", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={o.listed}
+                  onChange={async () => {
+                    const body = await call(`schedule/offers/${o.id}`, { method: "PUT", body: JSON.stringify({ listed: !o.listed }) }, o.listed ? "掲示板から下ろしました" : "掲示板に載せました");
+                    if (body) await load();
+                  }}
+                />
+                掲示板に載せる
+              </label>
               <a href={o.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: "#2563eb" }}>申し込みページを開く</a>
               <button style={{ ...btn(false), padding: "4px 10px", fontSize: 13 }} onClick={() => void copy(o.url)}>リンクをコピー</button>
               <button
