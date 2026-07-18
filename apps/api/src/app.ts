@@ -443,6 +443,38 @@ export function createApp(deps: AppDeps) {
     });
   });
 
+  // データ所在の診断 (読み取り専用・PII なし)。「ログインしたらデータが消えて見える」の
+  // 切り分け用: 連絡先がどの ownerUid バケツに何件あるか (active/archived) を横断集計し、
+  // いまの呼び出し元が一般ユーザーとしてどの ownerUid に解決されるかを併せて返す。
+  // これで「データは別バケツに無事あり、着地先がずれている」ことを実測で確定できる。
+  app.get("/api/admin/data-locator", async (c) => {
+    const grouped = await prisma.contact.groupBy({
+      by: ["ownerUid", "state"],
+      _count: { _all: true },
+    });
+    const buckets: Record<string, { active: number; archived: number; other: number }> = {};
+    for (const g of grouped) {
+      const b = (buckets[g.ownerUid] ??= { active: 0, archived: 0, other: 0 });
+      if (g.state === "active") b.active = g._count._all;
+      else if (g.state === "archived") b.archived = g._count._all;
+      else b.other += g._count._all;
+    }
+    // 呼び出し元が「一般ユーザーとして」どの ownerUid に解決されるか (= 連絡帳で見えるバケツ)。
+    const who = await authorizeUser(
+      { authorization: c.req.header("authorization"), adminToken: c.req.header("x-admin-token") },
+      { verifyIdToken: deps.verifyIdToken ?? null },
+    );
+    return c.json({
+      ownerEmailConfigured: !!(process.env.OWNER_EMAIL ?? "").trim(),
+      callerResolvesTo: who.ok
+        ? { ownerUid: who.ownerUid, isOwner: who.isOwner, actor: who.actor }
+        : { error: who.error, detail: who.detail },
+      contactBuckets: Object.entries(buckets)
+        .map(([ownerUid, counts]) => ({ ownerUid, ...counts }))
+        .sort((a, b) => b.active - a.active),
+    });
+  });
+
   // ---------------- 管理: プロンプト版管理 (DB 駆動プロンプトの編集 UI 用) ----------------
 
   app.get("/api/admin/prompts", async (c) => {
