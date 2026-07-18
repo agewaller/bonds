@@ -69,11 +69,14 @@ import {
   SHARE_METHOD_LABEL,
   type ShareMethod,
 } from "./lib/schedule-share.js";
+import { safeFetchText } from "./lib/safe-fetch.js";
+import { RateLimiter, clientKey } from "./lib/rate-limit.js";
 import {
   parseOfferInput,
   buildStripeClient,
   bookingHoldsSlot,
   PENDING_BOOKING_TTL_MS,
+  MAX_PENDING_BOOKINGS_PER_OFFER,
   type StripeClient,
 } from "./lib/time-offers.js";
 import { parseSnsField, serializeSnsEntries, snsSearchQueries, snsPlatformLabel, type SnsEntry } from "./lib/sns.js";
@@ -90,7 +93,7 @@ import { jsonProseLanguageDirective } from "./lib/locale.js";
 import { extractJson } from "./lib/dd-spec.js";
 import { calcCostJpy } from "./lib/cost.js";
 import { PERSON_DD_MAX_TOKENS, PERSON_DD_TIMEOUT_MS } from "./lib/person-eval.js";
-import { authorizeAdmin, authorizeUser, type VerifyIdTokenFn } from "./lib/auth.js";
+import { authorizeAdmin, authorizeUser, secretEquals, type VerifyIdTokenFn } from "./lib/auth.js";
 import { buildTavilySearch, type SearchFn, type SearchResult } from "./lib/tavily.js";
 import { sanitizeProse } from "./lib/plain-text.js";
 import {
@@ -162,15 +165,16 @@ export function createApp(deps: AppDeps) {
   const google = deps.google !== undefined ? deps.google : buildGoogleClient();
   // Stripe (時間の出品の決済)。STRIPE_SECRET_KEY 未設定なら null = 有料出品は「準備中」に縮退
   const stripe = deps.stripe !== undefined ? deps.stripe : buildStripeClient();
-  // ICS 購読 URL の取得器 (既定は素の fetch + 15 秒タイムアウト)
-  const fetchText =
-    deps.fetchText !== undefined
-      ? deps.fetchText
-      : async (url: string) => {
-          const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-          if (!res.ok) throw new Error(`ics_fetch_failed: ${res.status}`);
-          return res.text();
-        };
+  // ICS 購読 URL の取得器。既定は SSRF 対策つき (https のみ・内部IP拒否・リダイレクト手動
+  // 再検証・サイズ上限・タイムアウト)。ゲストが指定できる公開経路からも呼ばれるため必須。
+  const fetchText = deps.fetchText !== undefined ? deps.fetchText : (url: string) => safeFetchText(url);
+
+  // 公開経路のレートリミッタ (未認証のスパム・総当り抑止。インメモリ・ベストエフォート)。
+  // あいことば解錠は総当り対策で厳しめ、その他の書き込みは中庸に。
+  const unlockLimiter = new RateLimiter(10, 5 * 60 * 1000); // 5 分に 10 回/IP
+  const publicWriteLimiter = new RateLimiter(30, 5 * 60 * 1000); // 5 分に 30 回/IP
+  const tooMany = (c: { json: (b: unknown, s: 429) => Response }) =>
+    c.json({ error: "rate_limited", detail: "アクセスが集中しています。少し時間をおいてお試しください" }, 429);
 
   // ownerUid: 認可済みユーザーのデータスコープ (Firebase uid / break-glass は "owner")
   // isOwner: オーナー本人か (AI 月次上限をオーナーは無制限、それ以外は設定値で効かせる)
@@ -257,6 +261,10 @@ export function createApp(deps: AppDeps) {
   };
 
   app.use("/api/admin/*", requireAdmin);
+  // 人物DD は管理系。GET も含めて全メソッドをガードする (被評価者の一覧・下書き評価・
+  // 失敗した評価の内部エラー・AI の中間ステップを未認証に晒さない)。一般公開は
+  // 完了済み・PII なしに絞った /api/public/subjects/:slug のみに通す。
+  app.get("/api/dd/*", requireAdmin);
   app.post("/api/dd/*", requireAdmin);
   app.put("/api/dd/*", requireAdmin);
   app.delete("/api/dd/*", requireAdmin);
@@ -785,11 +793,14 @@ export function createApp(deps: AppDeps) {
 
   app.get("/api/contacts/export", async (c) => {
     // データ主権: 全件エクスポート (復号済み JSON)。ロックインしない。
+    const ownerUid = c.get("ownerUid");
     const [contacts, interactions, gifts, exchanges] = await Promise.all([
-      prisma.contact.findMany({ where: { ownerUid: c.get("ownerUid") } }),
-      prisma.contactInteraction.findMany(),
-      prisma.contactGift.findMany(),
-      prisma.exchange.findMany({ where: { ownerUid: c.get("ownerUid") } }),
+      prisma.contact.findMany({ where: { ownerUid } }),
+      // interaction / gift は ownerUid 列を持たず、contact 経由でスコープする
+      // (where を付け忘れると他ユーザーの記録が混ざる = テナント越境)。
+      prisma.contactInteraction.findMany({ where: { contact: { ownerUid } } }),
+      prisma.contactGift.findMany({ where: { contact: { ownerUid } } }),
+      prisma.exchange.findMany({ where: { ownerUid } }),
     ]);
     c.header("Content-Disposition", "attachment; filename=bonds-contacts-export.json");
     return c.json({ exportedAt: new Date().toISOString(), contacts, interactions, gifts, exchanges });
@@ -1487,8 +1498,17 @@ export function createApp(deps: AppDeps) {
     });
   });
 
+  // Content-Length で早期に上限超過を弾く (全量をメモリに読み込む前に切る)。
+  const declaredTooLarge = (c: { req: { header(n: string): string | undefined } }): boolean => {
+    const len = Number(c.req.header("content-length"));
+    return Number.isFinite(len) && len > MAX_IMPORT_FILE_BYTES;
+  };
+
   // ファイル/ZIP まるごと取込 (同期)。中身は importFileBytes に委譲。
   app.post("/api/contacts/import-file", async (c) => {
+    if (declaredTooLarge(c)) {
+      return c.json({ error: "file_too_large", detail: "ファイルが大きすぎます (30MB まで)" }, 413);
+    }
     const buf = await c.req.arrayBuffer();
     if (buf.byteLength === 0) {
       return c.json({ error: "content_required", detail: "ファイルが空です" }, 400);
@@ -1640,6 +1660,9 @@ export function createApp(deps: AppDeps) {
       filename = typeof b.filename === "string" ? b.filename : null;
       locale = normalizeLocale(b.locale);
     } else {
+      if (declaredTooLarge(c)) {
+        return c.json({ error: "file_too_large", detail: "ファイルが大きすぎます (30MBまで)" }, 413);
+      }
       const buf = await c.req.arrayBuffer();
       if (buf.byteLength === 0) return c.json({ error: "content_required", detail: "ファイルが空です" }, 400);
       if (buf.byteLength > MAX_IMPORT_FILE_BYTES) {
@@ -1707,7 +1730,7 @@ export function createApp(deps: AppDeps) {
   app.post("/api/ingest/zentrack", async (c) => {
     const secret = process.env.ZENTRACK_INGEST_SECRET;
     if (!secret) return c.json({ error: "not_configured", detail: "ZenTrack 連携は準備中です" }, 503);
-    if (c.req.header("x-zentrack-secret") !== secret) return c.json({ error: "unauthorized" }, 401);
+    if (!secretEquals(c.req.header("x-zentrack-secret"), secret)) return c.json({ error: "unauthorized" }, 401);
     const b = await c.req
       .json<{ transcript?: string; date?: string; label?: string }>()
       .catch(() => ({}) as { transcript?: string; date?: string; label?: string });
@@ -3075,11 +3098,13 @@ export function createApp(deps: AppDeps) {
         });
     return c.json({
       locked,
-      title: share.title,
-      displayName: share.displayName,
+      // あいことばで保護中は、解錠前に中身 (面談タイトル・主催者の表示名=実名になり得る)
+      // を出さない。解錠して初めて title / displayName を返す。
       ...(locked
         ? {}
         : {
+            title: share.title,
+            displayName: share.displayName,
             method: share.method,
             methodLabel: SHARE_METHOD_LABEL[share.method as ShareMethod] ?? share.method,
             note: share.note,
@@ -3094,6 +3119,8 @@ export function createApp(deps: AppDeps) {
   });
 
   app.post("/api/public/schedule/:shareKey/unlock", async (c) => {
+    // あいことばのオンライン総当り対策 (IP あたり窓内の試行数を制限)
+    if (!unlockLimiter.take(clientKey(c.req.raw.headers))) return tooMany(c);
     const share = await loadVisibleShare(c.req.param("shareKey"));
     if (!share) return c.json({ error: "not_found" }, 404);
     if (!share.passwordHash) return c.json({ proof: "" });
@@ -3174,6 +3201,7 @@ export function createApp(deps: AppDeps) {
   };
 
   app.post("/api/public/schedule/:shareKey/participants", async (c) => {
+    if (!publicWriteLimiter.take(clientKey(c.req.raw.headers))) return tooMany(c);
     const share = await loadVisibleShare(c.req.param("shareKey"));
     if (!share) return c.json({ error: "not_found" }, 404);
     const body = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
@@ -3202,6 +3230,7 @@ export function createApp(deps: AppDeps) {
 
   // 自分の分の更新 (最新の予定表を入れ直す)。participantKey が本人の鍵
   app.put("/api/public/schedule/:shareKey/participants/:participantKey", async (c) => {
+    if (!publicWriteLimiter.take(clientKey(c.req.raw.headers))) return tooMany(c);
     const share = await loadVisibleShare(c.req.param("shareKey"));
     if (!share) return c.json({ error: "not_found" }, 404);
     const participant = await prisma.scheduleShareParticipant.findFirst({
@@ -3233,6 +3262,7 @@ export function createApp(deps: AppDeps) {
   const MAX_OPEN_PROPOSALS_PER_SHARE = 30;
 
   app.post("/api/public/schedule/:shareKey/proposals", async (c) => {
+    if (!publicWriteLimiter.take(clientKey(c.req.raw.headers))) return tooMany(c);
     const share = await loadVisibleShare(c.req.param("shareKey"));
     if (!share) return c.json({ error: "not_found" }, 404);
     const body = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
@@ -3389,11 +3419,23 @@ export function createApp(deps: AppDeps) {
   });
 
   app.post("/api/public/offers/:offerKey/book", async (c) => {
+    if (!publicWriteLimiter.take(clientKey(c.req.raw.headers))) return tooMany(c);
     const offer = await prisma.timeOffer.findUnique({ where: { offerKey: c.req.param("offerKey") } });
     if (!offer || !offer.active) return c.json({ error: "not_found" }, 404);
     const body = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
     const input = parseProposalInput({ ...body, candidates: [body.slot] });
     if ("error" in input) return c.json(input, 400);
+    // 有料枠の「枠の空押さえ」対策: 支払い前の pending が溜まりすぎたら新規を断る
+    // (未払いのまま全枠を 48 時間ブロックする DoS を防ぐ)。期限切れ pending は sweep が開放する。
+    if (offer.priceJpy > 0) {
+      const pendingHold = new Date(Date.now() - PENDING_BOOKING_TTL_MS);
+      const pending = await prisma.timeBooking.count({
+        where: { offerId: offer.id, status: "pending_payment", createdAt: { gte: pendingHold } },
+      });
+      if (pending >= MAX_PENDING_BOOKINGS_PER_OFFER) {
+        return c.json({ error: "too_many_pending", detail: "ただいま予約が混み合っています。少し時間をおいてお試しください" }, 429);
+      }
+    }
     if (offer.priceJpy > 0 && !stripe) {
       return c.json({ error: "unavailable", detail: "お支払いの受け付けを準備中です" }, 503);
     }
@@ -3455,7 +3497,11 @@ export function createApp(deps: AppDeps) {
     if (booking.status === "confirmed") return c.json({ status: "confirmed" });
     if (booking.status !== "pending_payment" || !stripe) return c.json({ status: booking.status });
     const session = await stripe.getSession(sessionId).catch(() => null);
-    if (session?.payment_status === "paid") {
+    // paid かつ、支払われた金額が予約額と一致していることを確かめる (防御的な金額突合)。
+    // 金額はサーバ側でセッション生成時に固定しているが、確定時にも念のため照合する。
+    const amountOk =
+      session?.amount_total == null || session.amount_total === booking.amountJpy;
+    if (session?.payment_status === "paid" && amountOk) {
       await prisma.timeBooking.update({
         where: { id: booking.id },
         data: { status: "confirmed", paidAt: new Date() },

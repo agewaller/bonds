@@ -45,6 +45,9 @@ export PROD_WEB_URL="${PROD_WEB_URL:-https://bonds-web-xj6szhutkq-an.a.run.app}"
 # 未設定 (unset) なら連携機能は「準備中」に縮退する。
 export GOOGLE_OAUTH_CLIENT_ID="${GOOGLE_OAUTH_CLIENT_ID:-unset}"
 export GOOGLE_OAUTH_REDIRECT_URL="${GOOGLE_OAUTH_REDIRECT_URL:-https://bonds-api-xj6szhutkq-an.a.run.app/api/google/callback}"
+# オーナー本人のメール。このメールで Google ログインすると owner スコープ + 管理者になる。
+# (BFF の匿名フォールバック廃止に伴い、オーナーはログインで owner データに到達する。)
+export OWNER_EMAIL="${OWNER_EMAIL:-agewaller@gmail.com}"
 
 if [ "${BONDS_ENV}" = "staging" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/_env.staging.sh" ]; then
   # shellcheck disable=SC1091

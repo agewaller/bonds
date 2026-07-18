@@ -58,9 +58,26 @@ export function htmlToText(html: string): string {
 
 // ---------------- Office Open XML (docx / xlsx / pptx) ----------------
 
+const MAX_ZIP_ENTRY_BYTES = 20 * 1024 * 1024; // 1 エントリの展開後上限
+const MAX_ZIP_TOTAL_BYTES = 100 * 1024 * 1024; // 全エントリ合計の展開後上限 (zip 爆弾対策)
+const MAX_ZIP_ENTRIES = 2000; // エントリ数上限 (大量小ファイル攻撃対策)
+
 function safeUnzip(bytes: Uint8Array, filter: (name: string) => boolean): Record<string, Uint8Array> | null {
   try {
-    return unzipSync(bytes, { filter: (f) => filter(f.name) && f.originalSize <= 20 * 1024 * 1024 });
+    let total = 0;
+    let count = 0;
+    return unzipSync(bytes, {
+      filter: (f) => {
+        // originalSize は zip メタデータ由来 (攻撃者が小さく詐称し得る) だが、
+        // 1 エントリ・エントリ数・申告合計サイズの三段で上限を掛けて肥大化を抑える。
+        if (!filter(f.name)) return false;
+        if (f.originalSize > MAX_ZIP_ENTRY_BYTES) return false;
+        if (++count > MAX_ZIP_ENTRIES) return false;
+        total += f.originalSize;
+        if (total > MAX_ZIP_TOTAL_BYTES) return false;
+        return true;
+      },
+    });
   } catch {
     return null;
   }

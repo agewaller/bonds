@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "node:crypto";
+
 // 認証 — cares の三段フェイルセーフ (ADR-0011/0014 相当) を bonds に移植。
 // 認可される経路は 3 つ (どれか 1 つでも通れば管理操作可 = 管理者をロックアウトしない):
 //   1. Firebase ID トークンで custom claim admin:true
@@ -5,6 +7,15 @@
 //      (Google ログイン乗っ取り対策: OWNER は email/password のときだけ admin)
 //   3. break-glass: x-admin-token == ADMIN_BREAKGLASS_TOKEN
 // トークン検証関数は注入可能 (テストでは偽 verifier、実運用は firebase-admin)。
+
+/** 定数時間で 2 つのシークレット文字列を比較する (タイミング攻撃対策)。 */
+export function secretEquals(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
+}
 
 export type VerifiedToken = {
   uid: string;
@@ -35,7 +46,7 @@ export async function authorizeAdmin(
   const verify = deps.verifyIdToken ?? null;
 
   // 経路 3: break-glass (Firebase 障害時の非常口)
-  if (breakglass && headers.adminToken === breakglass) {
+  if (secretEquals(headers.adminToken, breakglass)) {
     return { ok: true, actor: "breakglass" };
   }
 
@@ -48,7 +59,11 @@ export async function authorizeAdmin(
         return { ok: true, actor: `firebase:${t.uid}` };
       }
       const email = (t.email ?? "").trim().toLowerCase();
-      if (ownerEmail && email === ownerEmail && t.signInProvider === "password") {
+      // OWNER_EMAIL 本人。従来は password provider のみ admin としていたが、公開 web の
+      // 匿名 break-glass フォールバックを廃止したため、オーナーは Google ログインで
+      // 管理画面に入れる必要がある。オーナー本人のアカウント (Google 側の 2 段階認証で
+      // 保護) を admin とし、custom claim / break-glass 経路も残す (三段は不変)。
+      if (ownerEmail && email === ownerEmail) {
         return { ok: true, actor: `owner:${email}` };
       }
       return { ok: false, status: 401, error: "unauthorized" };
@@ -85,7 +100,7 @@ export async function authorizeUser(
   const ownerEmail = (process.env.OWNER_EMAIL ?? "").trim().toLowerCase();
   const verify = deps.verifyIdToken ?? null;
 
-  if (breakglass && headers.adminToken === breakglass) {
+  if (secretEquals(headers.adminToken, breakglass)) {
     return { ok: true, ownerUid: "owner", actor: "breakglass", isOwner: true };
   }
   const bearer = headers.authorization?.match(/^Bearer (.+)$/)?.[1];
@@ -94,7 +109,10 @@ export async function authorizeUser(
       const t = await verify(bearer);
       const email = (t.email ?? "").trim().toLowerCase();
       const isOwner = t.admin === true || (!!ownerEmail && email === ownerEmail);
-      return { ok: true, ownerUid: t.uid, actor: `firebase:${t.uid}`, isOwner };
+      // オーナー本人は単一オーナー時代の "owner" スコープに入る (break-glass sweep や
+      // 取込ジョブが書き込むデータと同じバケツを見る)。それ以外は uid ごとに分離する。
+      const ownerUid = isOwner ? "owner" : t.uid;
+      return { ok: true, ownerUid, actor: `firebase:${t.uid}`, isOwner };
     } catch (e) {
       // 失敗の理由を握りつぶさない。原因 (期待 aud と実際の食い違い＝プロジェクト ID 不一致、
       // トークン期限切れ等) をログに残し、短い理由も返す (切り分け用)。

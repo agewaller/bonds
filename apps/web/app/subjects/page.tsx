@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { AuthBar } from "../../components/AuthBar";
+import { apiFetch } from "../../lib/client-api";
 
 type SubjectRow = {
   id: string;
@@ -36,7 +37,7 @@ export default function SubjectsPage() {
   const [confirmingDelete, setConfirmingDelete] = useState("");
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/bff/dd/subjects");
+    const res = await apiFetch("dd/subjects");
     if (res.ok) setSubjects((await res.json()).subjects);
   }, []);
 
@@ -48,7 +49,7 @@ export default function SubjectsPage() {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch("/api/bff/dd/subjects", {
+      const res = await apiFetch("dd/subjects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: targetName, subjectType, profileHint }),
@@ -69,7 +70,7 @@ export default function SubjectsPage() {
 
   const deleteSubject = async (slug: string) => {
     setError("");
-    const res = await fetch(`/api/bff/dd/subjects/${slug}`, { method: "DELETE" });
+    const res = await apiFetch(`dd/subjects/${slug}`, { method: "DELETE" });
     setConfirmingDelete("");
     if (res.ok) await load();
     else setError("削除できませんでした。もう一度お試しください");
@@ -83,7 +84,7 @@ export default function SubjectsPage() {
     setCandidates(null);
     try {
       // まず「どの人物のことか」を確かめる。候補が複数ならユーザーに選んでもらう。
-      const res = await fetch("/api/bff/dd/identify", {
+      const res = await apiFetch("dd/identify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: trimmed }),

@@ -58,9 +58,11 @@ services:
       NODE_ENV: development
       PORT: 3000
       NEXT_PUBLIC_API_URL: http://localhost:8080
-      # BFF プロキシが叩く API (コンテナ内) と、その際に付ける管理トークン (サーバ側のみ)
+      # BFF プロキシが叩く API (コンテナ内)。ローカル開発では Firebase 未ログインでも
+      # 動くよう、明示フラグを立てたときだけ BFF が管理トークンを付ける (本番では未設定)。
       INTERNAL_API_URL: http://api:8080
       ADMIN_TOKEN: ${ADMIN_BREAKGLASS_TOKEN:-dev-admin-token}
+      ALLOW_DEV_ADMIN_FALLBACK: "1"
       # Google ログイン (cares と同じ Firebase プロジェクトを共用。未設定なら開発フォールバック)
       NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY:-}
       NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-}

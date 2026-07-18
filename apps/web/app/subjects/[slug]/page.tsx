@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { apiFetch } from "../../../lib/client-api";
 import {
   Section7d,
   SectionSvc,
@@ -55,7 +56,7 @@ export default function SubjectDetailPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
-    const res = await fetch(`/api/bff/dd/subjects/${slug}`);
+    const res = await apiFetch(`dd/subjects/${slug}`);
     if (res.ok) setDetail(await res.json());
     else if (res.status === 404) setNotFound(true);
   }, [slug]);
@@ -77,7 +78,7 @@ export default function SubjectDetailPage() {
       setWaitMsg(WAIT_MESSAGES[i]);
     }, 8000);
     try {
-      const res = await fetch(`/api/bff/dd/subjects/${slug}/run`, {
+      const res = await apiFetch(`dd/subjects/${slug}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ locale: "ja" }),
@@ -131,7 +132,7 @@ export default function SubjectDetailPage() {
   // 評価の履歴を 1 件ずつ削除する (データ主権: 1 件単位で消せる)。
   const deleteRun = async (runId: string) => {
     setError("");
-    const res = await fetch(`/api/bff/dd/subjects/${slug}/runs/${runId}`, { method: "DELETE" });
+    const res = await apiFetch(`dd/subjects/${slug}/runs/${runId}`, { method: "DELETE" });
     if (res.ok) await load();
     else setError("履歴を削除できませんでした。もう一度お試しください");
   };
@@ -139,7 +140,7 @@ export default function SubjectDetailPage() {
   // この人物ごと (評価履歴すべて) を削除する。
   const deletePerson = async () => {
     setError("");
-    const res = await fetch(`/api/bff/dd/subjects/${slug}`, { method: "DELETE" });
+    const res = await apiFetch(`dd/subjects/${slug}`, { method: "DELETE" });
     if (res.ok) location.href = "/subjects";
     else setError("削除できませんでした。もう一度お試しください");
   };

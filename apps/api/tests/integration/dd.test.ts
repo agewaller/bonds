@@ -89,19 +89,19 @@ describe("subjects CRUD", () => {
     const s2 = await createSubject(app, "Eiichi Shibusawa");
     expect(s2.slug).toBe("eiichi-shibusawa-2");
 
-    const list = await app.request("/api/dd/subjects");
+    const list = await app.request("/api/dd/subjects", { headers: adminHeaders });
     expect(list.status).toBe(200);
     expect((await list.json()).subjects).toHaveLength(2);
 
-    const detail = await app.request(`/api/dd/subjects/${s1.slug}`);
+    const detail = await app.request(`/api/dd/subjects/${s1.slug}`, { headers: adminHeaders });
     expect(detail.status).toBe(200);
     expect((await detail.json()).subject.name).toBe("Eiichi Shibusawa");
 
-    const missing = await app.request("/api/dd/subjects/no-such-slug");
+    const missing = await app.request("/api/dd/subjects/no-such-slug", { headers: adminHeaders });
     expect(missing.status).toBe(404);
   });
 
-  it("name 無しは 400、読み取り系は認証不要", async () => {
+  it("name 無しは 400、読み取り系も認証必須 (トークン無しは 401)", async () => {
     const app = createApp({ prisma, generate: validGenerate });
     const res = await app.request("/api/dd/subjects", {
       method: "POST",
@@ -109,7 +109,9 @@ describe("subjects CRUD", () => {
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(400);
-    expect((await app.request("/api/dd/subjects")).status).toBe(200);
+    // 読み取りも管理系ガード: トークン無しは 401、あれば 200
+    expect((await app.request("/api/dd/subjects")).status).toBe(401);
+    expect((await app.request("/api/dd/subjects", { headers: adminHeaders })).status).toBe(200);
   });
 });
 
@@ -146,12 +148,12 @@ describe("run (両評価並列)", () => {
     expect(usage[0]?.costJpy).toBeGreaterThan(0);
 
     // 実行詳細 API
-    const runRes = await app.request(`/api/dd/runs/${runs[0]!.id}`);
+    const runRes = await app.request(`/api/dd/runs/${runs[0]!.id}`, { headers: adminHeaders });
     expect(runRes.status).toBe(200);
     expect((await runRes.json()).run.steps).toHaveLength(2);
 
     // 詳細 API に最新スコアが載る
-    const detail = await (await app.request(`/api/dd/subjects/${s.slug}`)).json();
+    const detail = await (await app.request(`/api/dd/subjects/${s.slug}`, { headers: adminHeaders })).json();
     expect(Object.keys(detail.latestByType).sort()).toEqual([
       "consciousness_7d",
       "social_value_creation",
@@ -453,7 +455,7 @@ describe("公開の評価ページ + 履歴削除", () => {
     expect(await prisma.ddSubject.count()).toBe(0);
     expect(await prisma.personDueDiligence.count()).toBe(0);
     // 削除後は詳細も公開も 404
-    expect((await app.request(`/api/dd/subjects/${s.slug}`)).status).toBe(404);
+    expect((await app.request(`/api/dd/subjects/${s.slug}`, { headers: adminHeaders })).status).toBe(404);
     expect((await app.request(`/api/public/subjects/${s.slug}`)).status).toBe(404);
   });
 

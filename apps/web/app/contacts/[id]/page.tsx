@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Fold from "../../../components/Fold";
 import { apiFetch } from "../../../lib/client-api";
+import { safeExternalUrl, urlHost } from "../../../lib/safe-url";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
@@ -645,11 +646,16 @@ export default function ContactDetailPage() {
               )}
               {companyNews.sources.length > 0 && (
                 <p style={{ margin: "8px 0 0", fontSize: 12, color: "#94a3b8", wordBreak: "break-all" }}>
-                  出典: {companyNews.sources.map((u, i) => (
-                    <a key={i} href={u} target="_blank" rel="noreferrer" style={{ color: "#64748b", marginRight: 8 }}>
-                      {new URL(u).hostname}
-                    </a>
-                  ))}
+                  出典: {companyNews.sources.map((u, i) => {
+                    const safe = safeExternalUrl(u);
+                    return safe ? (
+                      <a key={i} href={safe} target="_blank" rel="noreferrer" style={{ color: "#64748b", marginRight: 8 }}>
+                        {urlHost(safe)}
+                      </a>
+                    ) : (
+                      <span key={i} style={{ marginRight: 8 }}>{urlHost(u)}</span>
+                    );
+                  })}
                 </p>
               )}
             </div>
@@ -690,12 +696,12 @@ export default function ContactDetailPage() {
             {snsAccounts.map((a, i) => (
               <li key={i} style={{ fontSize: 14, display: "flex", gap: 8, alignItems: "center" }}>
                 <span style={{ color: "#64748b", minWidth: 120 }}>{SNS_LABEL[a.platform] ?? a.platform}</span>
-                {a.url ? (
-                  <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", wordBreak: "break-all" }}>
+                {safeExternalUrl(a.url) ? (
+                  <a href={safeExternalUrl(a.url)!} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", wordBreak: "break-all" }}>
                     {a.handle || a.url}
                   </a>
                 ) : (
-                  <span>{a.handle}</span>
+                  <span>{a.handle || a.url}</span>
                 )}
                 <button
                   style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 12 }}

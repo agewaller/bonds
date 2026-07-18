@@ -1,6 +1,11 @@
 // BFF プロキシ — ブラウザは API を直接叩かず、この route handler 経由で呼ぶ。
-// 管理トークン (ADMIN_TOKEN) は web サーバ側 env にのみ置き、ブラウザへ出さない
-// (鍵・トークンをブラウザに置かない原則)。SSE (text/event-stream) はそのまま素通しする。
+// サインイン済みユーザーの ID トークンをそのまま API へ転送し、API 側で認可・スコープを
+// 解決する。**未サインインのリクエストに管理トークンを付けない** (これを付けていたため、
+// URL を知る匿名の第三者がオーナーのデータ・管理機能に到達できていた = 重大な穴)。
+// 認証が要る経路は、トークンが無ければ API がそのまま 401 を返す。公開経路 (/api/public/*
+// や OAuth callback) は認証不要でそのまま通る。
+// ローカル開発で Firebase 未設定のときだけ、明示的に ALLOW_DEV_ADMIN_FALLBACK=1 を
+// 立てた場合に限り break-glass を付ける (本番では絶対に立てない)。
 import type { NextRequest } from "next/server";
 
 const API_BASE = process.env.INTERNAL_API_URL ?? "http://localhost:8080";
@@ -11,14 +16,12 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   const headers: Record<string, string> = {
     "Content-Type": req.headers.get("content-type") ?? "application/json",
   };
-  // サインイン済みユーザーの ID トークンはそのまま API へ転送する (uid スコープ)。
-  // トークンが無いときだけ開発用フォールバック (break-glass = "owner" スコープ) を付ける。
   const authorization = req.headers.get("authorization");
   if (authorization) {
     headers["authorization"] = authorization;
-  } else {
-    const adminToken = process.env.ADMIN_TOKEN;
-    if (adminToken) headers["x-admin-token"] = adminToken;
+  } else if (process.env.ALLOW_DEV_ADMIN_FALLBACK === "1" && process.env.ADMIN_TOKEN) {
+    // ローカル開発専用の非常口 (本番では未設定 = 付かない)。
+    headers["x-admin-token"] = process.env.ADMIN_TOKEN;
   }
   const res = await fetch(url, {
     method: req.method,

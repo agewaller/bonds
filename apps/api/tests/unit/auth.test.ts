@@ -30,13 +30,12 @@ describe("authorizeAdmin (三段フェイルセーフ)", () => {
     expect(r).toEqual({ ok: true, actor: "owner:agewaller@gmail.com" });
   });
 
-  it("OWNER でも Google ログインでは拒否 (乗っ取り対策)", async () => {
+  it("OWNER は Google ログインでも管理者 (BFF 匿名フォールバック廃止に伴いオーナーはログインで管理画面に入る)", async () => {
     const r = await authorizeAdmin(
       { authorization: "Bearer x" },
       { verifyIdToken: verifierFor({ uid: "u3", email: "agewaller@gmail.com", signInProvider: "google.com" }) },
     );
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.status).toBe(401);
+    expect(r.ok).toBe(true);
   });
 
   it("経路3: break-glass トークンで許可 (Firebase 不在でも管理者をロックアウトしない)", async () => {
@@ -77,14 +76,14 @@ describe("authorizeUser (関係性ユーザー + isOwner)", () => {
     expect(r).toEqual({ ok: true, ownerUid: "owner", actor: "breakglass", isOwner: true });
   });
 
-  it("Firebase ログインは uid スコープ。OWNER_EMAIL 本人は isOwner=true", async () => {
+  it("OWNER_EMAIL 本人は owner スコープ + isOwner=true (既存の owner データに到達する)", async () => {
     const r = await authorizeUser(
       { authorization: "Bearer x" },
       { verifyIdToken: verifierFor({ uid: "owner-uid", email: "AGEWALLER@gmail.com" }) },
     );
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.ownerUid).toBe("owner-uid");
+      expect(r.ownerUid).toBe("owner"); // uid ではなく "owner" バケツにマップ
       expect(r.isOwner).toBe(true);
     }
   });

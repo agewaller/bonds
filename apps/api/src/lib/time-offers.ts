@@ -52,6 +52,8 @@ export type StripeCheckoutSession = {
   id: string;
   url: string | null;
   payment_status: string;
+  amount_total?: number | null;
+  currency?: string | null;
   metadata?: Record<string, string>;
 };
 
@@ -120,6 +122,9 @@ export function buildStripeClient(fetchImpl?: FetchLike): StripeClient | null {
 
 /** 支払い待ちの予約をいつまで有効とみなすか (これを過ぎたら expired にして枠を開放)。 */
 export const PENDING_BOOKING_TTL_MS = 48 * 60 * 60 * 1000;
+
+/** 1 出品あたり同時に抱えられる支払い待ちの上限 (未払いで全枠を占有する DoS 対策)。 */
+export const MAX_PENDING_BOOKINGS_PER_OFFER = 5;
 
 /** 枠の確保として busy 扱いにする予約か (確定済み + 直近の支払い待ち = 二重予約を防ぐ)。 */
 export function bookingHoldsSlot(

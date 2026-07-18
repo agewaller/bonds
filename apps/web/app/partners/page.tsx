@@ -2,6 +2,7 @@
 // 提携先ディレクトリ (公開)。掲載を許可した提携先だけを表示する (ADR-0022 移植)。
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { safeExternalUrl } from "../../lib/safe-url";
 
 type Partner = { kind: string; name: string; url: string | null; blurb: string | null };
 
@@ -43,8 +44,8 @@ export default function PartnersPage() {
           <li key={i} style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 16px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
               <span style={{ fontWeight: 600 }}>
-                {p.url ? (
-                  <a href={p.url} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", textDecoration: "none" }}>
+                {safeExternalUrl(p.url) ? (
+                  <a href={safeExternalUrl(p.url)!} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", textDecoration: "none" }}>
                     {p.name}
                   </a>
                 ) : (

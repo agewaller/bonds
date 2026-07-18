@@ -11,8 +11,9 @@ const API_BASE = process.env.INTERNAL_API_URL ?? "http://localhost:8080";
 async function enqueueBytes(bytes: ArrayBuffer, filename: string): Promise<boolean> {
   const url = new URL(`/api/contacts/import-jobs?filename=${encodeURIComponent(filename)}`, API_BASE);
   const headers: Record<string, string> = { "Content-Type": "application/octet-stream" };
-  const adminToken = process.env.ADMIN_TOKEN;
-  if (adminToken) headers["x-admin-token"] = adminToken;
+  if (process.env.ALLOW_DEV_ADMIN_FALLBACK === "1" && process.env.ADMIN_TOKEN) {
+    headers["x-admin-token"] = process.env.ADMIN_TOKEN;
+  }
   const res = await fetch(url, { method: "POST", headers, body: bytes, cache: "no-store" });
   return res.ok;
 }
@@ -20,8 +21,9 @@ async function enqueueBytes(bytes: ArrayBuffer, filename: string): Promise<boole
 async function enqueueText(content: string): Promise<boolean> {
   const url = new URL("/api/contacts/import-jobs", API_BASE);
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const adminToken = process.env.ADMIN_TOKEN;
-  if (adminToken) headers["x-admin-token"] = adminToken;
+  if (process.env.ALLOW_DEV_ADMIN_FALLBACK === "1" && process.env.ADMIN_TOKEN) {
+    headers["x-admin-token"] = process.env.ADMIN_TOKEN;
+  }
   const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ content }), cache: "no-store" });
   return res.ok;
 }
