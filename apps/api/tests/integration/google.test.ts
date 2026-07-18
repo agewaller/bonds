@@ -29,6 +29,17 @@ const fakeGoogle: GoogleClient = {
   refreshAccessToken: async () => "at",
   apiGet: async (url) => {
     if (url.includes("calendar/v3")) {
+      // 予定の busy 同期 (件名つき) は summary/end を要求する。同席者の抽出とは別物。
+      if (url.includes("summary")) {
+        const d = new Date();
+        d.setDate(d.getDate() + 1);
+        const at = (h: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), h).toISOString();
+        return {
+          items: [
+            { start: { dateTime: at(9) }, end: { dateTime: at(12) }, summary: "定例ミーティング" },
+          ],
+        };
+      }
       return {
         items: [
           {

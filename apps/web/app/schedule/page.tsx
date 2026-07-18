@@ -103,6 +103,7 @@ export default function SchedulePage() {
   const [avail, setAvail] = useState<Availability | null>(null);
   const [slots, setSlots] = useState<AvailabilitySlotRow[]>([]);
   const [busy, setBusy2] = useState<{ start: string; end: string }[]>([]);
+  const [myEvents, setMyEvents] = useState<{ start: string; end: string; title: string; source: string }[]>([]);
   const [calSources, setCalSources] = useState<{ google: boolean; ics: boolean }>({ google: false, ics: false });
   const [outlookIcs, setOutlookIcs] = useState("");
   const [shares, setShares] = useState<ShareRow[]>([]);
@@ -150,13 +151,14 @@ export default function SchedulePage() {
   }, []);
 
   const load = useCallback(async () => {
-    const [a, s, o, b, sl, mb] = await Promise.all([
+    const [a, s, o, b, sl, mb, me] = await Promise.all([
       apiFetch("relationship/availability").then((r) => (r.ok ? r.json() : null)),
       apiFetch("schedule/shares").then((r) => (r.ok ? r.json() : null)),
       apiFetch("schedule/offers").then((r) => (r.ok ? r.json() : null)),
       apiFetch("schedule/bookings").then((r) => (r.ok ? r.json() : null)),
       apiFetch("relationship/availability-slots").then((r) => (r.ok ? r.json() : null)),
       apiFetch("relationship/my-busy").then((r) => (r.ok ? r.json() : null)),
+      apiFetch("relationship/my-events").then((r) => (r.ok ? r.json() : null)),
     ]);
     if (a) setAvail(a as Availability);
     if (sl) setSlots((sl as { slots: AvailabilitySlotRow[] }).slots);
@@ -165,6 +167,7 @@ export default function SchedulePage() {
       setBusy2(mbb.busy ?? []);
       setCalSources({ google: !!mbb.google, ics: !!mbb.ics });
     }
+    if (me) setMyEvents((me as { events: { start: string; end: string; title: string; source: string }[] }).events ?? []);
     if (s) setShares((s as { shares: ShareRow[] }).shares);
     if (o) {
       setOffers((o as { offers: OfferRow[] }).offers);
@@ -334,7 +337,8 @@ export default function SchedulePage() {
         <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.7, margin: "4px 0 10px" }}>
           カレンダーの上をドラッグしてなぞると、その時間が空き枠になります (なぞった枠はタップで消せます)。
           なぞった日はその枠だけが相手に出ます。なぞっていない日は、下の曜日ごとの受付時間が使われます。
-          お使いの予定表を取り込むと、灰色の帯で「予定あり」が重なり、空いている時間がひと目で分かります。
+          お使いの予定表を取り込むと、あなたの予定が青いブロックで件名つきに重なり、空いている時間がひと目で分かります。
+          予定の中身はあなたにだけ表示します (相手に選んでいただくページには空き枠だけが出て、予定の中身は見えません)。
         </p>
 
         {/* お使いのカレンダーを取り込む (Google / Outlook 等)。予定の中身は保存しません */}
@@ -363,7 +367,7 @@ export default function SchedulePage() {
           </p>
         )}
 
-        <AvailabilityCalendar slots={slots} busy={busy} onCreate={(s, e) => void createSlot(s, e)} onDelete={(id) => void deleteSlot(id)} />
+        <AvailabilityCalendar slots={slots} busy={busy} events={myEvents} onCreate={(s, e) => void createSlot(s, e)} onDelete={(id) => void deleteSlot(id)} />
 
         <div style={{ marginTop: 12, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, background: "#f8fafc" }}>
           <p style={{ fontSize: 13, color: "#475569", margin: "0 0 8px" }}>

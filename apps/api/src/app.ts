@@ -92,7 +92,7 @@ import {
   type ContactNeed,
 } from "./lib/offerings.js";
 import { randomUUID } from "node:crypto";
-import { parseIcsBusy, looksLikeIcs, buildMeetingInviteIcs } from "./lib/ics.js";
+import { parseIcsBusy, parseIcsEvents, looksLikeIcs, buildMeetingInviteIcs, type IsoEvent } from "./lib/ics.js";
 import {
   buildMailer,
   validateOutreachCandidates,
@@ -938,10 +938,24 @@ export function createApp(deps: AppDeps) {
   // 確度が高く、名前だけ一致する組は候補 (同姓同名の別人もいる)。まとめるかはユーザーが決める。
   // 注: /:id より前に定義する (でないと "duplicates" が :id として捕まる)。
   app.get("/api/contacts/duplicates", async (c) => {
-    const rows = await prisma.contact.findMany({
-      where: { ownerUid: c.get("ownerUid"), state: "active" },
-      orderBy: { createdAt: "asc" },
-    });
+    const ownerUid = c.get("ownerUid");
+    const [rows, dismissals] = await Promise.all([
+      prisma.contact.findMany({ where: { ownerUid, state: "active" }, orderBy: { createdAt: "asc" } }),
+      prisma.suggestionDismissal.findMany({ where: { ownerUid, kind: "dupe" }, select: { key: true } }),
+    ]);
+    // 「別の方として扱う」で見送った組は二度と出さない。組の同一性は構成メンバーの
+    // 並びに依らないよう、id を並べ替えてから短いハッシュにする (メンバーが増減すれば
+    // 別の組として再確認を促す)。
+    const dismissed = new Set(dismissals.map((d) => d.key));
+    const groupKey = (ids: string[]) => {
+      const joined = [...ids].sort().join(",");
+      let h = 0x811c9dc5;
+      for (let i = 0; i < joined.length; i++) {
+        h ^= joined.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+      }
+      return `g${(h >>> 0).toString(16)}_${ids.length}`;
+    };
     type Row = (typeof rows)[number];
     const view = (e: Row) => ({
       id: e.id,
@@ -951,7 +965,7 @@ export function createApp(deps: AppDeps) {
       phone: e.phone,
       distance: e.distance,
     });
-    const groups: Array<{ reason: string; strong: boolean; members: ReturnType<typeof view>[] }> = [];
+    const groups: Array<{ key: string; reason: string; strong: boolean; members: ReturnType<typeof view>[] }> = [];
     const used = new Set<string>();
     const groupBy = (keyFn: (e: Row) => string | undefined, reason: string, strong: boolean) => {
       const m = new Map<string, Row[]>();
@@ -965,8 +979,10 @@ export function createApp(deps: AppDeps) {
       }
       for (const members of m.values()) {
         if (members.length < 2) continue;
+        const key = groupKey(members.map((x) => x.id));
         members.forEach((x) => used.add(x.id));
-        groups.push({ reason, strong, members: members.map(view) });
+        if (dismissed.has(key)) continue; // 別人として見送り済みは出さない
+        groups.push({ key, reason, strong, members: members.map(view) });
       }
     };
     groupBy((e) => identityKeys(e).email, "メールアドレスが同じ", true);
@@ -2749,7 +2765,11 @@ export function createApp(deps: AppDeps) {
     contactId: string,
     body: { busySlots?: unknown; ics?: unknown; icsUrl?: unknown },
   ): Promise<{ saved: number } | { error: string; detail: string }> => {
-    let busy: ReturnType<typeof toIso>;
+    // オーナー自身のカレンダー (SELF) は、本人だけに見せるため件名も持つ。
+    // 第三者 (相手) の予定は従来どおり時間帯だけ = 中身は保存しない。
+    const isSelf = SELF_SOURCES.includes(contactId);
+    const parseIcs = (s: string): IsoEvent[] => (isSelf ? parseIcsEvents(s) : parseIcsBusy(s));
+    let busy: IsoEvent[];
     let provider = "manual";
     let icsUrl: string | null = null;
     if (typeof body.icsUrl === "string" && body.icsUrl.trim()) {
@@ -2767,11 +2787,11 @@ export function createApp(deps: AppDeps) {
       if (!looksLikeIcs(content)) {
         return { error: "not_ics", detail: "予定表の形式を読み取れませんでした" };
       }
-      busy = parseIcsBusy(content);
+      busy = parseIcs(content);
       provider = "ics";
       icsUrl = url;
     } else if (typeof body.ics === "string" && looksLikeIcs(body.ics)) {
-      busy = parseIcsBusy(body.ics);
+      busy = parseIcs(body.ics);
       provider = "ics";
     } else {
       busy = toIso(parseIsoIntervals(body.busySlots));
@@ -2888,6 +2908,35 @@ export function createApp(deps: AppDeps) {
       google: links.some((l) => l.contactId === SELF_GOOGLE),
       ics: links.some((l) => l.contactId === SELF_CALENDAR),
     });
+  });
+
+  // 空き時間カレンダーに重ねて表示する「自分の予定」を、件名つきで期間で返す。
+  // オーナー自身のカレンダー (Google / 取り込んだ予定表) の予定を、本人にだけ見せる。
+  app.get("/api/relationship/my-events", async (c) => {
+    const from = new Date(c.req.query("from") ?? "");
+    const to = new Date(c.req.query("to") ?? "");
+    const start = Number.isNaN(from.getTime()) ? new Date() : from;
+    const end = Number.isNaN(to.getTime()) ? new Date(start.getTime() + 60 * 86_400_000) : to;
+    const links = await prisma.calendarLink.findMany({
+      where: { ownerUid: c.get("ownerUid"), contactId: { in: SELF_SOURCES } },
+      select: { contactId: true, busySlots: true },
+    });
+    const events: Array<{ start: string; end: string; title: string; source: string }> = [];
+    for (const l of links) {
+      const source = l.contactId === SELF_GOOGLE ? "google" : "calendar";
+      const raw = Array.isArray(l.busySlots) ? (l.busySlots as unknown[]) : [];
+      for (const r of raw) {
+        if (!r || typeof r !== "object") continue;
+        const ev = r as { start?: string; end?: string; title?: string };
+        const s = new Date(String(ev.start));
+        const e = new Date(String(ev.end));
+        if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime()) || e <= s) continue;
+        if (e <= start || s >= end) continue; // 期間外は返さない
+        events.push({ start: s.toISOString(), end: e.toISOString(), title: (ev.title ?? "").trim() || "予定", source });
+      }
+    }
+    events.sort((a, b) => a.start.localeCompare(b.start));
+    return c.json({ events: events.slice(0, 500) });
   });
 
   // Google カレンダーの予定 (busy) だけを取り込む (連絡先の取込はしない軽い経路)。
@@ -5726,18 +5775,41 @@ export function createApp(deps: AppDeps) {
   const syncGoogleBusy = async (ownerUid: string, accessToken: string): Promise<number> => {
     if (!google) return 0;
     const now = Date.now();
-    const fb = (await google.apiPost("https://www.googleapis.com/calendar/v3/freeBusy", accessToken, {
-      timeMin: new Date(now).toISOString(),
-      timeMax: new Date(now + GOOGLE_BUSY_LOOKAHEAD_DAYS * 86_400_000).toISOString(),
-      items: [{ id: "primary" }],
-    })) as { calendars?: { primary?: { busy?: Array<{ start: string; end: string }> } } };
-    const busy = toIso(parseIsoIntervals(fb.calendars?.primary?.busy ?? []));
+    const timeMin = new Date(now).toISOString();
+    const timeMax = new Date(now + GOOGLE_BUSY_LOOKAHEAD_DAYS * 86_400_000).toISOString();
+    // freeBusy (時間帯だけ) ではなく events を引き、予定の件名も取る。件名はオーナー自身の
+    // カレンダーで、本人にだけ表示する (第三者の予定の中身は従来どおり保存しない)。終日予定
+    // (date のみ) と「予定なし (transparent)」は busy に数えない = freeBusy と同じ意味を保つ。
+    const res = (await google.apiGet(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults=250&fields=items(start,end,summary,transparency,status)&timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`,
+      accessToken,
+    )) as {
+      items?: Array<{
+        start?: { dateTime?: string };
+        end?: { dateTime?: string };
+        summary?: string;
+        transparency?: string;
+        status?: string;
+      }>;
+    };
+    const events: IsoEvent[] = [];
+    for (const it of res.items ?? []) {
+      if (it.status === "cancelled" || it.transparency === "transparent") continue;
+      const s = it.start?.dateTime;
+      const e = it.end?.dateTime;
+      if (!s || !e) continue; // 終日予定 (date のみ) は空き計算に含めない
+      const start = new Date(s);
+      const end = new Date(e);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) continue;
+      const title = (it.summary ?? "").trim().slice(0, 120);
+      events.push(title ? { start: start.toISOString(), end: end.toISOString(), title } : { start: start.toISOString(), end: end.toISOString() });
+    }
     await prisma.calendarLink.upsert({
       where: { ownerUid_contactId: { ownerUid, contactId: SELF_GOOGLE } },
-      update: { busySlots: busy as never, provider: "google" },
-      create: { ownerUid, contactId: SELF_GOOGLE, provider: "google", busySlots: busy as never },
+      update: { busySlots: events as never, provider: "google" },
+      create: { ownerUid, contactId: SELF_GOOGLE, provider: "google", busySlots: events as never },
     });
-    return busy.length;
+    return events.length;
   };
 
   const runGoogleSync = async (

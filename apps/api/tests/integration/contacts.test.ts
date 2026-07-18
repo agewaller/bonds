@@ -435,6 +435,25 @@ describe("名寄せ (identity resolution)", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it("「別人として扱う」で見送った同名の組は、二度と duplicates に出ない", async () => {
+    await createContact({ name: "田中 太郎", ...plain });
+    await createContact({ name: "田中太郎", ...plain }); // 正規化で同名 = 弱い一致
+    const before = await (await app.request("/api/contacts/duplicates", { headers: H })).json();
+    expect(before.groups.length).toBe(1);
+    const key = before.groups[0].key as string;
+    expect(typeof key).toBe("string");
+
+    const dismiss = await app.request("/api/relationship/dismissals", {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ kind: "dupe", key }),
+    });
+    expect(dismiss.status).toBe(200);
+
+    const after = await (await app.request("/api/contacts/duplicates", { headers: H })).json();
+    expect(after.groups.length).toBe(0);
+  });
 });
 
 describe("連絡先の検索 (GET /api/contacts?q= 全員が対象)", () => {

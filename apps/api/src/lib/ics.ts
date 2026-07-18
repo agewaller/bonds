@@ -53,6 +53,50 @@ export function parseIcsBusy(ics: string): IsoInterval[] {
   return out;
 }
 
+/** 予定を件名つきで取り出す (オーナー自身のカレンダー表示用)。第三者の予定には使わない。 */
+export type IsoEvent = { start: string; end: string; title?: string };
+
+function icsUnescape(v: string): string {
+  return v
+    .replace(/\\n/gi, " ")
+    .replace(/\\,/g, ",")
+    .replace(/\\;/g, ";")
+    .replace(/\\\\/g, "\\")
+    .trim();
+}
+
+/** VEVENT を件名 (SUMMARY) つきで取り出す。時刻は parseIcsBusy と同じ解釈。 */
+export function parseIcsEvents(ics: string): IsoEvent[] {
+  const out: IsoEvent[] = [];
+  let inEvent = false;
+  let start: Date | null = null;
+  let end: Date | null = null;
+  let title = "";
+  for (const line of unfold(ics)) {
+    const upper = line.toUpperCase();
+    if (upper === "BEGIN:VEVENT") {
+      inEvent = true;
+      start = end = null;
+      title = "";
+    } else if (upper === "END:VEVENT") {
+      if (inEvent && start && end && end > start) {
+        const t = title.slice(0, 120);
+        out.push(t ? { start: start.toISOString(), end: end.toISOString(), title: t } : { start: start.toISOString(), end: end.toISOString() });
+      }
+      inEvent = false;
+    } else if (inEvent) {
+      const idx = line.indexOf(":");
+      if (idx < 0) continue;
+      const prop = line.slice(0, idx).toUpperCase();
+      const value = line.slice(idx + 1);
+      if (prop.startsWith("DTSTART")) start = parseIcsDate(value);
+      else if (prop.startsWith("DTEND")) end = parseIcsDate(value);
+      else if (prop === "SUMMARY" || prop.startsWith("SUMMARY;")) title = icsUnescape(value);
+    }
+  }
+  return out;
+}
+
 export function looksLikeIcs(content: string): boolean {
   return /BEGIN:VCALENDAR/i.test(content);
 }

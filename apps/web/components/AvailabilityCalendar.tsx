@@ -10,15 +10,18 @@ import jaLocale from "@fullcalendar/core/locales/ja";
 
 export type AvailabilitySlotRow = { id: string; start: string; end: string };
 export type BusyInterval = { start: string; end: string };
+export type CalEvent = { start: string; end: string; title: string; source: string };
 
 export default function AvailabilityCalendar({
   slots,
   busy = [],
+  events = [],
   onCreate,
   onDelete,
 }: {
   slots: AvailabilitySlotRow[];
   busy?: BusyInterval[];
+  events?: CalEvent[];
   onCreate: (startIso: string, endIso: string) => void;
   onDelete: (id: string) => void;
 }) {
@@ -55,13 +58,24 @@ export default function AvailabilityCalendar({
         }}
         events={[
           // 取り込んだ予定 (Google / Outlook 等) は背景色で「予定あり」を示す。
-          // 予定の中身は持たないので件名は出さない。ここ以外の白い時間が空き。
+          // ここ以外の白い時間が空き。予定の中身 (件名) は下の events で重ねて見せる。
           ...busy.map((b, i) => ({
             id: `busy-${i}`,
             start: b.start,
             end: b.end,
             display: "background" as const,
             backgroundColor: "#94a3b8", // 取り込んだ予定 (予定あり) をはっきり見せる
+          })),
+          // 取り込んだ自分のカレンダーの予定を、件名つきで青いブロックとして重ねる
+          // (本人にだけ見せる。第三者の予定の中身は保存しない原則は不変)。
+          ...events.map((ev, i) => ({
+            id: `ev-${i}`,
+            start: ev.start,
+            end: ev.end,
+            title: ev.title,
+            backgroundColor: "#3b82f6",
+            borderColor: "#2563eb",
+            editable: false,
           })),
           // ドラッグで登録した空き枠 (緑・タップで削除)
           ...slots.map((s) => ({
@@ -74,7 +88,7 @@ export default function AvailabilityCalendar({
           })),
         ]}
         eventClick={(info) => {
-          if (info.event.id.startsWith("busy-")) return; // 取り込んだ予定は消せない
+          if (info.event.id.startsWith("busy-") || info.event.id.startsWith("ev-")) return; // 取り込んだ予定は消せない
           onDelete(info.event.id);
         }}
       />

@@ -239,7 +239,7 @@ export default function ContactsPage() {
   >([]);
   // 名寄せ: 同じ人が二重登録されていそうな組
   type DupeMember = { id: string; name: string; company: string | null; email: string | null; phone: string | null };
-  type DupeGroup = { reason: string; strong: boolean; members: DupeMember[] };
+  type DupeGroup = { key: string; reason: string; strong: boolean; members: DupeMember[] };
   const [dupeGroups, setDupeGroups] = useState<DupeGroup[]>([]);
   // 取り込みジョブ (ページを離れても続く。状況を見せて安心してもらう)
   type ImportJobRow = {
@@ -465,25 +465,52 @@ export default function ContactsPage() {
   }, [loadJobs, load]);
 
   // 一組を先頭の人にまとめる (残りを統合)。まとめたら再読み込み。
+  // まとめる / 別人として扱う は、数千件の全再読込を待たせず「押した瞬間に行が消える」
+  // 楽観更新にする (以前は await load() で全連絡先を引き直していたため、モバイルで
+  // 反応が固まって見えた)。失敗したときだけ行を戻して知らせる。
   const mergeGroup = async (g: DupeGroup) => {
-    if (busy || g.members.length < 2) return;
-    setBusy(true);
+    if (g.members.length < 2) return;
     setError("");
+    setDupeGroups((prev) => prev.filter((x) => x.key !== g.key));
     try {
       const res = await apiFetch("contacts/merge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ primaryId: g.members[0]!.id, otherIds: g.members.slice(1).map((m) => m.id) }),
       });
-      const body = await res.json().catch(() => ({}));
       if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setDupeGroups((prev) => [g, ...prev]);
         setError(body.detail ?? "まとめられませんでした");
         return;
       }
       setNotice(`${g.members.length}件を1件にまとめました`);
-      await load();
-    } finally {
-      setBusy(false);
+      setTotalContacts((n) => (typeof n === "number" ? Math.max(0, n - (g.members.length - 1)) : n));
+    } catch {
+      setDupeGroups((prev) => [g, ...prev]);
+      setError("まとめられませんでした");
+    }
+  };
+
+  // 別の方として扱う: 名寄せの提案を見送り、この組は二度と出さない (サーバに記録)。
+  const markDifferentPeople = async (g: DupeGroup) => {
+    setError("");
+    setDupeGroups((prev) => prev.filter((x) => x.key !== g.key));
+    try {
+      const res = await apiFetch("relationship/dismissals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "dupe", key: g.key }),
+      });
+      if (!res.ok) {
+        setDupeGroups((prev) => [g, ...prev]);
+        setError("いまは保存できませんでした");
+        return;
+      }
+      setNotice("別の方として、そのままにしました");
+    } catch {
+      setDupeGroups((prev) => [g, ...prev]);
+      setError("いまは保存できませんでした");
     }
   };
 
@@ -1626,8 +1653,8 @@ export default function ContactsPage() {
             まとめると、やりとりや贈り物の記録も1件に集まります。別の方なら、そのままにしておいて大丈夫です。
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 10 }}>
-            {dupeGroups.slice(0, 20).map((g, i) => (
-              <li key={i} style={{ border: "1px solid #dbeafe", borderRadius: 10, padding: "10px 12px", background: "#fff" }}>
+            {dupeGroups.slice(0, 20).map((g) => (
+              <li key={g.key} style={{ border: "1px solid #dbeafe", borderRadius: 10, padding: "10px 12px", background: "#fff" }}>
                 <div style={{ fontSize: 13, color: "#64748b", marginBottom: 4 }}>
                   {g.reason}
                   {!g.strong && "（念のためご確認ください）"}
@@ -1640,13 +1667,20 @@ export default function ContactsPage() {
                     </span>
                   ))}
                 </div>
-                <button
-                  onClick={() => void mergeGroup(g)}
-                  disabled={busy}
-                  style={{ marginTop: 8, padding: "6px 14px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
-                >
-                  1件にまとめる
-                </button>
+                <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => void mergeGroup(g)}
+                    style={{ padding: "6px 14px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+                  >
+                    1件にまとめる
+                  </button>
+                  <button
+                    onClick={() => void markDifferentPeople(g)}
+                    style={{ padding: "6px 14px", background: "#fff", color: "#475569", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+                  >
+                    別の方として扱う
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

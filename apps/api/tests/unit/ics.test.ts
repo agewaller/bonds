@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseIcsBusy, parseIcsDate, looksLikeIcs } from "../../src/lib/ics.js";
+import { parseIcsBusy, parseIcsDate, parseIcsEvents, looksLikeIcs } from "../../src/lib/ics.js";
 
 const SAMPLE = `BEGIN:VCALENDAR
 VERSION:2.0
@@ -53,6 +53,30 @@ describe("parseIcsBusy", () => {
     expect(parseIcsBusy("")).toEqual([]);
     expect(looksLikeIcs(SAMPLE)).toBe(true);
     expect(looksLikeIcs("氏名,電話")).toBe(false);
+  });
+});
+
+describe("parseIcsEvents (件名つき = オーナー自身の予定表示用)", () => {
+  it("SUMMARY を件名として取り出す", () => {
+    const events = parseIcsEvents(SAMPLE);
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(events[0]).toMatchObject({ title: "定例" });
+    expect(events[0]!.start).toBe(new Date(Date.UTC(2026, 6, 6, 1, 0, 0)).toISOString());
+  });
+
+  it("SUMMARY のエスケープ (\\, \\; \\n) を戻す", () => {
+    const ics =
+      "BEGIN:VCALENDAR\nBEGIN:VEVENT\nDTSTART:20260706T010000Z\nDTEND:20260706T020000Z\nSUMMARY:山田様\\; 打合せ\\, 資料\nEND:VEVENT\nEND:VCALENDAR";
+    const events = parseIcsEvents(ics);
+    expect(events[0]!.title).toBe("山田様; 打合せ, 資料");
+  });
+
+  it("件名が無いイベントは title を付けない (時間だけは残る)", () => {
+    const ics =
+      "BEGIN:VCALENDAR\nBEGIN:VEVENT\nDTSTART:20260706T010000Z\nDTEND:20260706T020000Z\nEND:VEVENT\nEND:VCALENDAR";
+    const events = parseIcsEvents(ics);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.title).toBeUndefined();
   });
 });
 

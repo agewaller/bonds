@@ -502,3 +502,47 @@ describe("時間の出品と予約", () => {
     expect(rows.map((r) => r.status).sort()).toEqual(["confirmed", "expired"]);
   });
 });
+
+describe("自分のカレンダーの予定を件名つきで表示 (my-events)", () => {
+  it("自分の予定表 (ICS) は件名つきで my-events に出る。相手の予定表には件名を持たない", async () => {
+    const app = makeApp();
+    const day = new Date();
+    day.setDate(day.getDate() + 2);
+    const d = `${day.getFullYear()}${String(day.getMonth() + 1).padStart(2, "0")}${String(day.getDate()).padStart(2, "0")}`;
+    const mineIcs = `BEGIN:VCALENDAR\nBEGIN:VEVENT\nDTSTART:${d}T090000Z\nDTEND:${d}T100000Z\nSUMMARY:歯医者の予約\nEND:VEVENT\nEND:VCALENDAR`;
+
+    // 自分の予定表を取り込む → 件名つきで保存される
+    const put = await app.request("/api/relationship/my-busy", {
+      method: "PUT",
+      headers: H,
+      body: JSON.stringify({ ics: mineIcs }),
+    });
+    expect(put.status).toBe(200);
+
+    const from = new Date(day.getFullYear(), day.getMonth(), day.getDate()).toISOString();
+    const to = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1).toISOString();
+    const ev = await (await app.request(`/api/relationship/my-events?from=${from}&to=${to}`, { headers: H })).json();
+    expect(ev.events.length).toBe(1);
+    expect(ev.events[0].title).toBe("歯医者の予約");
+    expect(ev.events[0].source).toBe("calendar");
+
+    // 相手 (第三者) の予定表は件名を持たない = my-events にも出ない (SELF のみ)
+    const contact = await (
+      await app.request("/api/contacts", { method: "POST", headers: H, body: JSON.stringify({ name: "予定持ち 田中" }) })
+    ).json();
+    await app.request(`/api/contacts/${contact.contact.id}/busy`, {
+      method: "PUT",
+      headers: H,
+      body: JSON.stringify({ ics: mineIcs }),
+    });
+    const link = await prisma.calendarLink.findUnique({
+      where: { ownerUid_contactId: { ownerUid: "owner", contactId: contact.contact.id } },
+    });
+    const busy = (link!.busySlots as Array<{ title?: string }>) ?? [];
+    expect(busy.length).toBe(1);
+    expect(busy[0]!.title).toBeUndefined(); // 相手の予定の中身は保存しない
+
+    const ev2 = await (await app.request(`/api/relationship/my-events?from=${from}&to=${to}`, { headers: H })).json();
+    expect(ev2.events.length).toBe(1); // 相手のぶんは増えない
+  });
+});
