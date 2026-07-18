@@ -17,6 +17,16 @@ export function secretEquals(a: string | undefined, b: string | undefined): bool
   return timingSafeEqual(ba, bb);
 }
 
+/**
+ * 「オーナーを指す」システム経路 (break-glass・webhook など、ユーザー識別を持たない
+ * 経路) が解決すべき正準バケツ。OWNER_UID (オーナーの Firebase uid) があればそれ、
+ * 無ければ単一オーナー時代の "owner"。ユーザーのログインは常に自分の uid スコープに入る
+ * ので、この関数はユーザー経路には使わない。
+ */
+export function ownerBucket(): string {
+  return (process.env.OWNER_UID ?? "").trim() || "owner";
+}
+
 export type VerifiedToken = {
   uid: string;
   email?: string;
@@ -101,7 +111,7 @@ export async function authorizeUser(
   const verify = deps.verifyIdToken ?? null;
 
   if (secretEquals(headers.adminToken, breakglass)) {
-    return { ok: true, ownerUid: "owner", actor: "breakglass", isOwner: true };
+    return { ok: true, ownerUid: ownerBucket(), actor: "breakglass", isOwner: true };
   }
   const bearer = headers.authorization?.match(/^Bearer (.+)$/)?.[1];
   if (bearer && verify) {
@@ -109,9 +119,11 @@ export async function authorizeUser(
       const t = await verify(bearer);
       const email = (t.email ?? "").trim().toLowerCase();
       const isOwner = t.admin === true || (!!ownerEmail && email === ownerEmail);
-      // オーナー本人は単一オーナー時代の "owner" スコープに入る (break-glass sweep や
-      // 取込ジョブが書き込むデータと同じバケツを見る)。それ以外は uid ごとに分離する。
-      const ownerUid = isOwner ? "owner" : t.uid;
+      // データ所有は常に Firebase uid にする (cares 流)。かつてオーナー本人を魔法の
+      // "owner" バケツへ remap していたが、それが「ログインすると自分の取込データ
+      // (uid バケツ) から引き離される = データが消えて見える」障害を生んだため廃止。
+      // オーナーも自分の uid のデータを見る。管理者権限は isOwner / authorizeAdmin で別に与える。
+      const ownerUid = t.uid;
       return { ok: true, ownerUid, actor: `firebase:${t.uid}`, isOwner };
     } catch (e) {
       // 失敗の理由を握りつぶさない。原因 (期待 aud と実際の食い違い＝プロジェクト ID 不一致、

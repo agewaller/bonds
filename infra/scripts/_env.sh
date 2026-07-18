@@ -45,9 +45,12 @@ export PROD_WEB_URL="${PROD_WEB_URL:-https://bonds-web-xj6szhutkq-an.a.run.app}"
 # 未設定 (unset) なら連携機能は「準備中」に縮退する。
 export GOOGLE_OAUTH_CLIENT_ID="${GOOGLE_OAUTH_CLIENT_ID:-unset}"
 export GOOGLE_OAUTH_REDIRECT_URL="${GOOGLE_OAUTH_REDIRECT_URL:-https://bonds-api-xj6szhutkq-an.a.run.app/api/google/callback}"
-# オーナー本人のメール。このメールで Google ログインすると owner スコープ + 管理者になる。
-# (BFF の匿名フォールバック廃止に伴い、オーナーはログインで owner データに到達する。)
+# オーナー本人のメール。このメールで Google ログインすると管理者になる (データ所有は uid)。
 export OWNER_EMAIL="${OWNER_EMAIL:-agewaller@gmail.com}"
+# オーナーの正準バケツ = オーナーの Firebase uid。データ所有は常に uid で分離するため、
+# ログインはこの uid のデータ (取り込んだ本物の連絡先) に着地する。break-glass・webhook
+# など「オーナーを指す」システム経路もこの uid に解決する (未設定なら旧 "owner")。
+export OWNER_UID="${OWNER_UID:-j1y1GlmKm6hgsROff0V1vST6Mik1}"
 
 if [ "${BONDS_ENV}" = "staging" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/_env.staging.sh" ]; then
   # shellcheck disable=SC1091

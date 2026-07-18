@@ -102,7 +102,7 @@ import { jsonProseLanguageDirective } from "./lib/locale.js";
 import { extractJson } from "./lib/dd-spec.js";
 import { calcCostJpy } from "./lib/cost.js";
 import { PERSON_DD_MAX_TOKENS, PERSON_DD_TIMEOUT_MS } from "./lib/person-eval.js";
-import { authorizeAdmin, authorizeUser, secretEquals, type VerifyIdTokenFn } from "./lib/auth.js";
+import { authorizeAdmin, authorizeUser, ownerBucket, secretEquals, type VerifyIdTokenFn } from "./lib/auth.js";
 import { buildTavilySearch, type SearchFn, type SearchResult } from "./lib/tavily.js";
 import { sanitizeProse } from "./lib/plain-text.js";
 import {
@@ -1844,7 +1844,7 @@ export function createApp(deps: AppDeps) {
     if (transcript.length > MAX_JOB_PAYLOAD_CHARS) {
       return c.json({ error: "too_large", detail: "内容が大きすぎます" }, 413);
     }
-    const ownerUid = "owner";
+    const ownerUid = ownerBucket(); // webhook はユーザー識別を持たないためオーナーの正準バケツへ
     const date = typeof b.date === "string" && /^\d{4}-\d{2}-\d{2}/.test(b.date) ? b.date.slice(0, 10) : null;
     const label = typeof b.label === "string" ? b.label.trim().slice(0, 60) : "";
     // 日付を接地して、会った相手の接触記録をその日に寄せる (抽出プロンプトが日付を拾う)。

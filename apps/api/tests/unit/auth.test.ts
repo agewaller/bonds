@@ -71,19 +71,30 @@ describe("authorizeAdmin (三段フェイルセーフ)", () => {
 });
 
 describe("authorizeUser (関係性ユーザー + isOwner)", () => {
-  it("break-glass は owner スコープ・isOwner=true (単一オーナー時代の互換)", async () => {
+  it("break-glass はオーナーの正準バケツ・isOwner=true (OWNER_UID 未設定なら owner)", async () => {
     const r = await authorizeUser({ adminToken: "bg-token" }, { verifyIdToken: null });
     expect(r).toEqual({ ok: true, ownerUid: "owner", actor: "breakglass", isOwner: true });
   });
 
-  it("OWNER_EMAIL 本人は owner スコープ + isOwner=true (既存の owner データに到達する)", async () => {
+  it("break-glass は OWNER_UID があればそれに解決する (webhook/CLI がオーナーの実データに届く)", async () => {
+    process.env.OWNER_UID = "j1y1GlmKm6hgsROff0V1vST6Mik1";
+    try {
+      const r = await authorizeUser({ adminToken: "bg-token" }, { verifyIdToken: null });
+      expect(r).toEqual({ ok: true, ownerUid: "j1y1GlmKm6hgsROff0V1vST6Mik1", actor: "breakglass", isOwner: true });
+    } finally {
+      delete process.env.OWNER_UID;
+    }
+  });
+
+  it("OWNER_EMAIL 本人は自分の uid スコープ + isOwner=true (取込データのある uid バケツに到達する)", async () => {
     const r = await authorizeUser(
       { authorization: "Bearer x" },
       { verifyIdToken: verifierFor({ uid: "owner-uid", email: "AGEWALLER@gmail.com" }) },
     );
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.ownerUid).toBe("owner"); // uid ではなく "owner" バケツにマップ
+      // 魔法の "owner" バケツへの remap は廃止。データ所有は常に Firebase uid。
+      expect(r.ownerUid).toBe("owner-uid");
       expect(r.isOwner).toBe(true);
     }
   });
