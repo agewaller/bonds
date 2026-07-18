@@ -9,13 +9,16 @@ import interactionPlugin from "@fullcalendar/interaction";
 import jaLocale from "@fullcalendar/core/locales/ja";
 
 export type AvailabilitySlotRow = { id: string; start: string; end: string };
+export type BusyInterval = { start: string; end: string };
 
 export default function AvailabilityCalendar({
   slots,
+  busy = [],
   onCreate,
   onDelete,
 }: {
   slots: AvailabilitySlotRow[];
+  busy?: BusyInterval[];
   onCreate: (startIso: string, endIso: string) => void;
   onDelete: (id: string) => void;
 }) {
@@ -40,15 +43,28 @@ export default function AvailabilityCalendar({
         select={(info) => {
           onCreate(info.start.toISOString(), info.end.toISOString());
         }}
-        events={slots.map((s) => ({
-          id: s.id,
-          start: s.start,
-          end: s.end,
-          title: "空き (タップで消す)",
-          backgroundColor: "#16a34a",
-          borderColor: "#15803d",
-        }))}
+        events={[
+          // 取り込んだ予定 (Google / Outlook 等) は背景色で「予定あり」を示す。
+          // 予定の中身は持たないので件名は出さない。ここ以外の白い時間が空き。
+          ...busy.map((b, i) => ({
+            id: `busy-${i}`,
+            start: b.start,
+            end: b.end,
+            display: "background" as const,
+            backgroundColor: "#cbd5e1",
+          })),
+          // ドラッグで登録した空き枠 (緑・タップで削除)
+          ...slots.map((s) => ({
+            id: s.id,
+            start: s.start,
+            end: s.end,
+            title: "空き (タップで消す)",
+            backgroundColor: "#16a34a",
+            borderColor: "#15803d",
+          })),
+        ]}
         eventClick={(info) => {
+          if (info.event.id.startsWith("busy-")) return; // 取り込んだ予定は消せない
           onDelete(info.event.id);
         }}
       />

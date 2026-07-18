@@ -2610,7 +2610,9 @@ export function createApp(deps: AppDeps) {
 
   // 自分のカレンダーは contact_id = "self" の番兵値で保存する
   // (NULL は Postgres の複合ユニークで重複可になり upsert が効かないため)。
-  const SELF_CALENDAR = "self";
+  const SELF_CALENDAR = "self"; // ICS 貼り付け / 購読 URL (Outlook・iCloud 等) の自分の予定表
+  const SELF_GOOGLE = "self:google"; // Google カレンダーの予定 (freeBusy)。両方を重ねて空きを出す
+  const SELF_SOURCES = [SELF_CALENDAR, SELF_GOOGLE];
 
   // busy の保存。busySlots (手動) / ics (貼り付け) / icsUrl (購読 URL = ライブ同期) の
   // 3 経路。icsUrl は保存しておき、refresh-calendars で最新を取り直す。
@@ -2707,14 +2709,21 @@ export function createApp(deps: AppDeps) {
   };
 
   // 自分の空き (busy + bonds 内の確定枠 + 設定 + カレンダーでなぞった明示枠) を期間で計算する共通ヘルパ
+  // 取り込んだ自分の予定表 (Outlook 等の ICS + Google カレンダー) の busy をまとめて返す。
+  const selfBusyIntervals = async (ownerUid: string): Promise<{ busy: Interval[]; hasMyCalendar: boolean }> => {
+    const links = await prisma.calendarLink.findMany({
+      where: { ownerUid, contactId: { in: SELF_SOURCES } },
+    });
+    const busy = links.flatMap((l) => parseIsoIntervals(l.busySlots));
+    return { busy, hasMyCalendar: links.length > 0 };
+  };
+
   const myFreeIntervals = async (
     ownerUid: string,
     period: { from: Date; periodStart: Date; periodEnd: Date },
   ): Promise<{ free: Interval[]; hasMyCalendar: boolean; avail: Availability }> => {
-    const [mine, committed, avail, slots] = await Promise.all([
-      prisma.calendarLink.findUnique({
-        where: { ownerUid_contactId: { ownerUid, contactId: SELF_CALENDAR } },
-      }),
+    const [self, committed, avail, slots] = await Promise.all([
+      selfBusyIntervals(ownerUid),
       committedBusy(ownerUid),
       loadAvailability(ownerUid),
       prisma.availabilitySlot.findMany({
@@ -2722,14 +2731,50 @@ export function createApp(deps: AppDeps) {
         orderBy: { startAt: "asc" },
       }),
     ]);
-    const busy = [...parseIsoIntervals(mine?.busySlots), ...committed];
+    const busy = [...self.busy, ...committed];
     const explicit = slots.map((s) => ({ start: s.startAt, end: s.endAt }));
     return {
       free: freeIntervalsWithExplicitSlots(busy, period, avail, explicit),
-      hasMyCalendar: !!mine,
+      hasMyCalendar: self.hasMyCalendar,
       avail,
     };
   };
+
+  // 空き時間カレンダーに重ねて表示する「予定あり (busy)」を期間で返す。
+  // 予定の中身 (件名) は持たず、時間帯だけ (プライバシー: 中身は保存しない)。
+  app.get("/api/relationship/my-busy", async (c) => {
+    const from = new Date(c.req.query("from") ?? "");
+    const to = new Date(c.req.query("to") ?? "");
+    const start = Number.isNaN(from.getTime()) ? new Date() : from;
+    const end = Number.isNaN(to.getTime()) ? new Date(start.getTime() + 60 * 86_400_000) : to;
+    const [self, committed] = await Promise.all([selfBusyIntervals(c.get("ownerUid")), committedBusy(c.get("ownerUid"))]);
+    const links = await prisma.calendarLink.findMany({
+      where: { ownerUid: c.get("ownerUid"), contactId: { in: SELF_SOURCES } },
+      select: { contactId: true, provider: true },
+    });
+    // 期間に重なる busy だけに絞る
+    const clip = (iv: Interval) => iv.end > start && iv.start < end;
+    const busy = [...self.busy, ...committed].filter(clip);
+    return c.json({
+      busy: intervalsToIso(busy),
+      google: links.some((l) => l.contactId === SELF_GOOGLE),
+      ics: links.some((l) => l.contactId === SELF_CALENDAR),
+    });
+  });
+
+  // Google カレンダーの予定 (busy) だけを取り込む (連絡先の取込はしない軽い経路)。
+  app.post("/api/relationship/import-google-calendar", async (c) => {
+    if (!google) return c.json({ error: "unavailable", detail: "Google 連携は準備中です" }, 503);
+    const conn = await prisma.googleConnection.findUnique({ where: { ownerUid: c.get("ownerUid") } });
+    if (!conn) return c.json({ error: "not_connected", detail: "先に設定から Google とつないでください" }, 400);
+    try {
+      const accessToken = await google.refreshAccessToken(conn.refreshToken);
+      const count = await syncGoogleBusy(c.get("ownerUid"), accessToken);
+      return c.json({ imported: count });
+    } catch {
+      return c.json({ error: "import_failed", detail: "カレンダーを取り込めませんでした。時間をおいてお試しください" }, 502);
+    }
+  });
 
   // 二者空き重なり → 面談候補 (busy → 各自の free → 積集合)。自分側は空き時間の設定を反映する
   app.get("/api/contacts/:id/meeting-slots", async (c) => {
@@ -5199,6 +5244,26 @@ export function createApp(deps: AppDeps) {
   const webBaseUrl = () => allowedOrigins[0] ?? "http://localhost:3000";
 
   // 1 ユーザーぶんの同期。Calendar 90日+30日 / Gmail 送受信 各50通のヘッダ / Drive 共有50件。
+  // 自分の Google カレンダーの予定 (busy) を freeBusy で取得し、SELF_GOOGLE に保存する。
+  // 空き時間カレンダーに「予定あり」を重ねて、空きが見やすくなる。件名は取らない。
+  const GOOGLE_BUSY_LOOKAHEAD_DAYS = 60;
+  const syncGoogleBusy = async (ownerUid: string, accessToken: string): Promise<number> => {
+    if (!google) return 0;
+    const now = Date.now();
+    const fb = (await google.apiPost("https://www.googleapis.com/calendar/v3/freeBusy", accessToken, {
+      timeMin: new Date(now).toISOString(),
+      timeMax: new Date(now + GOOGLE_BUSY_LOOKAHEAD_DAYS * 86_400_000).toISOString(),
+      items: [{ id: "primary" }],
+    })) as { calendars?: { primary?: { busy?: Array<{ start: string; end: string }> } } };
+    const busy = toIso(parseIsoIntervals(fb.calendars?.primary?.busy ?? []));
+    await prisma.calendarLink.upsert({
+      where: { ownerUid_contactId: { ownerUid, contactId: SELF_GOOGLE } },
+      update: { busySlots: busy as never, provider: "google" },
+      create: { ownerUid, contactId: SELF_GOOGLE, provider: "google", busySlots: busy as never },
+    });
+    return busy.length;
+  };
+
   const runGoogleSync = async (
     ownerUid: string,
   ): Promise<
@@ -5209,6 +5274,14 @@ export function createApp(deps: AppDeps) {
     const conn = await prisma.googleConnection.findUnique({ where: { ownerUid } });
     if (!conn) return { ok: false, detail: "まだ Google とつながっていません" };
     const accessToken = await google.refreshAccessToken(conn.refreshToken);
+
+    // 自分の Google カレンダーの予定 (busy) を取り込み、空き時間カレンダーに重ねられるようにする。
+    // freeBusy は時間帯だけを返す (件名は取らない = 予定の中身は保存しない)。失敗しても取込は続ける。
+    try {
+      await syncGoogleBusy(ownerUid, accessToken);
+    } catch {
+      // カレンダーの busy 取込に失敗しても、連絡先の取込は止めない
+    }
 
     const now = Date.now();
     const timeMin = new Date(now - CALENDAR_LOOKBACK_DAYS * 86400_000).toISOString();

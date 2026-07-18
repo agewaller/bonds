@@ -96,7 +96,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "google_connections", "contact_interactions", "contacts" CASCADE',
+    'TRUNCATE "google_connections", "contact_interactions", "contacts", "calendar_links", "availability_slots" CASCADE',
   );
 });
 
@@ -224,6 +224,39 @@ describe("同期 (人物データの取込)", () => {
     ).json();
     expect(all.picked).toBe(1);
     expect(all.synced).toBe(1);
+  });
+
+  it("Google カレンダーの予定 (busy) が取り込まれ、my-busy に出て、空き計算から除かれる", async () => {
+    const app = createApp({ prisma, generate: null, google: fakeGoogle });
+    // 未接続は 400
+    expect((await app.request("/api/relationship/import-google-calendar", { method: "POST", headers: H, body: "{}" })).status).toBe(400);
+    await connect(app);
+    // カレンダーだけ取り込む (fakeGoogle は明日 9-12 時が busy)
+    const imp = await (
+      await app.request("/api/relationship/import-google-calendar", { method: "POST", headers: H, body: "{}" })
+    ).json();
+    expect(imp.imported).toBe(1);
+    // my-busy に「予定あり」が出て、google フラグが立つ
+    const mb = await (await app.request("/api/relationship/my-busy", { headers: H })).json();
+    expect(mb.google).toBe(true);
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    // 明日 9:00 の Google 予定が busy に含まれる (他テストの committed 残りが混じっても壊れない検証)
+    const hasTomorrow9 = (mb.busy as { start: string }[]).some((b) => {
+      const s = new Date(b.start);
+      return s.getDate() === d.getDate() && s.getHours() === 9;
+    });
+    expect(hasTomorrow9).toBe(true);
+    // 共有リンクの空き選択肢から、明日の 9-12 時は除かれている (busy を反映)
+    const share = await (
+      await app.request("/api/schedule/shares", { method: "POST", headers: H, body: JSON.stringify({ periodDays: 3, slotMinutes: 60 }) })
+    ).json();
+    const slots = await (await app.request(`/api/public/schedule/${share.shareKey}/slots`)).json();
+    const tomorrowMorning = (slots.options as { start: string }[]).filter((o) => {
+      const s = new Date(o.start);
+      return s.getDate() === d.getDate() && s.getHours() >= 9 && s.getHours() < 12;
+    });
+    expect(tomorrowMorning).toHaveLength(0);
   });
 });
 

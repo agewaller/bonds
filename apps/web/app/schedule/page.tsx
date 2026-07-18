@@ -100,6 +100,9 @@ export default function SchedulePage() {
   const [error, setError] = useState("");
   const [avail, setAvail] = useState<Availability | null>(null);
   const [slots, setSlots] = useState<AvailabilitySlotRow[]>([]);
+  const [busy, setBusy2] = useState<{ start: string; end: string }[]>([]);
+  const [calSources, setCalSources] = useState<{ google: boolean; ics: boolean }>({ google: false, ics: false });
+  const [outlookIcs, setOutlookIcs] = useState("");
   const [shares, setShares] = useState<ShareRow[]>([]);
   const [detail, setDetail] = useState<ShareDetail | null>(null);
   const [offers, setOffers] = useState<OfferRow[]>([]);
@@ -136,15 +139,21 @@ export default function SchedulePage() {
   }, []);
 
   const load = useCallback(async () => {
-    const [a, s, o, b, sl] = await Promise.all([
+    const [a, s, o, b, sl, mb] = await Promise.all([
       apiFetch("relationship/availability").then((r) => (r.ok ? r.json() : null)),
       apiFetch("schedule/shares").then((r) => (r.ok ? r.json() : null)),
       apiFetch("schedule/offers").then((r) => (r.ok ? r.json() : null)),
       apiFetch("schedule/bookings").then((r) => (r.ok ? r.json() : null)),
       apiFetch("relationship/availability-slots").then((r) => (r.ok ? r.json() : null)),
+      apiFetch("relationship/my-busy").then((r) => (r.ok ? r.json() : null)),
     ]);
     if (a) setAvail(a as Availability);
     if (sl) setSlots((sl as { slots: AvailabilitySlotRow[] }).slots);
+    if (mb) {
+      const mbb = mb as { busy: { start: string; end: string }[]; google: boolean; ics: boolean };
+      setBusy2(mbb.busy ?? []);
+      setCalSources({ google: !!mbb.google, ics: !!mbb.ics });
+    }
     if (s) setShares((s as { shares: ShareRow[] }).shares);
     if (o) {
       setOffers((o as { offers: OfferRow[] }).offers);
@@ -169,6 +178,28 @@ export default function SchedulePage() {
   const deleteSlot = async (id: string) => {
     const body = await call(`relationship/availability-slots/${id}`, { method: "DELETE" }, "枠を消しました");
     if (body) setSlots((cur) => cur.filter((s) => s.id !== id));
+  };
+
+  const importGoogleCalendar = async () => {
+    const body = await call(
+      "relationship/import-google-calendar",
+      { method: "POST", body: "{}" },
+      "Google カレンダーの予定を取り込みました",
+    );
+    if (body) await load();
+  };
+
+  const saveOutlookIcs = async () => {
+    if (!outlookIcs.trim()) return;
+    const body = await call(
+      "relationship/my-busy",
+      { method: "PUT", body: JSON.stringify({ icsUrl: outlookIcs.trim() }) },
+      "予定表を取り込みました。カレンダーに予定が重なります",
+    );
+    if (body) {
+      setOutlookIcs("");
+      await load();
+    }
   };
 
   const saveAvailability = async () => {
@@ -274,8 +305,36 @@ export default function SchedulePage() {
         <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.7, margin: "4px 0 10px" }}>
           カレンダーの上をドラッグしてなぞると、その時間が空き枠になります (なぞった枠はタップで消せます)。
           なぞった日はその枠だけが相手に出ます。なぞっていない日は、下の曜日ごとの受付時間が使われます。
+          お使いの予定表を取り込むと、灰色の帯で「予定あり」が重なり、空いている時間がひと目で分かります。
         </p>
-        <AvailabilityCalendar slots={slots} onCreate={(s, e) => void createSlot(s, e)} onDelete={(id) => void deleteSlot(id)} />
+
+        {/* お使いのカレンダーを取り込む (Google / Outlook 等)。予定の中身は保存しません */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", margin: "0 0 12px" }}>
+          <button style={btn(false)} onClick={() => void importGoogleCalendar()}>
+            {calSources.google ? "Google カレンダーを取り込み直す" : "Google カレンダーの予定を取り込む"}
+          </button>
+          <span style={{ color: "#94a3b8", fontSize: 12 }}>
+            (はじめてのときは設定から Google とつないでください)
+          </span>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", margin: "0 0 12px" }}>
+          <input
+            style={{ ...input, flex: "1 1 260px" }}
+            placeholder="Outlook など予定表のアドレス (https で始まる ICS)"
+            aria-label="予定表のアドレス"
+            value={outlookIcs}
+            onChange={(e) => setOutlookIcs(e.target.value)}
+          />
+          <button style={btn(false)} onClick={() => void saveOutlookIcs()}>取り込む</button>
+        </div>
+        {(calSources.google || calSources.ics) && (
+          <p style={{ color: "#64748b", fontSize: 12, margin: "0 0 8px" }}>
+            取り込み済み:{calSources.google ? " Google" : ""}{calSources.ics ? " 予定表アドレス" : ""}
+            。灰色の帯が「予定あり」です。
+          </p>
+        )}
+
+        <AvailabilityCalendar slots={slots} busy={busy} onCreate={(s, e) => void createSlot(s, e)} onDelete={(id) => void deleteSlot(id)} />
         {!avail && <p>読み込んでいます…</p>}
         {avail && (
           <div style={{ marginTop: 14 }}>
