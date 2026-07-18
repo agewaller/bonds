@@ -4,7 +4,9 @@
 // この端末に記憶する (中身のデータは何も保存しない = PII をブラウザに置かない原則のまま)。
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
-const KEY = "bonds_fold_v1";
+// v2: ホームの各パネルを既定で閉じる方針に変更。旧 v1 の記憶をリセットして
+// 新しい既定 (ホームは閉じた状態) をすぐ反映する (中身のデータは何も保存していない)。
+const KEY = "bonds_fold_v2";
 
 function readAll(): Record<string, boolean> {
   try {

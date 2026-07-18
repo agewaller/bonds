@@ -875,7 +875,7 @@ export default function ContactsPage() {
       <h1 style={{ fontSize: 24 }}>{t("contacts_title")}</h1>
 
       {summary && (
-        <Fold k="cl0" title={<>{t("connection_score")}</>} style={{
+        <Fold k="cl0" defaultOpen={false} title={<>{t("connection_score")}</>} style={{
             borderLeft: `5px solid ${level.color}`,
             background: "#f8fafc",
             borderRadius: 12,
@@ -894,7 +894,7 @@ export default function ContactsPage() {
       )}
 
       {progress && progress.totalInteractions > 0 && (
-        <Fold k="cl1" title={<>これまでの歩み</>} style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px", margin: "16px 0" }}>
+        <Fold k="cl1" defaultOpen={false} title={<>これまでの歩み</>} style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px", margin: "16px 0" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
             <span style={{ color: "#334155" }}>
               {progress.streakDays > 0 ? `${progress.streakDays}日続いています` : ""}
@@ -924,7 +924,7 @@ export default function ContactsPage() {
       )}
 
       {summary && summary.today.length > 0 && (
-        <Fold k="cl2" title={<>{t("today_suggestion")}</>} style={{ margin: "16px 0" }}>
+        <Fold k="cl2" defaultOpen={false} title={<>{t("today_suggestion")}</>} style={{ margin: "16px 0" }}>
           <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 8 }}>
             {summary.today.map((sug) => (
               <li
@@ -965,7 +965,7 @@ export default function ContactsPage() {
       )}
 
       {shownOccasions.length > 0 && (
-        <Fold k="cl3" title={<>いま贈るとよい方・行事</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl3" defaultOpen={false} title={<>いま贈るとよい方・行事</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
             {shownOccasions.slice(0, 8).map((o, i) => (
               <li key={i} style={{ fontSize: 14, display: "flex", alignItems: "baseline", gap: 4 }}>
@@ -987,7 +987,7 @@ export default function ContactsPage() {
       )}
 
       {shownExReminders.length > 0 && (
-        <Fold k="cl4" title={<>そろそろ区切りをつけたいこと</>} style={{ margin: "16px 0", border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl4" defaultOpen={false} title={<>そろそろ区切りをつけたいこと</>} style={{ margin: "16px 0", border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 12, padding: "12px 16px" }}>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
             {shownExReminders.slice(0, 8).map((r) => (
               <li key={r.id} style={{ fontSize: 14, display: "flex", alignItems: "baseline", gap: 4 }}>
@@ -1005,7 +1005,7 @@ export default function ContactsPage() {
       )}
 
       {shownDistanceSug.length > 0 && (
-        <Fold k="cl5" title={<>距離感の見直し</>} style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl5" defaultOpen={false} title={<>距離感の見直し</>} style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
             <button
               style={{ padding: "6px 14px", background: "#0284c7", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
@@ -1064,7 +1064,7 @@ export default function ContactsPage() {
       )}
 
       {shownDrift.length > 0 && (
-        <Fold k="cl6" title={<>そっと気にかけたい関係</>} style={{ margin: "16px 0", border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl6" defaultOpen={false} title={<>そっと気にかけたい関係</>} style={{ margin: "16px 0", border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#9a3412", margin: "4px 0 8px" }}>
             近しかった方や、いつもやりとりされていた方との間が、少し空いてきています。よろしければ、久しぶりのひとことから。
           </p>
@@ -1085,7 +1085,7 @@ export default function ContactsPage() {
       )}
 
       {focusItems.length > 0 && (
-        <Fold k="cl7" title={<>大切にしたい方々 (優先リスト)</>} style={{ margin: "16px 0", border: "2px solid #fbbf24", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl7" defaultOpen={false} title={<>大切にしたい方々 (優先リスト)</>} style={{ margin: "16px 0", border: "2px solid #fbbf24", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#92400e", margin: "4px 0 8px" }}>
             くり返しの登場・記録の厚み・直近のやりとりから、いま関係を高める価値がありそうな方です。
             距離感や目標をここで直すと、以降のご提案はこの優先度と目標に沿って動きます。
@@ -1169,7 +1169,7 @@ export default function ContactsPage() {
       )}
 
       {careItems.length > 0 && (
-        <Fold k="cl21" title={<>あなたへの提案 ({careItems.length}件)</>} style={{ margin: "16px 0", border: "1px solid #a5b4fc", background: "#eef2ff", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl21" defaultOpen={false} title={<>あなたへの提案 ({careItems.length}件)</>} style={{ margin: "16px 0", border: "1px solid #a5b4fc", background: "#eef2ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#3730a3", margin: "4px 0 8px" }}>
             優先リストの方々について、次の一手をご用意しました。やるかどうかはあなたが選んでください。
           </p>
@@ -1207,7 +1207,7 @@ export default function ContactsPage() {
       )}
 
       {shownGoalItems.length > 0 && (
-        <Fold k="cl8" title={<>目標に向かっている関係</>} style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl8" defaultOpen={false} title={<>目標に向かっている関係</>} style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#6b21a8", margin: "4px 0 8px" }}>
             目標を決めた方との、いまの間合いと次の一手です。間が空いてきた方から並べています。
           </p>
@@ -1235,7 +1235,7 @@ export default function ContactsPage() {
       )}
 
       {shownRecentMet.length > 0 && (
-        <Fold k="cl9" title={<>最近お会いした方</>} style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl9" defaultOpen={false} title={<>最近お会いした方</>} style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#075985", margin: "4px 0 8px" }}>
             お変わりありませんでしたか。覚えているうちにひとことだけ残しておくと、この先の一手がぐっと的確になります。
           </p>
@@ -1276,7 +1276,7 @@ export default function ContactsPage() {
       )}
 
       {dailyQ && !dailySaved && !dailyQDismissed && (
-        <Fold k="cl10" title={<>今日のひとこと</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl10" defaultOpen={false} title={<>今日のひとこと</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 14, color: "#78350f", margin: "4px 0 8px" }}>{dailyQ.question}</p>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <input
@@ -1314,7 +1314,7 @@ export default function ContactsPage() {
       )}
 
       {shownFirstMoves.length > 0 && (
-        <Fold k="cl11" title={<>新しく迎えた方へ、はじめの一手</>} style={{ margin: "16px 0", border: "1px solid #a7f3d0", background: "#ecfdf5", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl11" defaultOpen={false} title={<>新しく迎えた方へ、はじめの一手</>} style={{ margin: "16px 0", border: "1px solid #a7f3d0", background: "#ecfdf5", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#065f46", margin: "4px 0 8px" }}>
             最近お迎えした方のうち、いま動くとよさそうな方です。詳しい進め方は、お名前を開いて「この方への対応を考える」からどうぞ。
           </p>
@@ -1337,7 +1337,7 @@ export default function ContactsPage() {
         </Fold>
       )}
 
-      <Fold k="cl22" title={<>あなたが力になれること</>} style={{ margin: "16px 0", border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 12, padding: "12px 16px" }}>
+      <Fold k="cl22" defaultOpen={false} title={<>あなたが力になれること</>} style={{ margin: "16px 0", border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 12, padding: "12px 16px" }}>
         <p style={{ fontSize: 13, color: "#166534", margin: "4px 0 8px" }}>
           あなたが提供できること（譲れるもの・貸せるもの・教えられること・手伝えること・相談にのれること）を書いておくと、
           それを必要としていそうな方を、これまでの記録からそっとお探しします。押しつけずに、最後はあなたが選べます。
@@ -1515,7 +1515,7 @@ export default function ContactsPage() {
         )}
       </Fold>
 
-      <Fold k="cl12" title={<>引き合わせるとよいお二人</>} style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
+      <Fold k="cl12" defaultOpen={false} title={<>引き合わせるとよいお二人</>} style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
           <button
             style={{ padding: "6px 14px", background: "#7c3aed", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
@@ -1583,7 +1583,7 @@ export default function ContactsPage() {
           const color = (s: string) =>
             s === "done" ? "#166534" : s === "error" ? "#b91c1c" : "#1e40af";
           return (
-            <Fold k="cl13" title={<>取り込みの状況</>}
+            <Fold k="cl13" defaultOpen={false} title={<>取り込みの状況</>}
               style={{ margin: "16px 0", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: "12px 16px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                 {active === 0 && (
@@ -1621,7 +1621,7 @@ export default function ContactsPage() {
         })()}
 
       {dupeGroups.length > 0 && (
-        <Fold k="cl14" title={<>同じ方が二重に登録されているかもしれません</>} style={{ margin: "16px 0", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl14" defaultOpen={false} title={<>同じ方が二重に登録されているかもしれません</>} style={{ margin: "16px 0", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ color: "#475569", fontSize: 13, margin: "0 0 10px" }}>
             まとめると、やりとりや贈り物の記録も1件に集まります。別の方なら、そのままにしておいて大丈夫です。
           </p>
@@ -1653,7 +1653,7 @@ export default function ContactsPage() {
         </Fold>
       )}
 
-      <Fold k="cl15" title={<>{t("add_section")}</>} style={{ margin: "24px 0" }}>
+      <Fold k="cl15" defaultOpen={false} title={<>{t("add_section")}</>} style={{ margin: "24px 0" }}>
         <div style={{ display: "flex", gap: 8 }}>
           <input
             value={name}
@@ -2030,7 +2030,7 @@ export default function ContactsPage() {
         )}
       </section>
 
-      <Fold k="cl18" title={<>SNS・サービスと連携して、関係する人をまとめる</>} style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+      <Fold k="cl18" defaultOpen={false} title={<>SNS・サービスと連携して、関係する人をまとめる</>} style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
         <p style={{ color: "#64748b", margin: "4px 0 10px", fontSize: 14 }}>
           お使いのサービスから、つながっている方をまとめて連絡帳に取り込めます。各社のボタンを押すと、
           その取り出し方のページが開きます。受け取ったファイルを下の取り込みに置くだけで大丈夫です。
@@ -2064,7 +2064,7 @@ export default function ContactsPage() {
         )}
       </Fold>
 
-      <Fold k="cl19" title={<>いちばん簡単: Google（連絡先・カレンダー）からまとめて取り込む</>} style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+      <Fold k="cl19" defaultOpen={false} title={<>いちばん簡単: Google（連絡先・カレンダー）からまとめて取り込む</>} style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
         <p style={{ color: "#64748b", margin: "4px 0 10px", fontSize: 14 }}>
           ボタンをひとつ押すだけで、Google の連絡先（アドレス帳）とカレンダーの同席者が連絡帳へ自動でまとまります。
           つないだあとはその場で取り込みが始まります。読み取りだけの最小限の権限で、予定やアドレス帳を書き換えることはありません。
@@ -2126,7 +2126,7 @@ export default function ContactsPage() {
         )}
       </Fold>
 
-      <Fold k="cl20" title={<>{t("everyone")} ({totalContacts ?? contacts.length})</>}>
+      <Fold k="cl20" defaultOpen={false} title={<>{t("everyone")} ({totalContacts ?? contacts.length})</>}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
           <input
             value={nameFilter}
