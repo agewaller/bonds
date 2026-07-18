@@ -109,6 +109,7 @@ export default function SchedulePage() {
   const [detail, setDetail] = useState<ShareDetail | null>(null);
   const [offers, setOffers] = useState<OfferRow[]>([]);
   const [paymentsReady, setPaymentsReady] = useState(false);
+  const [stripeMode, setStripeMode] = useState<string | null>(null);
   const [bookings, setBookings] = useState<BookingRow[]>([]);
 
   // 共有リンクの作成フォーム
@@ -167,6 +168,7 @@ export default function SchedulePage() {
     if (o) {
       setOffers((o as { offers: OfferRow[] }).offers);
       setPaymentsReady((o as { paymentsReady: boolean }).paymentsReady);
+      setStripeMode((o as { stripeMode: string | null }).stripeMode ?? null);
     }
     if (b) setBookings((b as { bookings: BookingRow[] }).bookings);
   }, []);
@@ -503,6 +505,12 @@ export default function SchedulePage() {
         {!paymentsReady && (
           <p style={{ background: "#fef9c3", padding: 8, borderRadius: 8, fontSize: 13, lineHeight: 1.7 }}>
             有料の受け付けは、お支払いの設定 (設定手順書にあります) が済むまで準備中です。無料の受け付けはいまも使えます。
+          </p>
+        )}
+        {paymentsReady && stripeMode === "test" && (
+          <p style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: 8, borderRadius: 8, fontSize: 13, lineHeight: 1.7 }}>
+            いまお支払いは「テストモード」です。実際のカードでは決済が通りません（テスト用カードのみ）。
+            本番のお支払いを受け付けるには、本番用の鍵（sk_live_… で始まるもの）に差し替えてください（設定手順書のタスク5）。
           </p>
         )}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "8px 0" }}>

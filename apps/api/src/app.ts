@@ -3755,6 +3755,8 @@ export function createApp(deps: AppDeps) {
         confirmedBookings: o.bookings.filter((b) => b.status === "confirmed").length,
       })),
       paymentsReady: !!stripe,
+      // 決済の mode。test の鍵ではテスト用カードしか通らない (実際の支払いは live 鍵が要る)。
+      stripeMode: stripe ? ((process.env.STRIPE_SECRET_KEY ?? "").startsWith("sk_live") ? "live" : "test") : null,
       marketUrl: `${publicWebUrl}/market`,
     });
   });
