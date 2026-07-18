@@ -445,6 +445,27 @@ export function createApp(deps: AppDeps) {
     });
   });
 
+  // Stripe 決済の点検 (読み取り専用・鍵は出さない)。「支払いが機能しない」の切り分け用:
+  // 本番の STRIPE_SECRET_KEY で Stripe の balance を叩き、鍵が有効か・mode(live/test)を返す。
+  // 返すのは prefix (sk_live_ 等・秘密部分は含まない) と長さ・HTTP ステータスのみ。
+  app.get("/api/admin/stripe-check", async (c) => {
+    const key = process.env.STRIPE_SECRET_KEY;
+    if (!key) return c.json({ configured: false, note: "STRIPE_SECRET_KEY 未設定 = 有料は準備中に縮退" });
+    const prefix = key.slice(0, 8); // "sk_live_" / "sk_test_" / "unset" など。秘密部分は含まない
+    const mode = key.startsWith("sk_live") ? "live" : key.startsWith("sk_test") ? "test" : "invalid_prefix";
+    try {
+      const r = await fetch("https://api.stripe.com/v1/balance", {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(15000),
+      });
+      const ok = r.ok;
+      const detail = ok ? "" : (await r.text().catch(() => "")).slice(0, 300);
+      return c.json({ configured: true, prefix, mode, keyLength: key.length, balanceStatus: r.status, ok, detail });
+    } catch (e) {
+      return c.json({ configured: true, prefix, mode, keyLength: key.length, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
   // データ所在の診断 (読み取り専用・PII なし)。「ログインしたらデータが消えて見える」の
   // 切り分け用: 連絡先がどの ownerUid バケツに何件あるか (active/archived) を横断集計し、
   // いまの呼び出し元が一般ユーザーとしてどの ownerUid に解決されるかを併せて返す。

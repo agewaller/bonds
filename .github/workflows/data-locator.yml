@@ -31,3 +31,7 @@ jobs:
           for b in d.get("contactBuckets", []):
               print(f"  ownerUid={b['ownerUid']!r}  active={b['active']}  archived={b['archived']}  other={b.get('other',0)}")
           PY
+          echo
+          echo "== /api/admin/stripe-check (決済の点検) =="
+          curl -sS "${{ vars.BONDS_API_URL }}/api/admin/stripe-check" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
