@@ -69,8 +69,11 @@ export default function ShareSlotCalendar({
 
   if (options.length === 0) return null;
 
+  const WD = ["日", "月", "火", "水", "木", "金", "土"];
   return (
-    <div className="bonds-fc" style={{ marginTop: 12 }}>
+    // モバイル幅で 7 列が潰れるため、横スクロール可 + 最小幅を確保する。
+    <div className="bonds-fc" style={{ marginTop: 12, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+      <div style={{ minWidth: 680 }}>
       <FullCalendar
         plugins={[timeGridPlugin, interactionPlugin]}
         initialView="timeGridWeek"
@@ -84,6 +87,12 @@ export default function ShareSlotCalendar({
         slotMaxTime={slotMaxTime}
         validRange={validRange}
         displayEventTime={false}
+        dayHeaderContent={(arg) => (
+          <div style={{ lineHeight: 1.2, fontSize: 12, fontWeight: 600 }}>
+            <div>{arg.date.getMonth() + 1}/{arg.date.getDate()}</div>
+            <div style={{ color: "#64748b", fontWeight: 400 }}>({WD[arg.date.getDay()]})</div>
+          </div>
+        )}
         events={events}
         eventClick={(info) => {
           const startIso = info.event.id;
@@ -91,6 +100,7 @@ export default function ShareSlotCalendar({
           onToggle(startIso);
         }}
       />
+      </div>
     </div>
   );
 }

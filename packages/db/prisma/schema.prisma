@@ -504,6 +504,7 @@ model TimeOffer {
   priceJpy    Int      @default(0) @map("price_jpy")
   active      Boolean  @default(true)
   listed      Boolean  @default(false) // 公開掲示板 (/market) に載せる。既定は非公開 (鍵付き URL のみ)
+  availabilityWindow String? @map("availability_window") // JSON: この出品を受ける曜日・時間帯 (null = 空き全体)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 

@@ -22,8 +22,11 @@ export default function AvailabilityCalendar({
   onCreate: (startIso: string, endIso: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const WD = ["日", "月", "火", "水", "木", "金", "土"];
   return (
-    <div className="bonds-fc">
+    // 7 列がモバイル幅で潰れて曜日ヘッダの文字が重なるため、横スクロール可 + 最小幅を確保する。
+    <div className="bonds-fc" style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+      <div style={{ minWidth: 680 }}>
       <FullCalendar
         plugins={[timeGridPlugin, interactionPlugin]}
         initialView="timeGridWeek"
@@ -40,6 +43,13 @@ export default function AvailabilityCalendar({
         selectMirror
         longPressDelay={250}
         validRange={{ start: new Date() }}
+        // 日付と曜日を 2 段に分けて表示 (1 行だと狭い列で重なる)
+        dayHeaderContent={(arg) => (
+          <div style={{ lineHeight: 1.2, fontSize: 12, fontWeight: 600 }}>
+            <div>{arg.date.getMonth() + 1}/{arg.date.getDate()}</div>
+            <div style={{ color: "#64748b", fontWeight: 400 }}>({WD[arg.date.getDay()]})</div>
+          </div>
+        )}
         select={(info) => {
           onCreate(info.start.toISOString(), info.end.toISOString());
         }}
@@ -51,7 +61,7 @@ export default function AvailabilityCalendar({
             start: b.start,
             end: b.end,
             display: "background" as const,
-            backgroundColor: "#cbd5e1",
+            backgroundColor: "#94a3b8", // 取り込んだ予定 (予定あり) をはっきり見せる
           })),
           // ドラッグで登録した空き枠 (緑・タップで削除)
           ...slots.map((s) => ({
@@ -68,6 +78,7 @@ export default function AvailabilityCalendar({
           onDelete(info.event.id);
         }}
       />
+      </div>
     </div>
   );
 }

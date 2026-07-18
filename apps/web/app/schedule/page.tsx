@@ -49,6 +49,7 @@ type OfferRow = {
   priceJpy: number;
   active: boolean;
   listed: boolean;
+  availabilityWindow: { days: number[]; startMin: number; endMin: number } | null;
   confirmedBookings: number;
 };
 type BookingRow = {
@@ -126,6 +127,12 @@ export default function SchedulePage() {
   const [oMinutes, setOMinutes] = useState(60);
   const [oPrice, setOPrice] = useState(0);
   const [oDesc, setODesc] = useState("");
+  // 出品ごとの受付枠 (任意)。空 = 空き時間全体を使う (従来どおり)。
+  const [oWinDays, setOWinDays] = useState<number[]>([]);
+  const [oWinStart, setOWinStart] = useState(9);
+  const [oWinEnd, setOWinEnd] = useState(18);
+  const toggleWinDay = (d: number) =>
+    setOWinDays((cur) => (cur.includes(d) ? cur.filter((x) => x !== d) : [...cur, d].sort((a, b) => a - b)));
   const [createdOfferUrl, setCreatedOfferUrl] = useState("");
 
   const call = useCallback(async (path: string, init?: RequestInit, okNotice?: string) => {
@@ -276,14 +283,17 @@ export default function SchedulePage() {
   };
 
   const createOffer = async () => {
+    const availabilityWindow =
+      oWinDays.length > 0 ? { days: oWinDays, startMin: oWinStart * 60, endMin: oWinEnd * 60 } : null;
     const body = await call("schedule/offers", {
       method: "POST",
-      body: JSON.stringify({ title: oTitle, displayName: oName, minutes: oMinutes, priceJpy: oPrice, description: oDesc }),
+      body: JSON.stringify({ title: oTitle, displayName: oName, minutes: oMinutes, priceJpy: oPrice, description: oDesc, availabilityWindow }),
     }, "出品を作りました。下の URL を相手に送ると、その方が時間を選んで申し込めます");
     if (body) {
       setCreatedOfferUrl((body as { url: string }).url);
       setOTitle("");
       setODesc("");
+      setOWinDays([]);
       await load();
     }
   };
@@ -510,6 +520,47 @@ export default function SchedulePage() {
         </div>
         <textarea style={{ ...input, width: "100%" }} rows={2} placeholder="説明 (任意。どんな相談にのれるか等)" value={oDesc} onChange={(e) => setODesc(e.target.value)} aria-label="出品の説明" />
 
+        <div style={{ marginTop: 8, padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8, background: "#f8fafc" }}>
+          <p style={{ fontSize: 13, color: "#475569", margin: "0 0 6px" }}>
+            この出品を受ける曜日・時間帯（任意）。選ばなければ、あなたの空き時間すべてで受け付けます。
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+            {["日", "月", "火", "水", "木", "金", "土"].map((label, d) => (
+              <button
+                key={d}
+                type="button"
+                aria-pressed={oWinDays.includes(d)}
+                onClick={() => toggleWinDay(d)}
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 8,
+                  border: "1px solid " + (oWinDays.includes(d) ? "#1d4ed8" : "#cbd5e1"),
+                  background: oWinDays.includes(d) ? "#2563eb" : "#fff",
+                  color: oWinDays.includes(d) ? "#fff" : "#334155",
+                  cursor: "pointer",
+                  fontSize: 14,
+                }}
+              >
+                {label}
+              </button>
+            ))}
+            <span style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 8, fontSize: 14 }}>
+              <select aria-label="受付開始時刻" value={oWinStart} onChange={(e) => setOWinStart(Number(e.target.value))} style={{ ...input, width: 76 }}>
+                {Array.from({ length: 25 }, (_, h) => (
+                  <option key={h} value={h}>{h}:00</option>
+                ))}
+              </select>
+              〜
+              <select aria-label="受付終了時刻" value={oWinEnd} onChange={(e) => setOWinEnd(Number(e.target.value))} style={{ ...input, width: 76 }}>
+                {Array.from({ length: 25 }, (_, h) => (
+                  <option key={h} value={h}>{h}:00</option>
+                ))}
+              </select>
+            </span>
+          </div>
+        </div>
+
         {createdOfferUrl && (
           <p style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: 10, borderRadius: 8, marginTop: 8, lineHeight: 1.8 }}>
             この URL を相手に送ってください。相手はアカウントなしで開いて、空いている時間を選んで申し込めます
@@ -530,6 +581,9 @@ export default function SchedulePage() {
               <span style={{ fontWeight: 600 }}>{o.title}</span>
               <span style={{ color: "#64748b", fontSize: 13 }}>
                 {METHOD_LABEL[o.method] ?? o.method}・{o.minutes}分・{o.priceJpy > 0 ? `${o.priceJpy.toLocaleString()}円` : "無料"}
+                {o.availabilityWindow
+                  ? `・${o.availabilityWindow.days.map((d) => "日月火水木金土"[d]).join("")} ${Math.floor(o.availabilityWindow.startMin / 60)}〜${Math.floor(o.availabilityWindow.endMin / 60)}時`
+                  : ""}
                 {o.confirmedBookings > 0 ? `・確定 ${o.confirmedBookings} 件` : ""}
                 {o.active ? "" : "・停止中"}
               </span>

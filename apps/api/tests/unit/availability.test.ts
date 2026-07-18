@@ -7,6 +7,8 @@ import {
   freeIntervalsWithExplicitSlots,
   startOptions,
   filterValidCandidates,
+  parseOfferWindow,
+  restrictToOfferWindow,
 } from "../../src/lib/availability.js";
 import type { Interval } from "../../src/lib/timeslots.js";
 
@@ -164,5 +166,31 @@ describe("filterValidCandidates", () => {
     const out = filterValidCandidates([good, bad, { ...good }], options);
     expect(out).toHaveLength(1);
     expect(out[0]!.start.getMinutes()).toBe(30);
+  });
+});
+
+describe("出品ごとの受付枠 (parseOfferWindow / restrictToOfferWindow)", () => {
+  it("parseOfferWindow: 曜日と時間帯を正規化し、不正は null", () => {
+    expect(parseOfferWindow({ days: [1, 3, 3, 5], startMin: 1140, endMin: 1260 })).toEqual({
+      days: [1, 3, 5],
+      startMin: 1140,
+      endMin: 1260,
+    });
+    expect(parseOfferWindow({ days: [], startMin: 540, endMin: 600 })).toBeNull(); // 曜日なし
+    expect(parseOfferWindow({ days: [2], startMin: 600, endMin: 600 })).toBeNull(); // 幅ゼロ
+    expect(parseOfferWindow(null)).toBeNull();
+  });
+
+  it("restrictToOfferWindow: 指定曜日・時間帯の中だけに空きを絞る", () => {
+    // 既存テストと同じくローカル構築 (サーバの local frame に一致・TZ 非依存)。7/27 は月曜。
+    const mon: Interval = { start: new Date(2026, 6, 27, 9, 0), end: new Date(2026, 6, 27, 21, 0) };
+    const tue: Interval = { start: new Date(2026, 6, 28, 9, 0), end: new Date(2026, 6, 28, 21, 0) };
+    // 月曜 (1) の 19:00-21:00 だけ受ける
+    const w = parseOfferWindow({ days: [1], startMin: 19 * 60, endMin: 21 * 60 })!;
+    const out = restrictToOfferWindow([mon, tue], w);
+    expect(out).toHaveLength(1); // 火曜は落ちる
+    expect(out[0]!.start.getHours()).toBe(19);
+    expect(out[0]!.end.getHours()).toBe(21);
+    expect(out[0]!.start.getDate()).toBe(27);
   });
 });

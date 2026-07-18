@@ -230,3 +230,39 @@ export function availabilityToJson(a: Availability): { days: Record<WeekdayKey, 
 export function intervalsToIso(intervals: Interval[]): IsoInterval[] {
   return intervals.map((x) => ({ start: x.start.toISOString(), end: x.end.toISOString() }));
 }
+
+// 出品ごとの受付枠 — 「この出品はこの曜日・時間帯だけ受ける」。空き時間全体をさらに絞る。
+// days: 0(日)〜6(土)、startMin/endMin: 0:00 からの分。空 (null) なら絞らない (従来どおり)。
+export type OfferWindow = { days: number[]; startMin: number; endMin: number };
+
+export function parseOfferWindow(raw: unknown): OfferWindow | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const days = Array.isArray(o.days)
+    ? [...new Set(o.days.filter((d): d is number => Number.isInteger(d) && (d as number) >= 0 && (d as number) <= 6))].sort(
+        (a, b) => a - b,
+      )
+    : [];
+  const startMin = Math.round(Number(o.startMin));
+  const endMin = Math.round(Number(o.endMin));
+  if (days.length === 0 || !Number.isFinite(startMin) || !Number.isFinite(endMin)) return null;
+  const s = Math.max(0, Math.min(1440, startMin));
+  const e = Math.max(0, Math.min(1440, endMin));
+  if (e <= s) return null;
+  return { days, startMin: s, endMin: e };
+}
+
+/** 空き時間を、出品の受付枠 (曜日 + 時間帯) の中だけに絞り込む。 */
+export function restrictToOfferWindow(intervals: Interval[], w: OfferWindow): Interval[] {
+  const out: Interval[] = [];
+  for (const iv of intervals) {
+    if (!w.days.includes(iv.start.getDay())) continue; // 空きは日内で完結する前提 (start の曜日で判定)
+    const base = new Date(iv.start.getFullYear(), iv.start.getMonth(), iv.start.getDate());
+    const winStart = new Date(base.getTime() + w.startMin * 60_000);
+    const winEnd = new Date(base.getTime() + w.endMin * 60_000);
+    const s = iv.start > winStart ? iv.start : winStart;
+    const e = iv.end < winEnd ? iv.end : winEnd;
+    if (e > s) out.push({ start: s, end: e });
+  }
+  return out;
+}

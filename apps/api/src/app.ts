@@ -56,6 +56,8 @@ import {
   startOptions,
   filterValidCandidates,
   intervalsToIso,
+  parseOfferWindow,
+  restrictToOfferWindow,
   type Availability,
 } from "./lib/availability.js";
 import {
@@ -3696,8 +3698,14 @@ export function createApp(deps: AppDeps) {
     const body = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
     const input = parseOfferInput(body);
     if ("error" in input) return c.json(input, 400);
+    const window = parseOfferWindow(body.availabilityWindow);
     const offer = await prisma.timeOffer.create({
-      data: { ownerUid: c.get("ownerUid"), offerKey: randomUUID(), ...input },
+      data: {
+        ownerUid: c.get("ownerUid"),
+        offerKey: randomUUID(),
+        ...input,
+        availabilityWindow: window ? JSON.stringify(window) : null,
+      },
     });
     return c.json({ id: offer.id, offerKey: offer.offerKey, url: `${publicWebUrl}/b/${offer.offerKey}` }, 201);
   });
@@ -3722,6 +3730,7 @@ export function createApp(deps: AppDeps) {
         priceJpy: o.priceJpy,
         active: o.active,
         listed: o.listed,
+        availabilityWindow: o.availabilityWindow ? parseOfferWindow(JSON.parse(o.availabilityWindow)) : null,
         confirmedBookings: o.bookings.filter((b) => b.status === "confirmed").length,
       })),
       paymentsReady: !!stripe,
@@ -3746,7 +3755,13 @@ export function createApp(deps: AppDeps) {
       listed: body.listed ?? offer.listed,
     });
     if ("error" in input) return c.json(input, 400);
-    await prisma.timeOffer.update({ where: { id: offer.id }, data: input });
+    // 受付枠: body に availabilityWindow があれば更新 (null 明示で解除)。キー無しは据え置き。
+    const data: typeof input & { availabilityWindow?: string | null } = { ...input };
+    if ("availabilityWindow" in body) {
+      const w = parseOfferWindow(body.availabilityWindow);
+      data.availabilityWindow = w ? JSON.stringify(w) : null;
+    }
+    await prisma.timeOffer.update({ where: { id: offer.id }, data });
     return c.json({ updated: true });
   });
 
@@ -3810,7 +3825,10 @@ export function createApp(deps: AppDeps) {
       periodStart: now,
       periodEnd: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
     });
-    return c.json({ options: intervalsToIso(startOptions(free, offer.minutes)), minutes: offer.minutes });
+    // 出品ごとに受付枠 (曜日・時間帯) が指定されていれば、空き時間をその中だけに絞る。
+    const window = offer.availabilityWindow ? parseOfferWindow(JSON.parse(offer.availabilityWindow)) : null;
+    const usable = window ? restrictToOfferWindow(free, window) : free;
+    return c.json({ options: intervalsToIso(startOptions(usable, offer.minutes)), minutes: offer.minutes });
   });
 
   app.post("/api/public/offers/:offerKey/book", async (c) => {
