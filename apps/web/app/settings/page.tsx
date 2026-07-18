@@ -44,13 +44,34 @@ export default function SettingsPage() {
     extended?: boolean;
     email?: string | null;
   } | null>(null);
+  const [audit, setAudit] = useState<{ total: number; sample: string[] } | null>(null);
+  const [purging, setPurging] = useState(false);
+
+  const loadAudit = async () => {
+    const res = await apiFetch("admin/audit-data");
+    if (res.ok) setAudit(await res.json());
+  };
 
   useEffect(() => {
     void (async () => {
       const res = await apiFetch("google/status");
       setGoogle(res.ok ? await res.json() : { available: false, connected: false });
     })();
+    void loadAudit();
   }, []);
+
+  const purgeAudit = async () => {
+    setError("");
+    setPurging(true);
+    const res = await apiFetch("admin/audit-data/purge", { method: "POST", body: "{}" });
+    setPurging(false);
+    if (res.ok) {
+      setNotice("テストで作られたデータを片づけました。連絡先はアーカイブしたので、30日以内なら元に戻せます");
+      await loadAudit();
+    } else {
+      setError("いまは片づけられませんでした。時間をおいてお試しください");
+    }
+  };
 
   const googleConnect = async (scope?: "extended") => {
     setError("");
@@ -138,6 +159,20 @@ export default function SettingsPage() {
         </p>
         <a href="/api/bff/contacts/export" style={{ color: "#2563eb", fontSize: 14 }}>全データを書き出す</a>
       </section>
+
+      {audit && audit.total > 0 && (
+        <section style={{ ...card, border: "1px solid #fecaca", background: "#fef2f2" }}>
+          <h2 style={h2}>テストで作られたデータの片づけ</h2>
+          <p style={desc}>
+            動作確認のときに作られた「監査」で始まるお試しデータが {audit.total} 件見つかりました
+            （例: {audit.sample.slice(0, 5).join("、")} など）。ふだんのご利用には不要なので、まとめて片づけられます。
+            連絡先はアーカイブするだけなので、30日以内なら元に戻せます。
+          </p>
+          <button style={{ ...btn, background: "#dc2626" }} disabled={purging} onClick={() => void purgeAudit()}>
+            {purging ? "片づけています…" : `お試しデータ ${audit.total} 件を片づける`}
+          </button>
+        </section>
+      )}
 
       <section style={card}>
         <h2 style={h2}>管理者向け</h2>

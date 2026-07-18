@@ -370,6 +370,68 @@ export function createApp(deps: AppDeps) {
     });
   });
 
+  // ---------------- 管理: テスト・監査データの片づけ ----------------
+  // 以前 e2e-audit を本番に対して走らせたため、監査用フィクスチャ (名前が「監査」で
+  // 始まる連絡先・共有・出品・人物DD・提携先) が owner バケツに溜まった。実在のデータが
+  // 「監査」で始まることはまず無いため、この接頭辞で正確に拾える。連絡先はアーカイブ
+  // (元に戻せる)、その他は子ごと削除する。まず件数を見せ、確認して片づける。
+  const AUDIT_PREFIX = "監査";
+  const auditName = { startsWith: AUDIT_PREFIX };
+  const findAuditData = async (ownerUid: string) => {
+    const [contacts, subjects, shares, offers, partners] = await Promise.all([
+      prisma.contact.findMany({ where: { ownerUid, state: "active", name: auditName }, select: { id: true, name: true } }),
+      prisma.ddSubject.findMany({ where: { name: auditName }, select: { id: true, name: true } }),
+      prisma.scheduleShare.findMany({
+        where: { ownerUid, OR: [{ title: auditName }, { displayName: auditName }] },
+        select: { id: true, title: true },
+      }),
+      prisma.timeOffer.findMany({ where: { ownerUid, title: auditName }, select: { id: true, title: true } }),
+      prisma.partnerTarget.findMany({ where: { name: auditName }, select: { id: true, name: true } }),
+    ]);
+    return { contacts, subjects, shares, offers, partners };
+  };
+
+  app.get("/api/admin/audit-data", async (c) => {
+    const d = await findAuditData(c.get("ownerUid"));
+    const total = d.contacts.length + d.subjects.length + d.shares.length + d.offers.length + d.partners.length;
+    const sample = [
+      ...d.contacts.map((x) => x.name),
+      ...d.subjects.map((x) => x.name),
+      ...d.shares.map((x) => x.title),
+      ...d.offers.map((x) => x.title),
+      ...d.partners.map((x) => x.name),
+    ].slice(0, 30);
+    return c.json({
+      total,
+      contacts: d.contacts.length,
+      subjects: d.subjects.length,
+      shares: d.shares.length,
+      offers: d.offers.length,
+      partners: d.partners.length,
+      sample,
+    });
+  });
+
+  app.post("/api/admin/audit-data/purge", async (c) => {
+    const owner = c.get("ownerUid");
+    const d = await findAuditData(owner);
+    // 連絡先はアーカイブ (30 日は元に戻せる)。その他は子ごと削除 (onDelete: Cascade)。
+    if (d.contacts.length) {
+      await prisma.contact.updateMany({ where: { id: { in: d.contacts.map((x) => x.id) } }, data: { state: "archived" } });
+    }
+    if (d.subjects.length) await prisma.ddSubject.deleteMany({ where: { id: { in: d.subjects.map((x) => x.id) } } });
+    if (d.shares.length) await prisma.scheduleShare.deleteMany({ where: { id: { in: d.shares.map((x) => x.id) } } });
+    if (d.offers.length) await prisma.timeOffer.deleteMany({ where: { id: { in: d.offers.map((x) => x.id) } } });
+    if (d.partners.length) await prisma.partnerTarget.deleteMany({ where: { id: { in: d.partners.map((x) => x.id) } } });
+    return c.json({
+      archivedContacts: d.contacts.length,
+      deletedSubjects: d.subjects.length,
+      deletedShares: d.shares.length,
+      deletedOffers: d.offers.length,
+      deletedPartners: d.partners.length,
+    });
+  });
+
   // ---------------- 管理: プロンプト版管理 (DB 駆動プロンプトの編集 UI 用) ----------------
 
   app.get("/api/admin/prompts", async (c) => {
