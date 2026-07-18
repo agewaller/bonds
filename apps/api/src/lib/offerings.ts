@@ -96,7 +96,13 @@ export type OfferingMatch = {
   reason: string; // 相手側の該当箇所 (なぜ刺さるか)
 };
 
-/** 1 つの申し出について、ニーズが重なる連絡先を上位から返す。 */
+/**
+ * 1 つの申し出について、ニーズが重なる連絡先を上位から返す。
+ * 将来「ユーザーが互いに持ち寄るマーケットプレイス」では、相手を「連絡先」から
+ * 「他ユーザー (の公開に同意したニーズ)」に一般化した matchOfferingToUsers を、この
+ * ContactNeed 契約を保ったまま足せる。距離ゲートは距離/同意ゲートへ拡張する。
+ * 設計は docs/FUTURE-MARKETPLACE.md。
+ */
 export function matchOfferingToContacts(
   offering: OfferingLike,
   contacts: ContactNeed[],

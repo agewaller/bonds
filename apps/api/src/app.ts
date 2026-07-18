@@ -3877,6 +3877,10 @@ export function createApp(deps: AppDeps) {
   // ---- 公開掲示板 (/market) ----
   // 単一オーナーの「時間の出品」と「力になれること (申し出)」を、アカウント不要の訪問者が
   // 一覧して問い合わせ・予約できる公開ページ。PII は出さない (訪問者が名乗って初めて記録)。
+  // 将来「ユーザーが互いに持ち寄るマーケットプレイス」に拡張する際の主な差し替え点:
+  // ここは今 published/listed を ownerUid を跨いで拾う (単一オーナーなので実質1バケツ)。
+  // 多者化では per-owner スコープ + visibility (private/contacts/public/marketplace) +
+  // 距離/同意ゲートに置き換える。設計は docs/FUTURE-MARKETPLACE.md。
   app.get("/api/public/market", async (c) => {
     const [offers, offerings] = await Promise.all([
       prisma.timeOffer.findMany({

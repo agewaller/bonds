@@ -9,6 +9,12 @@
 できたプロダクト（設計原本: [`docs/DESIGN-HANDOVER.md`](docs/DESIGN-HANDOVER.md)、
 実装計画: [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md)）。
 
+**将来構想の指針**: 「ユーザーが互いに持ち寄れるマーケットプレイス」は
+[`docs/FUTURE-MARKETPLACE.md`](docs/FUTURE-MARKETPLACE.md) に設計を記録済み（未着手）。
+公開範囲・マルチテナント化・距離/同意ゲート・モデレーションを扱う。**当面の各実装は
+この未来を塞がないよう**、ownerUid をスコープキーとして扱い・公開範囲は将来 visibility へ
+拡張する含みを持たせ・マッチング/距離/取引/暗号化の部品を汎用に保つ（詳細は同ドキュメント末尾）。
+
 ## ミッション（最上位の目的・2026-07-04 オーナー宣言）
 
 **bonds は、ユーザーが素晴らしい人生を送るためのエージェントツールである。**
