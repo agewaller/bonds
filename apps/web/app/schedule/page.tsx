@@ -125,6 +125,7 @@ export default function SchedulePage() {
   const [oMinutes, setOMinutes] = useState(60);
   const [oPrice, setOPrice] = useState(0);
   const [oDesc, setODesc] = useState("");
+  const [createdOfferUrl, setCreatedOfferUrl] = useState("");
 
   const call = useCallback(async (path: string, init?: RequestInit, okNotice?: string) => {
     setError("");
@@ -277,8 +278,9 @@ export default function SchedulePage() {
     const body = await call("schedule/offers", {
       method: "POST",
       body: JSON.stringify({ title: oTitle, displayName: oName, minutes: oMinutes, priceJpy: oPrice, description: oDesc }),
-    }, "出品を作りました");
+    }, "出品を作りました。下の URL を相手に送ると、その方が時間を選んで申し込めます");
     if (body) {
+      setCreatedOfferUrl((body as { url: string }).url);
       setOTitle("");
       setODesc("");
       await load();
@@ -507,9 +509,23 @@ export default function SchedulePage() {
         </div>
         <textarea style={{ ...input, width: "100%" }} rows={2} placeholder="説明 (任意。どんな相談にのれるか等)" value={oDesc} onChange={(e) => setODesc(e.target.value)} aria-label="出品の説明" />
 
+        {createdOfferUrl && (
+          <p style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: 10, borderRadius: 8, marginTop: 8, lineHeight: 1.8 }}>
+            この URL を相手に送ってください。相手はアカウントなしで開いて、空いている時間を選んで申し込めます
+            {oPrice > 0 ? "（有料はそのままカードでお支払いまで進めます）" : ""}。
+            <br />
+            <span style={{ wordBreak: "break-all", fontWeight: 600 }}>{createdOfferUrl}</span>{" "}
+            <button style={{ ...btn(false), padding: "4px 10px", fontSize: 13 }} onClick={() => void copy(createdOfferUrl)}>リンクをコピー</button>
+          </p>
+        )}
+
+        <p style={{ color: "#64748b", fontSize: 13, margin: "10px 0 0" }}>
+          作った出品は下に並びます。それぞれの「リンクをコピー」で、いつでも申し込みページの URL を相手に送れます。
+        </p>
         <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0" }}>
           {offers.map((o) => (
-            <li key={o.id} style={{ borderTop: "1px solid #f1f5f9", padding: "8px 0", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            <li key={o.id} style={{ borderTop: "1px solid #f1f5f9", padding: "8px 0" }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
               <span style={{ fontWeight: 600 }}>{o.title}</span>
               <span style={{ color: "#64748b", fontSize: 13 }}>
                 {METHOD_LABEL[o.method] ?? o.method}・{o.minutes}分・{o.priceJpy > 0 ? `${o.priceJpy.toLocaleString()}円` : "無料"}
@@ -517,6 +533,7 @@ export default function SchedulePage() {
                 {o.active ? "" : "・停止中"}
               </span>
               <span style={{ flex: 1 }} />
+              <a href={o.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: "#2563eb" }}>申し込みページを開く</a>
               <button style={{ ...btn(false), padding: "4px 10px", fontSize: 13 }} onClick={() => void copy(o.url)}>リンクをコピー</button>
               <button
                 style={{ ...btn(false), padding: "4px 10px", fontSize: 13 }}
@@ -536,6 +553,8 @@ export default function SchedulePage() {
               >
                 削除
               </button>
+              </div>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: "#94a3b8", wordBreak: "break-all" }}>{o.url}</p>
             </li>
           ))}
         </ul>
