@@ -1,0 +1,33 @@
+# データ所在の診断 (読み取り専用)。本番 api の /api/admin/data-locator を叩き、
+# 連絡先がどの ownerUid バケツに何件あるか (active/archived) をジョブログに出す。
+# 「ログイン後にデータが消えて見える」の切り分け用。データは一切書き換えない。
+# 必要な設定: Variables BONDS_API_URL / Secrets BONDS_ADMIN_TOKEN (break-glass)。
+name: data-locator
+
+on:
+  workflow_dispatch:
+
+jobs:
+  locate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: query data-locator
+        run: |
+          if [ -z "${{ vars.BONDS_API_URL }}" ] || [ -z "${{ secrets.BONDS_ADMIN_TOKEN }}" ]; then
+            echo "::error::BONDS_API_URL / BONDS_ADMIN_TOKEN 未設定のため診断できません"
+            exit 1
+          fi
+          echo "== /api/admin/data-locator =="
+          curl -sS "${{ vars.BONDS_API_URL }}/api/admin/data-locator" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}" | tee /tmp/loc.json
+          echo
+          echo "== 要約 =="
+          python3 - <<'PY'
+          import json
+          d = json.load(open("/tmp/loc.json"))
+          print("OWNER_EMAIL 設定:", d.get("ownerEmailConfigured"))
+          print("呼び出し元の解決先:", d.get("callerResolvesTo"))
+          print("バケツ別 連絡先件数 (active 降順):")
+          for b in d.get("contactBuckets", []):
+              print(f"  ownerUid={b['ownerUid']!r}  active={b['active']}  archived={b['archived']}  other={b.get('other',0)}")
+          PY
