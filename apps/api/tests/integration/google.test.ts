@@ -28,6 +28,15 @@ const fakeGoogle: GoogleClient = {
   },
   refreshAccessToken: async () => "at",
   apiGet: async (url) => {
+    if (url.includes("calendarList")) {
+      // 分けているカレンダーの一覧 (メイン + 仕事用)
+      return {
+        items: [
+          { id: "primary", summary: "メイン", primary: true },
+          { id: "work@example.com", summary: "仕事用" },
+        ],
+      };
+    }
     if (url.includes("calendar/v3")) {
       // 予定の busy 同期 (件名つき) は summary/end を要求する。同席者の抽出とは別物。
       if (url.includes("summary")) {
@@ -268,6 +277,31 @@ describe("同期 (人物データの取込)", () => {
       return s.getDate() === d.getDate() && s.getHours() >= 9 && s.getHours() < 12;
     });
     expect(tomorrowMorning).toHaveLength(0);
+  });
+
+  it("分けているカレンダーを一覧し、表示するものを選んで保存できる", async () => {
+    const app = createApp({ prisma, generate: null, google: fakeGoogle });
+    await connect(app);
+    // 一覧 (メイン + 仕事用)。未設定なので既定は primary が選択
+    const list = await (await app.request("/api/relationship/google-calendars", { headers: H })).json();
+    expect(list.connected).toBe(true);
+    expect((list.calendars as { id: string }[]).map((x) => x.id)).toEqual(["primary", "work@example.com"]);
+    expect(list.selected).toEqual(["primary"]);
+
+    // 仕事用だけに切り替えて保存 → 選択が反映され、取り込み直しが走る
+    const put = await (
+      await app.request("/api/relationship/google-calendars", {
+        method: "PUT",
+        headers: H,
+        body: JSON.stringify({ ids: ["work@example.com"] }),
+      })
+    ).json();
+    expect(put.saved).toBe(true);
+    expect(put.selected).toEqual(["work@example.com"]);
+    expect(put.imported).toBe(1); // fakeGoogle は選んだカレンダーにも予定を返す
+
+    const after = await (await app.request("/api/relationship/google-calendars", { headers: H })).json();
+    expect(after.selected).toEqual(["work@example.com"]);
   });
 });
 

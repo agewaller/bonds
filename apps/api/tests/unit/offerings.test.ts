@@ -3,10 +3,40 @@ import {
   parseOfferingInput,
   tokenize,
   matchOfferingToContacts,
+  classifyOffering,
+  parseOfferingsBulk,
   OFFERING_KINDS,
   type OfferingLike,
   type ContactNeed,
 } from "../../src/lib/offerings.js";
+
+describe("classifyOffering / parseOfferingsBulk (一括取込の自動分類)", () => {
+  it("キーワードから種類を判定する", () => {
+    expect(classifyOffering("英語のレッスン")).toBe("teach");
+    expect(classifyOffering("起業の相談にのれます")).toBe("advise");
+    expect(classifyOffering("工具をお貸しします")).toBe("lend");
+    expect(classifyOffering("使わない子ども用品を譲ります")).toBe("give");
+    expect(classifyOffering("引っ越しの手伝い")).toBe("help");
+    expect(classifyOffering("よくわからないもの")).toBe("other");
+  });
+
+  it("貼り付けを 1 行 1 件に分解し、分類・重複除去・ヘッダ行スキップする", () => {
+    const text = "タイトル\n英語のレッスン,平日夜\n英語のレッスン\n工具を貸します\n\n・引っ越しの手伝い";
+    const rows = parseOfferingsBulk(text);
+    expect(rows.map((r) => r.title)).toEqual(["英語のレッスン", "工具を貸します", "引っ越しの手伝い"]);
+    expect(rows[0]!.kind).toBe("teach");
+    expect(rows[0]!.description).toBe("平日夜"); // 2 列目が説明
+    expect(rows[1]!.kind).toBe("lend");
+    expect(rows[2]!.kind).toBe("help");
+  });
+
+  it("タブ区切り (表計算コピー) も列として読む", () => {
+    const rows = parseOfferingsBulk("ピアノ指導\t月2回まで");
+    expect(rows[0]!.title).toBe("ピアノ指導");
+    expect(rows[0]!.description).toBe("月2回まで");
+    expect(rows[0]!.kind).toBe("teach");
+  });
+});
 
 describe("parseOfferingInput", () => {
   it("title 必須", () => {

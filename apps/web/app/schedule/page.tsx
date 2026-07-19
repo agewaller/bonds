@@ -105,6 +105,8 @@ export default function SchedulePage() {
   const [busy, setBusy2] = useState<{ start: string; end: string }[]>([]);
   const [myEvents, setMyEvents] = useState<{ start: string; end: string; title: string; source: string }[]>([]);
   const [calSources, setCalSources] = useState<{ google: boolean; ics: boolean }>({ google: false, ics: false });
+  const [googleCals, setGoogleCals] = useState<{ id: string; name: string; primary: boolean }[]>([]);
+  const [selectedCals, setSelectedCals] = useState<string[]>([]);
   const [outlookIcs, setOutlookIcs] = useState("");
   const [shares, setShares] = useState<ShareRow[]>([]);
   const [detail, setDetail] = useState<ShareDetail | null>(null);
@@ -177,9 +179,38 @@ export default function SchedulePage() {
     if (b) setBookings((b as { bookings: BookingRow[] }).bookings);
   }, []);
 
+  // 分けている Google カレンダーの一覧と、いま表示する選択を読む (つないでいるときだけ)。
+  const loadGoogleCals = useCallback(async () => {
+    const r = await apiFetch("relationship/google-calendars");
+    if (!r.ok) return;
+    const b = (await r.json()) as { connected?: boolean; calendars?: { id: string; name: string; primary: boolean }[]; selected?: string[] };
+    if (b.connected) {
+      setGoogleCals(b.calendars ?? []);
+      setSelectedCals(b.selected ?? []);
+    }
+  }, []);
+
+  const saveGoogleCals = async (ids: string[]) => {
+    setSelectedCals(ids); // 楽観更新 (チェックが即反映)
+    const r = await apiFetch("relationship/google-calendars", { method: "PUT", body: JSON.stringify({ ids }) });
+    if (r.ok) {
+      const b = (await r.json()) as { selected?: string[]; imported?: number };
+      setSelectedCals(b.selected ?? ids);
+      setNotice(`表示するカレンダーを更新しました（予定 ${b.imported ?? 0} 件）`);
+      await load();
+    } else {
+      setError("いまは変更を保存できませんでした");
+    }
+  };
+  const toggleCal = (id: string) => {
+    const next = selectedCals.includes(id) ? selectedCals.filter((x) => x !== id) : [...selectedCals, id];
+    void saveGoogleCals(next);
+  };
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadGoogleCals();
+  }, [load, loadGoogleCals]);
 
   const createSlot = async (startIso: string, endIso: string) => {
     const body = await call(
@@ -360,10 +391,31 @@ export default function SchedulePage() {
           />
           <button style={btn(false)} onClick={() => void saveOutlookIcs()}>取り込む</button>
         </div>
+        {googleCals.length > 1 && (
+          <div style={{ margin: "0 0 12px", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 12px", background: "#fff" }}>
+            <p style={{ fontSize: 13, color: "#334155", margin: "0 0 6px", fontWeight: 600 }}>
+              表示するカレンダーを選ぶ
+            </p>
+            <p style={{ fontSize: 12, color: "#64748b", margin: "0 0 8px" }}>
+              いくつかに分けている場合、重ねて表示するカレンダーを選べます。チェックするとすぐ反映されます。
+            </p>
+            <div style={{ display: "grid", gap: 6 }}>
+              {googleCals.map((cal) => (
+                <label key={cal.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, cursor: "pointer" }}>
+                  <input type="checkbox" checked={selectedCals.includes(cal.id)} onChange={() => toggleCal(cal.id)} />
+                  <span>
+                    {cal.name}
+                    {cal.primary && <span style={{ color: "#94a3b8", fontSize: 12 }}> (メイン)</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
         {(calSources.google || calSources.ics) && (
           <p style={{ color: "#64748b", fontSize: 12, margin: "0 0 8px" }}>
             取り込み済み:{calSources.google ? " Google" : ""}{calSources.ics ? " 予定表アドレス" : ""}
-            。灰色の帯が「予定あり」です。
+            。灰色の帯が「予定あり」、青いブロックが件名つきの予定です。
           </p>
         )}
 

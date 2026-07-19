@@ -172,6 +172,8 @@ export default function ContactsPage() {
   const [offerKind, setOfferKind] = useState("help");
   const [offerDesc, setOfferDesc] = useState("");
   const [offerMaxDist, setOfferMaxDist] = useState("");
+  const [showOfferImport, setShowOfferImport] = useState(false);
+  const [offerImportText, setOfferImportText] = useState("");
   const [offeredTo, setOfferedTo] = useState<Record<string, boolean>>({}); // 申し出済みの印 (offeringId:contactId)
   // 提案の見送り (✖️)。消した提案は再表示しない (サーバに記録・記録そのものは消さない)
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
@@ -338,6 +340,27 @@ export default function ContactsPage() {
   const removeOffering = async (id: string) => {
     const res = await apiFetch(`offerings/${id}`, { method: "DELETE" });
     if (res.ok) await load();
+  };
+  const importOfferings = async () => {
+    if (!offerImportText.trim()) return;
+    const res = await apiFetch("offerings/import", {
+      method: "POST",
+      body: JSON.stringify({ text: offerImportText }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) {
+      const parts = (body.byKind as { label: string; count: number }[] | undefined)?.map((b) => `${b.label} ${b.count}`) ?? [];
+      setOfferImportText("");
+      setShowOfferImport(false);
+      setNotice(
+        body.added > 0
+          ? `${body.added}件を取り込み、種類ごとに整えました（${parts.join("・")}）。力になれそうな方をお探しします`
+          : "新しく取り込めるものはありませんでした（同じものは重ねません）",
+      );
+      await load();
+    } else {
+      setError(body.detail ?? "いまは取り込めませんでした");
+    }
   };
   const toggleOfferingPublished = async (id: string, published: boolean) => {
     const res = await apiFetch(`offerings/${id}`, { method: "PUT", body: JSON.stringify({ published }) });
@@ -1496,12 +1519,50 @@ export default function ContactsPage() {
             </div>
           </div>
         ) : (
-          <button
-            onClick={() => setShowOfferForm(true)}
-            style={{ padding: "6px 14px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, marginBottom: 8 }}
-          >
-            力になれることを書く
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            <button
+              onClick={() => setShowOfferForm(true)}
+              style={{ padding: "6px 14px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+            >
+              力になれることを書く
+            </button>
+            <button
+              onClick={() => setShowOfferImport((v) => !v)}
+              style={{ padding: "6px 14px", background: "#fff", color: "#166534", border: "1px solid #86efac", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+            >
+              一覧からまとめて取り込む
+            </button>
+          </div>
+        )}
+        {showOfferImport && (
+          <div style={{ display: "grid", gap: 8, margin: "0 0 10px", border: "1px solid #bbf7d0", borderRadius: 10, padding: "10px 12px", background: "#fff" }}>
+            <p style={{ fontSize: 13, color: "#166534", margin: 0 }}>
+              提供できるものの一覧を、1 行に 1 つずつ貼り付けてください（表計算のセルをそのままコピーしても大丈夫です）。
+              内容から「譲る・貸す・教える・手伝う・相談にのる」に自動で振り分けます。あとから 1 件ずつ直せます。
+            </p>
+            <textarea
+              value={offerImportText}
+              onChange={(e) => setOfferImportText(e.target.value)}
+              aria-label="提供できるものの一覧"
+              placeholder={"英語のレッスン\n使わない子ども用品を譲ります\n引っ越しの手伝い\n起業の相談にのれます"}
+              rows={6}
+              style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14, fontFamily: "inherit", resize: "vertical" }}
+            />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={() => void importOfferings()}
+                style={{ padding: "8px 16px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14 }}
+              >
+                取り込んで分類する
+              </button>
+              <button
+                onClick={() => setShowOfferImport(false)}
+                style={{ padding: "8px 16px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 14 }}
+              >
+                やめる
+              </button>
+            </div>
+          </div>
         )}
         {offerMatches.length > 0 && (
           <div style={{ marginTop: 6 }}>

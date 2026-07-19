@@ -84,6 +84,7 @@ import {
 import { parseSnsField, serializeSnsEntries, snsSearchQueries, snsPlatformLabel, type SnsEntry } from "./lib/sns.js";
 import {
   parseOfferingInput,
+  parseOfferingsBulk,
   matchOfferingToContacts,
   OFFERING_KINDS,
   OFFERING_KIND_LABEL,
@@ -2946,11 +2947,55 @@ export function createApp(deps: AppDeps) {
     if (!conn) return c.json({ error: "not_connected", detail: "先に設定から Google とつないでください" }, 400);
     try {
       const accessToken = await google.refreshAccessToken(conn.refreshToken);
-      const count = await syncGoogleBusy(c.get("ownerUid"), accessToken);
+      const count = await syncGoogleBusy(c.get("ownerUid"), accessToken, parseCalendarIds(conn.syncCalendarIds));
       return c.json({ imported: count });
     } catch {
       return c.json({ error: "import_failed", detail: "カレンダーを取り込めませんでした。時間をおいてお試しください" }, 502);
     }
+  });
+
+  // 分けている Google カレンダーの一覧と、いま取り込む/表示する選択を返す。
+  app.get("/api/relationship/google-calendars", async (c) => {
+    if (!google) return c.json({ available: false, calendars: [], selected: [] });
+    const conn = await prisma.googleConnection.findUnique({ where: { ownerUid: c.get("ownerUid") } });
+    if (!conn) return c.json({ available: true, connected: false, calendars: [], selected: [] });
+    try {
+      const accessToken = await google.refreshAccessToken(conn.refreshToken);
+      const res = (await google.apiGet(
+        "https://www.googleapis.com/calendar/v3/users/me/calendarList?fields=items(id,summary,summaryOverride,primary)&minAccessRole=reader",
+        accessToken,
+      )) as { items?: Array<{ id?: string; summary?: string; summaryOverride?: string; primary?: boolean }> };
+      const calendars = (res.items ?? [])
+        .filter((it) => typeof it.id === "string")
+        .map((it) => ({ id: it.id as string, name: (it.summaryOverride ?? it.summary ?? it.id) as string, primary: !!it.primary }));
+      // 未設定なら primary を既定選択にする (従来どおり)
+      const stored = Array.isArray(conn.syncCalendarIds) ? (conn.syncCalendarIds as unknown[]).filter((x): x is string => typeof x === "string") : null;
+      const selected = stored ?? calendars.filter((c2) => c2.primary).map((c2) => c2.id);
+      return c.json({ available: true, connected: true, calendars, selected });
+    } catch {
+      return c.json({ available: true, connected: true, calendars: [], selected: [], detail: "カレンダーの一覧を取得できませんでした" });
+    }
+  });
+
+  // 取り込む/表示するカレンダーの選択を保存し、その場で取り込み直す。
+  app.put("/api/relationship/google-calendars", async (c) => {
+    if (!google) return c.json({ error: "unavailable", detail: "Google 連携は準備中です" }, 503);
+    const conn = await prisma.googleConnection.findUnique({ where: { ownerUid: c.get("ownerUid") } });
+    if (!conn) return c.json({ error: "not_connected", detail: "先に設定から Google とつないでください" }, 400);
+    const b = (await c.req.json<{ ids?: unknown }>().catch(() => ({}))) as { ids?: unknown };
+    const ids = Array.isArray(b.ids) ? b.ids.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim()).slice(0, 30) : [];
+    await prisma.googleConnection.update({
+      where: { ownerUid: c.get("ownerUid") },
+      data: { syncCalendarIds: ids as never },
+    });
+    let imported = 0;
+    try {
+      const accessToken = await google.refreshAccessToken(conn.refreshToken);
+      imported = await syncGoogleBusy(c.get("ownerUid"), accessToken, ids.length ? ids : ["primary"]);
+    } catch {
+      // 保存はできたので、取り込み直しに失敗しても選択自体は反映済み
+    }
+    return c.json({ saved: true, selected: ids, imported });
   });
 
   // 二者空き重なり → 面談候補 (busy → 各自の free → 積集合)。自分側は空き時間の設定を反映する
@@ -3174,6 +3219,35 @@ export function createApp(deps: AppDeps) {
       },
     });
     return c.json({ offering: serializeOffering(row) });
+  });
+
+  // 「提供できるもの」を貼り付け / CSV でまとめて取り込み、種類に自動分類して登録する。
+  // タイムシェア等のスプレッドシートを書き出して貼るだけ = 提案 (マッチング) に載せやすくする。
+  app.post("/api/offerings/import", async (c) => {
+    const raw = (await c.req.json<{ text?: unknown }>().catch(() => ({}))) as { text?: unknown };
+    const text = typeof raw.text === "string" ? raw.text : "";
+    if (!text.trim()) return c.json({ error: "empty", detail: "取り込む内容を貼り付けてください" }, 400);
+    const ownerUid = c.get("ownerUid");
+    const existing = await prisma.offering.findMany({ where: { ownerUid }, select: { title: true } });
+    const have = new Set(existing.map((e) => e.title.trim().toLowerCase()));
+    const room = Math.max(0, 200 - existing.length);
+    if (room === 0) return c.json({ error: "too_many", detail: "申し出が多すぎます。使わないものを消してください" }, 400);
+
+    const parsed = parseOfferingsBulk(text, 100).filter((p) => !have.has(p.title.toLowerCase())).slice(0, room);
+    let added = 0;
+    const perKind: Record<string, number> = {};
+    for (const p of parsed) {
+      await prisma.offering.create({
+        data: { ownerUid, kind: p.kind, title: p.title, description: p.description, category: null },
+      });
+      added++;
+      perKind[p.kind] = (perKind[p.kind] ?? 0) + 1;
+    }
+    return c.json({
+      added,
+      skipped: 0,
+      byKind: OFFERING_KINDS.filter((k) => perKind[k]).map((k) => ({ kind: k, label: OFFERING_KIND_LABEL[k], count: perKind[k] })),
+    });
   });
 
   app.put("/api/offerings/:id", async (c) => {
@@ -5772,37 +5846,48 @@ export function createApp(deps: AppDeps) {
   // 自分の Google カレンダーの予定 (busy) を freeBusy で取得し、SELF_GOOGLE に保存する。
   // 空き時間カレンダーに「予定あり」を重ねて、空きが見やすくなる。件名は取らない。
   const GOOGLE_BUSY_LOOKAHEAD_DAYS = 60;
-  const syncGoogleBusy = async (ownerUid: string, accessToken: string): Promise<number> => {
+  // 取り込む/表示するカレンダー。未設定なら primary のみ (従来どおり)。
+  const parseCalendarIds = (raw: unknown): string[] => {
+    if (!Array.isArray(raw)) return ["primary"];
+    const ids = raw.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim()).slice(0, 30);
+    return ids.length ? ids : ["primary"];
+  };
+
+  const syncGoogleBusy = async (ownerUid: string, accessToken: string, calendarIds?: string[]): Promise<number> => {
     if (!google) return 0;
+    const ids = calendarIds && calendarIds.length ? calendarIds : ["primary"];
     const now = Date.now();
     const timeMin = new Date(now).toISOString();
     const timeMax = new Date(now + GOOGLE_BUSY_LOOKAHEAD_DAYS * 86_400_000).toISOString();
     // freeBusy (時間帯だけ) ではなく events を引き、予定の件名も取る。件名はオーナー自身の
     // カレンダーで、本人にだけ表示する (第三者の予定の中身は従来どおり保存しない)。終日予定
     // (date のみ) と「予定なし (transparent)」は busy に数えない = freeBusy と同じ意味を保つ。
-    const res = (await google.apiGet(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults=250&fields=items(start,end,summary,transparency,status)&timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`,
-      accessToken,
-    )) as {
-      items?: Array<{
-        start?: { dateTime?: string };
-        end?: { dateTime?: string };
-        summary?: string;
-        transparency?: string;
-        status?: string;
-      }>;
-    };
+    // ユーザーが分けている複数カレンダーのうち、選んだものだけを重ねて取り込む。
     const events: IsoEvent[] = [];
-    for (const it of res.items ?? []) {
-      if (it.status === "cancelled" || it.transparency === "transparent") continue;
-      const s = it.start?.dateTime;
-      const e = it.end?.dateTime;
-      if (!s || !e) continue; // 終日予定 (date のみ) は空き計算に含めない
-      const start = new Date(s);
-      const end = new Date(e);
-      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) continue;
-      const title = (it.summary ?? "").trim().slice(0, 120);
-      events.push(title ? { start: start.toISOString(), end: end.toISOString(), title } : { start: start.toISOString(), end: end.toISOString() });
+    for (const calId of ids) {
+      const res = (await google.apiGet(
+        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events?singleEvents=true&orderBy=startTime&maxResults=250&fields=items(start,end,summary,transparency,status)&timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`,
+        accessToken,
+      ).catch(() => ({}))) as {
+        items?: Array<{
+          start?: { dateTime?: string };
+          end?: { dateTime?: string };
+          summary?: string;
+          transparency?: string;
+          status?: string;
+        }>;
+      };
+      for (const it of res.items ?? []) {
+        if (it.status === "cancelled" || it.transparency === "transparent") continue;
+        const s = it.start?.dateTime;
+        const e = it.end?.dateTime;
+        if (!s || !e) continue; // 終日予定 (date のみ) は空き計算に含めない
+        const start = new Date(s);
+        const end = new Date(e);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) continue;
+        const title = (it.summary ?? "").trim().slice(0, 120);
+        events.push(title ? { start: start.toISOString(), end: end.toISOString(), title } : { start: start.toISOString(), end: end.toISOString() });
+      }
     }
     await prisma.calendarLink.upsert({
       where: { ownerUid_contactId: { ownerUid, contactId: SELF_GOOGLE } },
@@ -5823,10 +5908,10 @@ export function createApp(deps: AppDeps) {
     if (!conn) return { ok: false, detail: "まだ Google とつながっていません" };
     const accessToken = await google.refreshAccessToken(conn.refreshToken);
 
-    // 自分の Google カレンダーの予定 (busy) を取り込み、空き時間カレンダーに重ねられるようにする。
-    // freeBusy は時間帯だけを返す (件名は取らない = 予定の中身は保存しない)。失敗しても取込は続ける。
+    // 自分の Google カレンダーの予定を件名つきで取り込み、空き時間カレンダーに重ねられるようにする。
+    // ユーザーが選んだカレンダー (未設定なら primary) だけを重ねる。失敗しても取込は続ける。
     try {
-      await syncGoogleBusy(ownerUid, accessToken);
+      await syncGoogleBusy(ownerUid, accessToken, parseCalendarIds(conn.syncCalendarIds));
     } catch {
       // カレンダーの busy 取込に失敗しても、連絡先の取込は止めない
     }

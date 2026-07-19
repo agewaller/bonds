@@ -51,6 +51,56 @@ export function parseOfferingInput(raw: unknown): OfferingInput | { error: strin
   };
 }
 
+// ------- 一括取込 (スプレッドシート / 貼り付け) からの分類 -------
+
+// 「提供できるもの」の 1 行を、申し出の種類にざっくり振り分けるためのキーワード。
+// 上から順に見て最初に当たった種類にする (教える > 相談 > 貸す > 譲る > 手伝う)。
+// AI を使わず無料・決定的。外れても後から 1 件ずつ直せる。
+const KIND_KEYWORDS: Array<{ kind: OfferingKind; words: string[] }> = [
+  { kind: "teach", words: ["教え", "講座", "レッスン", "指導", "コーチ", "講師", "セミナー", "ワークショップ", "レクチャー", "ノウハウ", "使い方", "勉強", "塾", "teach", "lesson", "coach", "tutor"] },
+  { kind: "advise", words: ["相談", "アドバイス", "助言", "悩み", "カウンセ", "メンタ", "コンサル", "話を聞", "診断", "advice", "consult"] },
+  { kind: "lend", words: ["貸", "レンタル", "お貸し", "貸出", "貸与", "lend", "rent"] },
+  { kind: "give", words: ["譲", "あげ", "差し上げ", "プレゼント", "無料で", "おさがり", "お下がり", "中古", "進呈", "give", "free"] },
+  { kind: "help", words: ["手伝", "手助け", "サポート", "送迎", "運搬", "運ぶ", "作業", "代行", "支援", "付き添い", "help", "support"] },
+];
+
+/** 「提供できるもの」1 行を申し出の種類に分類する (当たらなければ その他)。 */
+export function classifyOffering(text: string): OfferingKind {
+  const t = text.toLowerCase();
+  for (const { kind, words } of KIND_KEYWORDS) {
+    if (words.some((w) => t.includes(w.toLowerCase()))) return kind;
+  }
+  return "other";
+}
+
+export type ParsedOffering = { kind: OfferingKind; kindLabel: string; title: string; description: string | null };
+
+const HEADER_RE = /^(タイトル|名称|項目|内容|提供できるもの|提供|できること|title|name|item|offer)$/i;
+
+/**
+ * 貼り付けたスプレッドシート / CSV / 箇条書きを、1 行 1 件の申し出に分解して分類する。
+ * 1 列目を見出し、残りの列を説明にする (タブ区切りも CSV も可)。ヘッダ行と空行・重複は飛ばす。
+ */
+export function parseOfferingsBulk(text: string, max = 100): ParsedOffering[] {
+  const out: ParsedOffering[] = [];
+  const seen = new Set<string>();
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim().replace(/^[-・*•]\s*/, ""); // 箇条書き記号を落とす
+    if (!line) continue;
+    const cells = (line.includes("\t") ? line.split("\t") : line.split(",")).map((c) => c.trim());
+    const title = (cells[0] ?? "").slice(0, 120);
+    if (!title || HEADER_RE.test(title)) continue;
+    const key = title.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const rest = cells.slice(1).filter(Boolean).join(" ").slice(0, 1000);
+    const kind = classifyOffering(`${title} ${rest}`);
+    out.push({ kind, kindLabel: OFFERING_KIND_LABEL[kind]!, title, description: rest || null });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 // ------- マッチング -------
 
 /** テキストから照合用のトークンを作る: ASCII 語 (2 文字以上) + CJK 文字 2-gram。 */

@@ -84,6 +84,32 @@ describe("Offering: CRUD", () => {
     const r = await app.request("/api/offerings");
     expect([401, 503]).toContain(r.status);
   });
+
+  it("一覧を貼り付けてまとめて取り込み、種類に自動分類される (重複は重ねない)", async () => {
+    const app = makeApp();
+    const text = "英語のレッスン\n使わない子ども用品を譲ります\n引っ越しの手伝い\n英語のレッスン";
+    const imp = await (
+      await app.request("/api/offerings/import", { method: "POST", headers: H, body: JSON.stringify({ text }) })
+    ).json();
+    expect(imp.added).toBe(3); // 重複は 1 件に
+    const list = await (await app.request("/api/offerings", { headers: H })).json();
+    const byTitle = Object.fromEntries((list.offerings as { title: string; kind: string }[]).map((o) => [o.title, o.kind]));
+    expect(byTitle["英語のレッスン"]).toBe("teach");
+    expect(byTitle["使わない子ども用品を譲ります"]).toBe("give");
+    expect(byTitle["引っ越しの手伝い"]).toBe("help");
+
+    // もう一度同じものを入れても増えない (同名は重ねない)
+    const again = await (
+      await app.request("/api/offerings/import", { method: "POST", headers: H, body: JSON.stringify({ text }) })
+    ).json();
+    expect(again.added).toBe(0);
+  });
+
+  it("取り込みは空文字なら 400", async () => {
+    const app = makeApp();
+    const r = await app.request("/api/offerings/import", { method: "POST", headers: H, body: JSON.stringify({ text: "  " }) });
+    expect(r.status).toBe(400);
+  });
 });
 
 describe("Offering: マッチング", () => {
