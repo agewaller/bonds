@@ -467,6 +467,22 @@ export function createApp(deps: AppDeps) {
     }
   });
 
+  // 公開情報の検索 (Tavily) と AI の設定状況の点検 (読み取り専用・秘密は返さない)。
+  // ?probe=1 のときだけ実際に 1 回だけ検索して、鍵が本当に有効か (件数が返るか) を確かめる。
+  app.get("/api/admin/search-status", async (c) => {
+    const searchConfigured = !!ddSearch;
+    let probe: number | null = null;
+    let probeError: string | null = null;
+    if (searchConfigured && ddSearch && c.req.query("probe") === "1") {
+      try {
+        probe = (await ddSearch("bonds Tavily 接続テスト")).length;
+      } catch (e) {
+        probeError = (e instanceof Error ? e.message : String(e)).slice(0, 200);
+      }
+    }
+    return c.json({ searchConfigured, aiConfigured: !!generate, probe, probeError });
+  });
+
   // データ所在の診断 (読み取り専用・PII なし)。「ログインしたらデータが消えて見える」の
   // 切り分け用: 連絡先がどの ownerUid バケツに何件あるか (active/archived) を横断集計し、
   // いまの呼び出し元が一般ユーザーとしてどの ownerUid に解決されるかを併せて返す。
