@@ -46,3 +46,7 @@ jobs:
           # 優先度に基づく自動ケア (優先リスト上位の方への提案の受け箱 + 材料の自動整理)
           curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/relationship/priority-care?batch=5" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
+          # 相手の SNS・公開情報を自律的に定期更新 (SNS/所属先のある方だけ・7日空け・月次キャップ・
+          # Tavily 未設定なら 503 で何もしない)。相手の尊厳: 手がかりの無い方は自動検索しない
+          curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/contacts/refresh-public?batch=3" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}" || true

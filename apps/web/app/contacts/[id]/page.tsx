@@ -12,12 +12,14 @@ import { useParams } from "next/navigation";
 type Contact = {
   id: string;
   name: string;
+  furigana: string | null;
   distance: number;
   relationship: string;
   company: string | null;
   title: string | null;
   email: string | null;
   phone: string | null;
+  birthday: string | null;
   personalProfile: string | null;
   valuesProfile: string | null;
   notes: string | null;
@@ -226,6 +228,12 @@ export default function ContactDetailPage() {
     const snsRes = await apiFetch(`contacts/${id}/sns`);
     if (snsRes.ok) setSnsAccounts((await snsRes.json()).accounts ?? []);
     setForm({
+      name: body.contact.name ?? "",
+      furigana: body.contact.furigana ?? "",
+      company: body.contact.company ?? "",
+      title: body.contact.title ?? "",
+      phone: body.contact.phone ?? "",
+      birthday: (body.contact.birthday ?? "").slice(0, 10),
       personalProfile: body.contact.personalProfile ?? "",
       valuesProfile: body.contact.valuesProfile ?? "",
       notes: body.contact.notes ?? "",
@@ -261,7 +269,7 @@ export default function ContactDetailPage() {
     if (!contact) return;
     const body = await call(
       `contacts/${contact.id}`,
-      { method: "PUT", body: JSON.stringify({ name: contact.name, distance: contact.distance, ...form }) },
+      { method: "PUT", body: JSON.stringify({ distance: contact.distance, ...form, name: (form.name ?? "").trim() || contact.name }) },
       "保存しました",
     );
     if (body) await load();
@@ -808,6 +816,32 @@ export default function ContactDetailPage() {
       })()}
 
       <Fold k="cd7" title={<>この方のこと</>} style={{ marginTop: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <label style={{ display: "block", margin: "8px 0" }}>
+            お名前
+            <input style={input} value={form.name ?? ""} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </label>
+          <label style={{ display: "block", margin: "8px 0" }}>
+            ふりがな
+            <input style={input} value={form.furigana ?? ""} onChange={(e) => setForm({ ...form, furigana: e.target.value })} />
+          </label>
+          <label style={{ display: "block", margin: "8px 0" }}>
+            会社・所属
+            <input style={input} value={form.company ?? ""} onChange={(e) => setForm({ ...form, company: e.target.value })} />
+          </label>
+          <label style={{ display: "block", margin: "8px 0" }}>
+            肩書き
+            <input style={input} value={form.title ?? ""} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+          </label>
+          <label style={{ display: "block", margin: "8px 0" }}>
+            電話番号
+            <input style={input} value={form.phone ?? ""} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+          </label>
+          <label style={{ display: "block", margin: "8px 0" }}>
+            誕生日
+            <input type="date" style={input} value={form.birthday ?? ""} onChange={(e) => setForm({ ...form, birthday: e.target.value })} />
+          </label>
+        </div>
         <label style={{ display: "block", margin: "8px 0" }}>
           メールアドレス
           <input style={input} value={form.email ?? ""} onChange={(e) => setForm({ ...form, email: e.target.value })} />

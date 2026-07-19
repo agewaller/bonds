@@ -5076,6 +5076,54 @@ export function createApp(deps: AppDeps) {
     return c.json({ refreshed, candidates: targets.length, failed: failures.length });
   });
 
+  // 相手の SNS・公開情報を自律的に探して、相手ノート (見立て) を定期更新する (毎時 sweep)。
+  // オーナー指示 (2026-07-19): 明示押下だけでなく、SNS/所属先という本人特定の手がかりのある方に
+  // 限って、少数ずつ・7日空け・月次キャップの範囲で自動巡回する。手がかりの無い方 (同姓同名で
+  // 別人を巻き込む恐れがある方) は自動検索しない・リストから外した方 (excluded) も対象にしない
+  // = 相手の尊厳を制約として守る。Tavily 未設定なら 503 に縮退。
+  const PUBLIC_REFRESH_MIN_DAYS = 7;
+  app.post("/api/admin/contacts/refresh-public", async (c) => {
+    if (!generate) return c.json({ error: "unavailable", detail: "AI が設定されていません" }, 503);
+    if (!ddSearch) return c.json({ error: "search_unavailable", detail: "公開情報の検索が設定されていません" }, 503);
+    const batch = Math.min(Math.max(parseInt(c.req.query("batch") ?? "3", 10) || 3, 1), 10);
+    const cutoff = new Date(Date.now() - PUBLIC_REFRESH_MIN_DAYS * 86_400_000);
+    // 暗号化列 (sns/company) は where で判定できないため、非暗号の条件で広めに引いてから
+    // 復号済みの行で「本人特定の手がかりがある方」に絞る。
+    const pool = await prisma.contact.findMany({
+      where: {
+        state: "active",
+        OR: [{ profileDigestAt: null }, { profileDigestAt: { lt: cutoff } }], // 直近に更新済みは空ける
+      },
+      orderBy: { profileDigestAt: { sort: "asc", nulls: "first" } },
+      select: { id: true, ownerUid: true, sns: true, company: true, focusPreference: true },
+      take: batch * 20,
+    });
+    // リストから外した方 (excluded) は自動検索しない。本人特定の手がかり (SNS/所属先) のある方だけ。
+    // ※ focusPreference は暗号化されていないが null 行を where の not で落とさないよう JS で絞る。
+    const candidates = pool.filter((ct) => ct.focusPreference !== "excluded" && !!(ct.sns || ct.company)).slice(0, batch);
+    let refreshed = 0;
+    let searched = 0;
+    const failures: string[] = [];
+    for (const t of candidates) {
+      const ctx = await buildContactContext(t.ownerUid, t.id);
+      if (!ctx) continue;
+      // 公開検索つき (includePublic=true)。無制限 (isOwner) で回し、消費は各データ主に計上する。
+      const r = await generateDigest(ctx.contact, ctx.context, true, "ja", { ownerUid: t.ownerUid, isOwner: true });
+      if (!r.ok) {
+        failures.push(t.id);
+        if (r.status === 422) break; // 月次キャップ到達: これ以上回さない
+        continue;
+      }
+      if (r.searched) searched++;
+      await prisma.contact.update({
+        where: { id: t.id },
+        data: { profileDigest: r.digest, profileDigestAt: new Date() },
+      });
+      refreshed++;
+    }
+    return c.json({ refreshed, searched, candidates: candidates.length, failed: failures.length });
+  });
+
   // 会話メモ・音声の文字起こし (Plaud / ZenTrack など) から登場人物と近況を抽出して「提案」する。
   // 自動反映はしない — ユーザーが選んで反映する (自律性の段階: 外へ出ない情報整理でも提案どまり)。
   app.post("/api/contacts/extract-from-conversation", async (c) => {

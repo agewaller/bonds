@@ -341,6 +341,36 @@ export default function ContactsPage() {
     const res = await apiFetch(`offerings/${id}`, { method: "DELETE" });
     if (res.ok) await load();
   };
+  const [editOfferId, setEditOfferId] = useState<string | null>(null);
+  const [editOffer, setEditOffer] = useState<{ title: string; kind: string; description: string; maxDistance: string }>({
+    title: "",
+    kind: "help",
+    description: "",
+    maxDistance: "",
+  });
+  const startEditOffering = (o: Offering) => {
+    setEditOfferId(o.id);
+    setEditOffer({ title: o.title, kind: o.kind, description: o.description ?? "", maxDistance: o.maxDistance ? String(o.maxDistance) : "" });
+  };
+  const saveEditOffering = async () => {
+    if (!editOfferId || !editOffer.title.trim()) return;
+    const res = await apiFetch(`offerings/${editOfferId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        title: editOffer.title.trim(),
+        kind: editOffer.kind,
+        description: editOffer.description.trim() || undefined,
+        maxDistance: editOffer.maxDistance ? Number(editOffer.maxDistance) : undefined,
+      }),
+    });
+    if (res.ok) {
+      setEditOfferId(null);
+      setNotice("申し出を更新しました");
+      await load();
+    } else {
+      setError("いまは保存できませんでした");
+    }
+  };
   const importOfferings = async () => {
     if (!offerImportText.trim()) return;
     const res = await apiFetch("offerings/import", {
@@ -1394,33 +1424,94 @@ export default function ContactsPage() {
         </p>
         {offerings.length > 0 && (
           <ul style={{ listStyle: "none", padding: 0, margin: "0 0 10px", display: "grid", gap: 8 }}>
-            {offerings.map((o) => (
-              <li key={o.id} style={{ fontSize: 14, display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
-                <span style={{ flex: 1, minWidth: 200 }}>
-                  <span style={{ color: "#15803d", fontWeight: 600 }}>{o.title}</span>
-                  <span style={{ color: "#166534", fontSize: 12, marginLeft: 6 }}>
-                    {o.kindLabel}
-                    {o.maxDistance ? `・近い方 (距離 ${o.maxDistance} まで)` : ""}
-                    {o.published ? "・掲示板に公開中" : ""}
-                  </span>
-                </span>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "#166534", cursor: "pointer" }}>
+            {offerings.map((o) =>
+              editOfferId === o.id ? (
+                <li key={o.id} style={{ display: "grid", gap: 6, border: "1px solid #bbf7d0", borderRadius: 8, padding: "10px 12px", background: "#fff" }}>
                   <input
-                    type="checkbox"
-                    checked={o.published}
-                    onChange={(e) => void toggleOfferingPublished(o.id, e.target.checked)}
+                    value={editOffer.title}
+                    onChange={(e) => setEditOffer({ ...editOffer, title: e.target.value })}
+                    aria-label="申し出のタイトル"
+                    style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
                   />
-                  掲示板に載せる
-                </label>
-                <button
-                  aria-label={`${o.title} を消す`}
-                  onClick={() => void removeOffering(o.id)}
-                  style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 14, padding: 2 }}
-                >
-                  ✕
-                </button>
-              </li>
-            ))}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <select
+                      aria-label="申し出の種類"
+                      value={editOffer.kind}
+                      onChange={(e) => setEditOffer({ ...editOffer, kind: e.target.value })}
+                      style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
+                    >
+                      {offerKinds.map((k) => (
+                        <option key={k.value} value={k.value}>{k.label}</option>
+                      ))}
+                    </select>
+                    <select
+                      aria-label="お声がけする範囲 (距離感)"
+                      value={editOffer.maxDistance}
+                      onChange={(e) => setEditOffer({ ...editOffer, maxDistance: e.target.value })}
+                      style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
+                    >
+                      <option value="">どなたでも</option>
+                      <option value="2">とても近い方だけ (2 まで)</option>
+                      <option value="3">近い方まで (3 まで)</option>
+                      <option value="4">ふだん付き合いのある方まで (4 まで)</option>
+                    </select>
+                  </div>
+                  <input
+                    value={editOffer.description}
+                    onChange={(e) => setEditOffer({ ...editOffer, description: e.target.value })}
+                    placeholder="補足があれば"
+                    aria-label="申し出の補足"
+                    style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
+                  />
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => void saveEditOffering()} style={{ padding: "6px 14px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>
+                      保存する
+                    </button>
+                    <button onClick={() => setEditOfferId(null)} style={{ padding: "6px 14px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>
+                      やめる
+                    </button>
+                  </div>
+                </li>
+              ) : (
+                <li key={o.id} style={{ fontSize: 14, display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ flex: 1, minWidth: 200 }}>
+                    <button
+                      onClick={() => startEditOffering(o)}
+                      style={{ background: "none", border: "none", padding: 0, color: "#15803d", fontWeight: 600, cursor: "pointer", textAlign: "left", font: "inherit" }}
+                      title="押すと編集できます"
+                    >
+                      {o.title}
+                    </button>
+                    <span style={{ color: "#166534", fontSize: 12, marginLeft: 6 }}>
+                      {o.kindLabel}
+                      {o.maxDistance ? `・近い方 (距離 ${o.maxDistance} まで)` : ""}
+                      {o.published ? "・掲示板に公開中" : ""}
+                    </span>
+                  </span>
+                  <button
+                    onClick={() => startEditOffering(o)}
+                    style={{ background: "none", border: "1px solid #86efac", color: "#166534", borderRadius: 8, cursor: "pointer", fontSize: 12, padding: "3px 10px" }}
+                  >
+                    編集
+                  </button>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "#166534", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={o.published}
+                      onChange={(e) => void toggleOfferingPublished(o.id, e.target.checked)}
+                    />
+                    掲示板に載せる
+                  </label>
+                  <button
+                    aria-label={`${o.title} を消す`}
+                    onClick={() => void removeOffering(o.id)}
+                    style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 14, padding: 2 }}
+                  >
+                    ✕
+                  </button>
+                </li>
+              ),
+            )}
           </ul>
         )}
         {marketUrl && offerings.some((o) => o.published) && (

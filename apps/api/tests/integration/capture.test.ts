@@ -7,6 +7,7 @@ import { createPrismaClient, type ExtendedPrismaClient } from "@bonds/db";
 import { createApp } from "../../src/app.js";
 import { seedDdPrompts } from "../../src/dd/seed-prompts.js";
 import type { GenerateFn } from "../../src/lib/anthropic.js";
+import type { SearchFn } from "../../src/lib/tavily.js";
 
 const ADMIN_TOKEN = "test-admin-token";
 process.env.ADMIN_BREAKGLASS_TOKEN = ADMIN_TOKEN;
@@ -186,4 +187,82 @@ describe("トーク履歴の中身からの近況整理 (import + talk_digest)",
     expect(body.imported).toBe(1);
     expect(body.talkNotes).toBe(0);
   });
+});
+
+describe("相手の SNS・公開情報の自律的な定期更新 (POST /api/admin/contacts/refresh-public)", () => {
+
+  const digestGen: GenerateFn = async ({ model }) => ({
+
+    text: JSON.stringify({ digest: "最近は新しい取り組みを始めた様子。前向きに動いている。" }),
+
+    model,
+
+    inputTokens: 5,
+
+    outputTokens: 12,
+
+  });
+
+  const searchFn: SearchFn = async () => [
+
+    { url: "https://x.com/tanaka/status/1", title: "新プロジェクト開始", snippet: "新しい取り組みを始めました" },
+
+  ];
+
+
+
+  it("SNS/所属先のある方だけを公開検索で更新し、手がかりの無い方と除外した方は対象にしない", async () => {
+
+    const app = createApp({ prisma, generate: digestGen, search: searchFn });
+
+    const withSns = await prisma.contact.create({ data: { ownerUid: "owner", name: "手がかり 田中", sns: "x: @tanaka" } });
+
+    const noClue = await prisma.contact.create({ data: { ownerUid: "owner", name: "手がかりなし 佐藤" } });
+
+    const excluded = await prisma.contact.create({ data: { ownerUid: "owner", name: "外した 鈴木", company: "鈴木商事", focusPreference: "excluded" } });
+
+
+
+    const res = await app.request("/api/admin/contacts/refresh-public?batch=5", { method: "POST", headers: H });
+
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+
+    expect(body.refreshed).toBe(1);
+
+    expect(body.searched).toBe(1);
+
+
+
+    const a = await prisma.contact.findUnique({ where: { id: withSns.id } });
+
+    expect(a!.profileDigest).toContain("新しい取り組み");
+
+    expect(a!.profileDigestAt).not.toBeNull();
+
+    const b = await prisma.contact.findUnique({ where: { id: noClue.id } });
+
+    expect(b!.profileDigest).toBeNull(); // 手がかりが無い方は自動検索しない
+
+    const c = await prisma.contact.findUnique({ where: { id: excluded.id } });
+
+    expect(c!.profileDigest).toBeNull(); // リストから外した方は対象にしない
+
+  });
+
+
+
+  it("検索が未設定なら 503 に縮退し、何も更新しない", async () => {
+
+    const app = createApp({ prisma, generate: digestGen, search: null });
+
+    await prisma.contact.create({ data: { ownerUid: "owner", name: "田中", sns: "x: @t" } });
+
+    const res = await app.request("/api/admin/contacts/refresh-public", { method: "POST", headers: H });
+
+    expect(res.status).toBe(503);
+
+  });
+
 });
