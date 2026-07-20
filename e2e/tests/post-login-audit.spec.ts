@@ -30,11 +30,15 @@ async function expandAll(page: import("@playwright/test").Page) {
   }
 }
 
-test("ランディング → 人物評価一覧への導線が生きている", async ({ page }) => {
+test("ランディング → 4 つの入り口 (連絡先・提供・時間・人物評価) が並び、人物評価へ進める", async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "bonds" })).toBeVisible();
-  await page.getByRole("link", { name: "人物評価をはじめる" }).click();
+  // 4 つの入り口カード
+  await expect(page.getByRole("link", { name: /連絡先/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /モノやサービスの提供/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /時間調整と時間販売/ })).toBeVisible();
+  await page.getByRole("link", { name: /人物評価/ }).click();
   await expect(page).toHaveURL(/\/subjects$/);
   await expect(page.getByRole("heading", { name: "評価対象の人物" })).toBeVisible();
   expect(errors, errors.join("\n")).toHaveLength(0);

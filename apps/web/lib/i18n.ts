@@ -13,6 +13,26 @@ const DICT: Record<string, Partial<Record<Locale, string>>> = {
   },
   open_contacts: { ja: "連絡帳をひらく", en: "Open contacts" },
   start_person_eval: { ja: "人物評価をはじめる", en: "Evaluate a public figure" },
+  home_contacts: { ja: "連絡先", en: "Contacts" },
+  home_contacts_desc: {
+    ja: "大切な方々との関係を育てます。取り込み・今日のおすすめ・お便りもここから。",
+    en: "Grow your relationships. Imports, daily suggestions and letters live here.",
+  },
+  home_offerings: { ja: "モノやサービスの提供", en: "Things and services you offer" },
+  home_offerings_desc: {
+    ja: "譲れるもの・教えられること・相談にのれることを載せて、必要な方に届けます。",
+    en: "List what you can give, teach or help with, and reach the people who need it.",
+  },
+  home_schedule: { ja: "時間調整と時間販売", en: "Scheduling and selling your time" },
+  home_schedule_desc: {
+    ja: "空き時間を見せて日程を決める共有ページと、時間の出品・予約の受け付け。",
+    en: "Share your availability to settle dates, and take bookings for your time.",
+  },
+  home_subjects: { ja: "人物評価", en: "Person evaluation" },
+  home_subjects_desc: {
+    ja: "公人を二つの視点（意識の七次元・社会価値創造）で評価します。",
+    en: "Evaluate public figures from two perspectives.",
+  },
   contacts_title: { ja: "連絡帳", en: "Contacts" },
   back_home: { ja: "ホームへ戻る", en: "Back to home" },
   connection_score: { ja: "つながりスコア", en: "Connection score" },
