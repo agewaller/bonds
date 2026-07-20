@@ -260,7 +260,9 @@ export default function ContactDetailPage() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(body.detail ?? "うまくいきませんでした。しばらくしてからお試しください");
+        // reason はサーバが添える具体的な失敗理由 (送信サービスの応答など)。あれば併記する
+        const reason = typeof body.reason === "string" && body.reason ? ` (詳細: ${body.reason})` : "";
+        setError((body.detail ?? "うまくいきませんでした。しばらくしてからお試しください") + reason);
         return null;
       }
       if (okMsg) setNotice(okMsg);

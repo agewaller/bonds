@@ -39,3 +39,7 @@ jobs:
           echo "== /api/admin/search-status?probe=1 (Tavily 公開検索の点検・実際に1回検索する) =="
           curl -sS "${{ vars.BONDS_API_URL }}/api/admin/search-status?probe=1" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
+          echo
+          echo "== /api/admin/mailer-status?probe=1 (メール送信の点検・オーナー宛に1通だけテスト送信) =="
+          curl -sS "${{ vars.BONDS_API_URL }}/api/admin/mailer-status?probe=1" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"

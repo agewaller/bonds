@@ -273,6 +273,64 @@ describe("発信 (draft → approve → send)", () => {
     expect(row.status).toBe("failed");
   });
 
+  it("送信に失敗した文面は、もう一度承認して送り直せる (failed → approved → sent)", async () => {
+    let calls = 0;
+    const flaky: MailerFn = async ({ to, subject }) => {
+      calls++;
+      if (calls === 1) throw new Error("resend_error: 403 The domain is not verified");
+      sentMails.push({ to, subject });
+      return { messageId: "retry-1" };
+    };
+    const app = makeApp({ mailer: flaky });
+    const c = await createContact(app, { name: "再送さん", email: "retry@example.com" });
+    const d = await (
+      await app.request("/api/outreach/draft", {
+        method: "POST", headers: H, body: JSON.stringify({ contactId: c.id }),
+      })
+    ).json();
+    await app.request(`/api/outreach/${d.id}/approve`, {
+      method: "POST", headers: H, body: JSON.stringify({ subject: "s", body: "b" }),
+    });
+    // 1 回目の送信は失敗 → 設定起因の言い方 + 具体的な理由 (reason) が返り、failed 記録
+    const fail = await app.request(`/api/outreach/${d.id}/send`, { method: "POST", headers: H });
+    expect(fail.status).toBe(502);
+    const failBody = await fail.json();
+    expect(failBody.detail).toContain("設定");
+    expect(failBody.reason).toContain("domain");
+    const failedRow = await prisma.outreachMessage.findFirstOrThrow({ where: { id: d.id } });
+    expect(failedRow.status).toBe("failed");
+    expect(failedRow.errorDetail).toContain("domain");
+    // failed のまま再承認できる (従来は 409 の行き止まりだった)
+    const re = await app.request(`/api/outreach/${d.id}/approve`, {
+      method: "POST", headers: H, body: JSON.stringify({ subject: "s", body: "b" }),
+    });
+    expect(re.status).toBe(200);
+    const reRow = await prisma.outreachMessage.findFirstOrThrow({ where: { id: d.id } });
+    expect(reRow.status).toBe("approved");
+    expect(reRow.errorDetail).toBeNull();
+    // 2 回目の送信は成功して sent
+    const sent = await app.request(`/api/outreach/${d.id}/send`, { method: "POST", headers: H });
+    expect(sent.status).toBe(200);
+    expect((await prisma.outreachMessage.findFirstOrThrow({ where: { id: d.id } })).status).toBe("sent");
+  });
+
+  it("admin mailer-status が設定と直近の失敗理由を返し、probe でオーナー宛に実送信する", async () => {
+    process.env.OWNER_EMAIL = "owner@example.com";
+    const app = makeApp();
+    // 直近の失敗を 1 件仕込む
+    const c = await createContact(app, { name: "点検さん", email: "kenkou@example.com" });
+    await prisma.outreachMessage.create({
+      data: { ownerUid: "owner", contactId: c.id, status: "failed", errorDetail: "resend_error: 401 invalid api key" },
+    });
+    const res = await app.request("/api/admin/mailer-status?probe=1", { headers: H });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.configured).toBe(true);
+    expect(body.recentFailures[0].errorDetail).toContain("401");
+    expect(body.probe.ok).toBe(true);
+    expect(sentMails.some((m) => m.to === "owner@example.com")).toBe(true);
+  });
+
   it("候補が不正な AI 出力は 502 (invalid_output)", async () => {
     const broken: GenerateFn = async ({ model }) => ({
       text: '{"candidates": []}',

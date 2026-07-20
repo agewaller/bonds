@@ -503,6 +503,51 @@ export function createApp(deps: AppDeps) {
     }
   });
 
+  // メール送信の点検 (読み取り専用・鍵は出さない)。「送ろうとしたが失敗した」の切り分け用:
+  // 設定の有無 (鍵・差出人)・プロバイダ判別・直近の失敗理由 (errorDetail) を返す。
+  // ?probe=1 のときだけ OWNER_EMAIL 宛に実際に 1 通だけテスト送信し、生きた経路かを確かめる。
+  app.get("/api/admin/mailer-status", async (c) => {
+    const key = process.env.SENDGRID_API_KEY ?? "";
+    const from = process.env.OUTREACH_FROM_EMAIL ?? "";
+    const provider = key.startsWith("re_") ? "resend" : key && key !== "unset" ? "sendgrid" : "none";
+    const recentFailures = await prisma.outreachMessage.findMany({
+      where: { status: "failed" },
+      orderBy: { updatedAt: "desc" },
+      take: 5,
+      select: { id: true, channel: true, errorDetail: true, updatedAt: true },
+    });
+    let probe: { ok: boolean; detail?: string | null } | null = null;
+    const ownerEmail = process.env.OWNER_EMAIL ?? "";
+    if (c.req.query("probe") === "1" && mailer && ownerEmail) {
+      try {
+        const s = await mailer({
+          to: ownerEmail,
+          subject: "bonds 送信テスト",
+          body: "bonds からの送信経路の点検メールです。届いていれば設定は生きています。",
+        });
+        probe = { ok: true, detail: s.messageId };
+      } catch (e) {
+        probe = { ok: false, detail: (e instanceof Error ? e.message : String(e)).slice(0, 300) };
+      }
+    }
+    return c.json({
+      configured: !!mailer,
+      provider,
+      keyLooksSentinel: key === "" || key === "unset",
+      keyLength: key.length,
+      fromConfigured: !!from,
+      fromDomain: from.includes("@") ? from.split("@")[1] : null,
+      senderIdentity: process.env.OUTREACH_SENDER_IDENTITY ?? null,
+      recentFailures: recentFailures.map((f) => ({
+        id: f.id,
+        channel: f.channel,
+        errorDetail: (f.errorDetail ?? "").slice(0, 300),
+        updatedAt: f.updatedAt,
+      })),
+      probe,
+    });
+  });
+
   // 公開情報の検索 (Tavily) と AI の設定状況の点検 (読み取り専用・秘密は返さない)。
   // ?probe=1 のときだけ実際に 1 回だけ検索して、鍵が本当に有効か (件数が返るか) を確かめる。
   app.get("/api/admin/search-status", async (c) => {
@@ -6022,7 +6067,9 @@ export function createApp(deps: AppDeps) {
       where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
     });
     if (!m) return c.json({ error: "not_found" }, 404);
-    if (m.status !== "draft") {
+    // draft に加えて failed も承認できる = 送信に失敗した文面を、そのまま (または直して)
+    // もう一度送れる。従来は failed が行き止まりで、下書きを作り直すしかなかった。
+    if (m.status !== "draft" && m.status !== "failed") {
       return c.json({ error: "invalid_status", detail: `status=${m.status} は承認できません` }, 409);
     }
     const b = await c.req
@@ -6035,7 +6082,7 @@ export function createApp(deps: AppDeps) {
     }
     const updated = await prisma.outreachMessage.update({
       where: { id: m.id },
-      data: { subject, body, status: "approved" },
+      data: { subject, body, status: "approved", errorDetail: null },
     });
     return c.json({ message: { id: updated.id, status: updated.status } });
   });
@@ -6060,7 +6107,20 @@ export function createApp(deps: AppDeps) {
       if (r.detail === "no_email") {
         return c.json({ error: "no_email", detail: "この方のメールアドレスが登録されていません" }, 400);
       }
-      return c.json({ error: "send_failed", detail: "送信できませんでした。しばらくしてからお試しください" }, 502);
+      // 設定起因 (鍵の誤り・差出人ドメイン未認証など) は「待てば直る」ものではないので、
+      // 原因の向き先が分かる言い方にする。詳細は reason で返し、画面で開ける。
+      const raw = r.detail ?? "";
+      const configIssue = /401|403|unauthorized|forbidden|api key|domain|verify|testing emails/i.test(raw);
+      return c.json(
+        {
+          error: "send_failed",
+          detail: configIssue
+            ? "送信の設定 (鍵または差出人アドレス) に問題があるようです。設定を確認してください"
+            : "送信できませんでした。しばらくしてからお試しください",
+          reason: raw.slice(0, 300),
+        },
+        502,
+      );
     }
     const updated = await prisma.outreachMessage.findFirstOrThrow({ where: { id: m.id } });
     return c.json({ message: { id: updated.id, status: updated.status, sentAt: updated.sentAt } });
