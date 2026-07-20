@@ -144,6 +144,18 @@ export default function ContactsPage() {
       goal: { purpose: string; targetDistance: number } | null;
     }[]
   >([]);
+  // 関係を育てるとよい方々 + 距離の縮め方 (キャッチアップ・申し出・会う など)
+  const [growthItems, setGrowthItems] = useState<
+    {
+      contactId: string;
+      name: string;
+      company: string | null;
+      distance: number;
+      reason: string;
+      email: string | null;
+      moves: { kind: string; label: string }[];
+    }[]
+  >([]);
   // あなたへの提案 (優先度に基づく自動ケアの受け箱)。実行するかはユーザーが選ぶ。
   const [careItems, setCareItems] = useState<
     { id: string; contactId: string; name: string; kind: string; body: string | null }[]
@@ -297,6 +309,8 @@ export default function ContactsPage() {
     if (glRes.ok) setGoalItems((await glRes.json()).items ?? []);
     const fcRes = await apiFetch("relationship/focus");
     if (fcRes.ok) setFocusItems((await fcRes.json()).items ?? []);
+    const grRes = await apiFetch("relationship/growth");
+    if (grRes.ok) setGrowthItems((await grRes.json()).items ?? []);
     const csRes = await apiFetch("relationship/care-suggestions");
     if (csRes.ok) setCareItems((await csRes.json()).items ?? []);
     const dqRes = await apiFetch("relationship/daily-question");
@@ -937,6 +951,7 @@ export default function ContactsPage() {
   const shownGoalItems = goalItems.filter((g) => !isDismissed("goal_nudge", g.contactId));
   const shownRecentMet = recentMet.filter((m) => !isDismissed("recent_meeting", `${m.contactId}:${m.metAt}`));
   const shownFirstMoves = firstMoves.filter((m) => !isDismissed("first_move", m.contactId));
+  const shownGrowth = growthItems.filter((g) => !isDismissed("growth", g.contactId)).slice(0, 8);
   const todayKey = new Date().toISOString().slice(0, 10);
   const dailyQDismissed = dailyQ ? isDismissed("daily_question", `${dailyQ.contactId}:${todayKey}`) : false;
 
@@ -1283,6 +1298,59 @@ export default function ContactsPage() {
                   <button onClick={() => void resolveCare(s.id, "dismissed")} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 12, padding: 0 }}>
                     今回は見送る
                   </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Fold>
+      )}
+
+      {shownGrowth.length > 0 && (
+        <Fold k="cl23" defaultOpen={false} title={<>関係を育てるとよい方々</>} style={{ margin: "16px 0", border: "2px solid #34d399", background: "#ecfdf5", borderRadius: 12, padding: "12px 16px" }}>
+          <p style={{ fontSize: 13, color: "#065f46", margin: "4px 0 10px" }}>
+            これから関係を作る・近づける価値がありそうな方です。それぞれに、距離の縮め方をいくつか添えました。
+            気が向いた一手からで大丈夫です。今回はそっとしておきたい方は ✕ で外せます。
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 12 }}>
+            {shownGrowth.map((g) => (
+              <li key={g.contactId} style={{ border: "1px solid #a7f3d0", borderRadius: 10, padding: "10px 12px", background: "#fff" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  <Link href={`/contacts/${g.contactId}`} style={{ color: "#047857", fontWeight: 700, textDecoration: "none" }}>
+                    {g.name}
+                  </Link>
+                  {g.company && <span style={{ color: "#94a3b8", fontSize: 12 }}>{g.company}</span>}
+                  <span style={{ color: "#059669", fontSize: 12 }}>距離 {g.distance}</span>
+                  {dismissX(`${g.name}さんを今回は外す`, () => dismissSuggestion("growth", g.contactId))}
+                </div>
+                {g.reason && <p style={{ margin: "4px 0 8px", color: "#065f46", fontSize: 13 }}>{g.reason}</p>}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {g.moves.map((mv, i) =>
+                    mv.kind === "catchup" && g.email ? (
+                      <a
+                        key={i}
+                        href={`mailto:${g.email}`}
+                        style={{ padding: "5px 12px", border: "1px solid #6ee7b7", background: "#d1fae5", color: "#065f46", borderRadius: 8, textDecoration: "none", fontSize: 13 }}
+                      >
+                        ✉ {mv.label}
+                      </a>
+                    ) : mv.kind === "meet" ? (
+                      <Link
+                        key={i}
+                        href={`/contacts/${g.contactId}`}
+                        style={{ padding: "5px 12px", border: "1px solid #6ee7b7", background: "#d1fae5", color: "#065f46", borderRadius: 8, textDecoration: "none", fontSize: 13 }}
+                      >
+                        {mv.label}
+                      </Link>
+                    ) : (
+                      <Link
+                        key={i}
+                        href={`/contacts/${g.contactId}`}
+                        style={{ padding: "5px 12px", border: "1px solid #6ee7b7", background: "#d1fae5", color: "#065f46", borderRadius: 8, textDecoration: "none", fontSize: 13 }}
+                      >
+                        {mv.label}
+                      </Link>
+                    ),
+                  )}
                 </div>
               </li>
             ))}

@@ -28,6 +28,7 @@ import { clampDistance, calculateIsolationScore, todaySuggestions, suggestDistan
 import { nominateIntroPairs, type IntroPerson } from "./lib/introductions.js";
 import { detectDrift } from "./lib/drift.js";
 import { firstMoves, type OnboardPerson } from "./lib/onboarding.js";
+import { pickGrowthContacts, type GrowthInput } from "./lib/growth.js";
 import { recentMeetings, pickDailyQuestion, type DailyPerson } from "./lib/capture.js";
 import { parseGoalField, serializeGoal, goalPlan, validateGoalInput, PURPOSE_LABEL } from "./lib/goals.js";
 import { pickFocusContacts, type FocusInput } from "./lib/priority.js";
@@ -3360,6 +3361,90 @@ export function createApp(deps: AppDeps) {
       })
       .filter((m) => m.contacts.length > 0);
     return c.json({ matches });
+  });
+
+  // 関係を育てるとよい方々 + それぞれの距離の縮め方 (AI 不要・毎回無料)。
+  // 伸びしろ (距離を縮める余地)・手がかりの厚み・機会 (目標・申し出の一致・間合い) で選び、
+  // キャッチアップ / モノやサービスの提示 / 空いた時間で会う などの具体的な一手を添える。
+  // web 側が見送り (✖️ kind=growth) を除いて先頭を出す。
+  app.get("/api/relationship/growth", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const contacts = await prisma.contact.findMany({ where: { ownerUid, state: "active" } });
+    if (contacts.length === 0) return c.json({ items: [] });
+    const ids = contacts.map((x) => x.id);
+    const [interactions, offerings] = await Promise.all([
+      prisma.contactInteraction.groupBy({
+        by: ["contactId"],
+        where: { contactId: { in: ids } },
+        _count: { contactId: true },
+        _max: { occurredAt: true },
+      }),
+      prisma.offering.findMany({ where: { ownerUid, active: true } }),
+    ]);
+    const inter = new Map(interactions.map((x) => [x.contactId, { count: x._count.contactId, lastAt: x._max.occurredAt }]));
+
+    // この方のニーズに刺さる「あなたの申し出」を 1 つ結びつける (モノ・サービスの提示の一手に使う)。
+    const needs: ContactNeed[] = contacts.map((ct) => {
+      const texts: string[] = [];
+      if (ct.profileFacets) {
+        try {
+          const f = JSON.parse(ct.profileFacets) as Record<string, unknown>;
+          if (typeof f.work === "string") texts.push(f.work);
+          for (const key of ["goals", "opportunities", "concerns"]) {
+            const arr = f[key];
+            if (Array.isArray(arr)) for (const v of arr) if (typeof v === "string") texts.push(v);
+          }
+        } catch {
+          // 壊れた facets は無視
+        }
+      }
+      if (ct.personalProfile) texts.push(ct.personalProfile);
+      if (ct.valuesProfile) texts.push(ct.valuesProfile);
+      if (ct.notes) texts.push(ct.notes);
+      return { id: ct.id, name: ct.name, distance: ct.distance, needTexts: texts };
+    });
+    const offeringByContact = new Map<string, string>();
+    for (const o of offerings) {
+      const like: OfferingLike = {
+        id: o.id,
+        kind: o.kind,
+        title: o.title,
+        description: o.description,
+        category: o.category,
+        situations: o.situations ? (JSON.parse(o.situations) as string[]) : [],
+        maxDistance: o.maxDistance,
+      };
+      for (const m of matchOfferingToContacts(like, needs, 50)) {
+        if (!offeringByContact.has(m.contactId)) offeringByContact.set(m.contactId, o.title);
+      }
+    }
+
+    const now = Date.now();
+    const people: GrowthInput[] = contacts.map((ct) => {
+      const it = inter.get(ct.id);
+      const goal = parseGoalField(ct.goal);
+      return {
+        id: ct.id,
+        name: ct.name,
+        company: ct.company,
+        title: ct.title,
+        distance: ct.distance,
+        hasEmail: !!ct.email,
+        hasPhone: !!ct.phone,
+        interactionCount: it?.count ?? 0,
+        lastContactDays: it?.lastAt ? Math.floor((now - it.lastAt.getTime()) / 86_400_000) : null,
+        hasFacets: !!ct.profileFacets,
+        hasDigest: !!ct.profileDigest,
+        hasGoal: !!goal,
+        goalTargetDistance: goal?.targetDistance ?? null,
+        sourceHits: ct.sourceHits,
+        focusPreference: ct.focusPreference,
+        offeringTitle: offeringByContact.get(ct.id) ?? null,
+      };
+    });
+    const emailById = new Map(contacts.map((ct) => [ct.id, ct.email]));
+    const items = pickGrowthContacts(people, 16).map((p) => ({ ...p, email: emailById.get(p.contactId) ?? null }));
+    return c.json({ items });
   });
 
   // 公開掲示板 (/market) への問い合わせ (受け箱)。訪問者からの反応を一覧し、承認で

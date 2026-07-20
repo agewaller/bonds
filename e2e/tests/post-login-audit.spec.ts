@@ -508,6 +508,30 @@ test("優先リスト: 距離感と目標をその場で直せて、あなたへ
   expect(errors, errors.join("\n")).toHaveLength(0);
 });
 
+test("関係を育てるとよい方々: 距離の縮め方が並び、✖ で外すと再読み込み後も出ない", async ({ page }) => {
+  const errors = collectErrors(page);
+  // 会社・メール・距離4 の方は「育てるとよい方々」の閾値を越える
+  const name = `監査育成 川上 ${Date.now() % 100000}`;
+  const created = await page.request.post("/api/bff/contacts", {
+    data: { name, company: "育成監査商事", email: `grow-${Date.now()}@example.com`, distance: 4 },
+  });
+  expect(created.ok()).toBeTruthy();
+  await page.goto("/contacts");
+  await expandAll(page);
+  const panel = page.locator("section", { has: page.getByRole("heading", { name: "関係を育てるとよい方々" }) });
+  await expect(panel.getByRole("link", { name })).toBeVisible();
+  // 距離の縮め方の一手 (会う約束) が並ぶ
+  await expect(panel.getByRole("link", { name: /会う約束/ }).first()).toBeVisible();
+  // ✖ で外すと消え、再読み込み後も出ない
+  const x = panel.getByRole("button", { name: `${name}さんを今回は外す` });
+  await x.click();
+  await expect(x).toHaveCount(0);
+  await page.reload();
+  await expandAll(page);
+  await expect(page.getByRole("button", { name: `${name}さんを今回は外す` })).toHaveCount(0);
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
 test("提案の見送り: はじめの一手を ✖ で消すと、再読み込み後も出ない", async ({ page }) => {
   const errors = collectErrors(page);
   // 会社とメールのある新しい連絡先は「はじめの一手」の先頭グループに必ず入る
