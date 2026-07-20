@@ -16,6 +16,7 @@ type Contact = {
   distance: number;
   relationship: string;
   company: string | null;
+  email: string | null;
   birthday: string | null;
 };
 type Progress = {
@@ -1019,7 +1020,10 @@ export default function ContactsPage() {
                 }}
               >
                 <span>
-                  <strong>{sug.name}</strong>さん
+                  <Link href={`/contacts/${sug.contactId}`} style={{ color: "#1d4ed8", fontWeight: 700, textDecoration: "none" }}>
+                    {sug.name}
+                  </Link>
+                  さん
                   <span style={{ color: "#64748b", marginLeft: 8 }}>{sug.reason}</span>
                 </span>
                 <button
@@ -1814,7 +1818,9 @@ export default function ContactsPage() {
                 <div style={{ fontSize: 14 }}>
                   {g.members.map((m) => (
                     <span key={m.id} style={{ marginRight: 12 }}>
-                      {m.name}
+                      <Link href={`/contacts/${m.id}`} style={{ color: "#1d4ed8", fontWeight: 600, textDecoration: "none" }}>
+                        {m.name}
+                      </Link>
                       {m.company && <span style={{ color: "#94a3b8" }}> ({m.company})</span>}
                     </span>
                   ))}
@@ -2346,10 +2352,11 @@ export default function ContactsPage() {
               ? []
               : contacts
           ).map((c) => (
-            <li key={c.id}>
+            <li key={c.id} style={{ display: "flex", alignItems: "stretch", gap: 6 }}>
               <Link
                 href={`/contacts/${c.id}`}
                 style={{
+                  flex: 1,
                   display: "flex",
                   justifyContent: "space-between",
                   border: "1px solid #e2e8f0",
@@ -2365,6 +2372,16 @@ export default function ContactsPage() {
                 </span>
                 <small style={{ color: "#64748b" }}>{DISTANCE_LABEL[c.distance] ?? ""}</small>
               </Link>
+              {c.email && (
+                <a
+                  href={`mailto:${c.email}`}
+                  aria-label={`${c.name}さんにメールする`}
+                  title="メールする"
+                  style={{ display: "flex", alignItems: "center", padding: "0 12px", border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 10, textDecoration: "none", fontSize: 13, whiteSpace: "nowrap" }}
+                >
+                  ✉ メール
+                </a>
+              )}
             </li>
           ))}
           {contacts.length === 0 && <li style={{ color: "#64748b" }}>まだ登録がありません。大切な方から登録してみましょう。</li>}

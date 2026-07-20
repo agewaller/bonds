@@ -210,11 +210,16 @@ test("連絡先詳細: プロフィール保存・面談候補・お便り導線
   // プロフィール保存 (暗号化列の書き込み経路)。名前・会社などの項目もここで編集できる。
   await page.getByLabel(/近況・状況/).fill("お孫さんが生まれたばかり");
   await page.getByLabel("会社・所属").fill("監査商事");
+  await page.getByLabel("メールアドレス").fill("kenta@example.com");
   const renamed = `${name} 改`;
   await page.getByLabel("お名前").fill(renamed);
   await page.getByRole("button", { name: "保存する" }).click();
   await expect(page.getByText("保存しました")).toBeVisible();
   await expect(page.getByRole("heading", { name: renamed })).toBeVisible(); // 名前の変更が見出しに反映
+  // メールを設定すると「メールを送る」(mailto) が出て、直接連絡できる
+  const mail = page.getByRole("link", { name: "メールを送る" });
+  await expect(mail).toBeVisible();
+  await expect(mail).toHaveAttribute("href", "mailto:kenta@example.com");
 
   // 面談候補 (カレンダー未登録の縮退案内: 営業時間すべてが候補になる旨の通知が出る)
   await page.getByRole("button", { name: "おたがいの空きから候補を出す" }).click();

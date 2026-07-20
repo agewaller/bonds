@@ -402,6 +402,17 @@ export default function ContactDetailPage() {
       <p style={{ color: "#64748b" }}>
         {contact.company} {contact.title}
       </p>
+      {contact.email && (
+        <p style={{ margin: "4px 0 12px" }}>
+          <a
+            href={`mailto:${contact.email}`}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", borderRadius: 8, textDecoration: "none", fontSize: 14 }}
+          >
+            ✉ メールを送る
+          </a>
+          <span style={{ color: "#94a3b8", fontSize: 12, marginLeft: 8 }}>{contact.email}</span>
+        </p>
+      )}
 
       {notice && <p style={{ color: "#166534", background: "#f0fdf4", padding: 8, borderRadius: 8 }}>{notice}</p>}
       {error && (
