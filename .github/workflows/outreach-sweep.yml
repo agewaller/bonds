@@ -50,3 +50,6 @@ jobs:
           # Tavily 未設定なら 503 で何もしない)。相手の尊厳: 手がかりの無い方は自動検索しない
           curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/contacts/refresh-public?batch=3" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}" || true
+          # 一斉配信 (お便り): 承認済みの配信を日次上限の範囲で少しずつ送る (配信停止・メール無しは skip)
+          curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/campaigns/process?batch=100" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}" || true

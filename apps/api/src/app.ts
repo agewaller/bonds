@@ -29,6 +29,17 @@ import { nominateIntroPairs, type IntroPerson } from "./lib/introductions.js";
 import { detectDrift } from "./lib/drift.js";
 import { firstMoves, type OnboardPerson } from "./lib/onboarding.js";
 import { pickGrowthContacts, type GrowthInput } from "./lib/growth.js";
+import {
+  renderTemplate,
+  matchesSegment,
+  emailHash,
+  signUnsub,
+  verifyUnsub,
+  buildCampaignFooter,
+  normalizeEmail,
+  type Segment,
+  type CampaignContact,
+} from "./lib/campaigns.js";
 import { recentMeetings, pickDailyQuestion, type DailyPerson } from "./lib/capture.js";
 import { parseGoalField, serializeGoal, goalPlan, validateGoalInput, PURPOSE_LABEL } from "./lib/goals.js";
 import { pickFocusContacts, type FocusInput } from "./lib/priority.js";
@@ -294,6 +305,9 @@ export function createApp(deps: AppDeps) {
   app.use("/api/exchanges", requireUser);
   app.use("/api/offerings/*", requireUser);
   app.use("/api/offerings", requireUser);
+  // 一斉配信 (オーナー側)。配信停止だけは公開 (/api/public/unsubscribe/:token、HMAC 署名)
+  app.use("/api/campaigns/*", requireUser);
+  app.use("/api/campaigns", requireUser);
   // 日程調整・時間の出品 (オーナー側)。公開側は /api/public/schedule/* と /api/public/offers/*
   // で、shareKey / offerKey (推測不能な URL) がそのままスコープになるため認証を掛けない。
   app.use("/api/schedule/*", requireUser);
@@ -3446,6 +3460,276 @@ export function createApp(deps: AppDeps) {
     const items = pickGrowthContacts(people, 16).map((p) => ({ ...p, email: emailById.get(p.contactId) ?? null }));
     return c.json({ items });
   });
+
+  // ---------------- 一斉配信 (メールのお便り) ----------------
+  // 1 通の文面を、選んだ相手にまとめて送る。文面はテンプレ + お名前差し込み (AI 費用ゼロ)。
+  // 送信は少しずつ (日次上限) + 配信停止リンク + 送信者表示を必ず付ける (到達性と法の順守)。
+  const campaignSecret = () => process.env.DATA_ENCRYPTION_KEY ?? "bonds-campaign-secret";
+  const parseSegment = (raw: unknown): Segment => {
+    const s = (raw ?? {}) as Record<string, unknown>;
+    const seg: Segment = {};
+    if (s.all === true) seg.all = true;
+    if (typeof s.distanceMax === "number" && s.distanceMax >= 1 && s.distanceMax <= 5) seg.distanceMax = Math.floor(s.distanceMax);
+    if (typeof s.lastContactDaysMin === "number" && s.lastContactDaysMin >= 0) seg.lastContactDaysMin = Math.floor(s.lastContactDaysMin);
+    if (typeof s.company === "string" && s.company.trim()) seg.company = s.company.trim().slice(0, 80);
+    if (s.pinnedOnly === true) seg.pinnedOnly = true;
+    return seg;
+  };
+  // セグメントに合う連絡先を、配信停止・メール無し・重複を除いて解決する。
+  const resolveCampaignRecipients = async (ownerUid: string, seg: Segment) => {
+    const [contacts, interactions, suppressions] = await Promise.all([
+      prisma.contact.findMany({ where: { ownerUid, state: "active" } }),
+      prisma.contactInteraction.groupBy({ by: ["contactId"], _max: { occurredAt: true }, where: { contact: { ownerUid } } }),
+      prisma.emailSuppression.findMany({ where: { ownerUid }, select: { emailHash: true } }),
+    ]);
+    const lastById = new Map(interactions.map((x) => [x.contactId, x._max.occurredAt]));
+    const suppressed = new Set(suppressions.map((s) => s.emailHash));
+    const now = Date.now();
+    const seenEmail = new Set<string>();
+    const out: { contactId: string; email: string }[] = [];
+    for (const ct of contacts) {
+      const last = lastById.get(ct.id) ?? null;
+      const cc: CampaignContact = {
+        id: ct.id,
+        name: ct.name,
+        company: ct.company,
+        email: ct.email,
+        distance: ct.distance,
+        lastContactDays: last ? Math.floor((now - last.getTime()) / 86_400_000) : null,
+        focusPreference: ct.focusPreference,
+      };
+      if (!matchesSegment(cc, seg)) continue;
+      const email = normalizeEmail(ct.email as string);
+      if (suppressed.has(emailHash(email, campaignSecret()))) continue; // 配信停止済み
+      if (seenEmail.has(email)) continue; // 同じメールは 1 通だけ
+      seenEmail.add(email);
+      out.push({ contactId: ct.id, email });
+    }
+    return out;
+  };
+
+  const serializeCampaign = (row: {
+    id: string; subject: string; body: string; segment: unknown; fromName: string | null;
+    status: string; dailyLimit: number; total: number; sent: number; failed: number; skipped: number;
+    createdAt: Date; approvedAt: Date | null;
+  }) => ({
+    id: row.id,
+    subject: row.subject,
+    body: row.body,
+    segment: row.segment,
+    fromName: row.fromName,
+    status: row.status,
+    dailyLimit: row.dailyLimit,
+    total: row.total,
+    sent: row.sent,
+    failed: row.failed,
+    skipped: row.skipped,
+    createdAt: row.createdAt,
+    approvedAt: row.approvedAt,
+  });
+
+  app.get("/api/campaigns", async (c) => {
+    const rows = await prisma.emailCampaign.findMany({
+      where: { ownerUid: c.get("ownerUid") },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+    return c.json({ campaigns: rows.map(serializeCampaign), mailerReady: !!mailer });
+  });
+
+  app.post("/api/campaigns", async (c) => {
+    const b = (await c.req.json<Record<string, unknown>>().catch(() => ({}))) as Record<string, unknown>;
+    const subject = typeof b.subject === "string" ? b.subject.trim().slice(0, 200) : "";
+    const body = typeof b.body === "string" ? b.body.trim().slice(0, 8000) : "";
+    if (!subject || !body) return c.json({ error: "invalid_input", detail: "件名と本文を入力してください" }, 400);
+    const dailyLimit = Number.isInteger(b.dailyLimit) ? Math.min(Math.max(Number(b.dailyLimit), 1), 1000) : 200;
+    const row = await prisma.emailCampaign.create({
+      data: {
+        ownerUid: c.get("ownerUid"),
+        subject,
+        body,
+        segment: parseSegment(b.segment) as never,
+        fromName: typeof b.fromName === "string" && b.fromName.trim() ? b.fromName.trim().slice(0, 120) : null,
+        dailyLimit,
+      },
+    });
+    return c.json({ campaign: serializeCampaign(row) });
+  });
+
+  const findCampaign = async (c: Context) =>
+    prisma.emailCampaign.findFirst({ where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") } });
+
+  app.get("/api/campaigns/:id", async (c) => {
+    const row = await findCampaign(c);
+    if (!row) return c.json({ error: "not_found" }, 404);
+    return c.json({ campaign: serializeCampaign(row) });
+  });
+
+  // 宛先の人数と、差し込み後の見本を返す (送る前に確かめる)。
+  app.post("/api/campaigns/:id/preview", async (c) => {
+    const row = await findCampaign(c);
+    if (!row) return c.json({ error: "not_found" }, 404);
+    const recips = await resolveCampaignRecipients(c.get("ownerUid"), parseSegment(row.segment));
+    const sampleIds = recips.slice(0, 3).map((r) => r.contactId);
+    const sampleContacts = await prisma.contact.findMany({ where: { id: { in: sampleIds } } });
+    const samples = sampleContacts.map((ct) => ({
+      name: ct.name,
+      subject: renderTemplate(row.subject, { name: ct.name, company: ct.company }),
+      body: renderTemplate(row.body, { name: ct.name, company: ct.company }),
+    }));
+    return c.json({ audience: recips.length, samples });
+  });
+
+  // 承認: セグメントを受信者に確定する (配信停止・メール無し・重複を除く)。以後 sweep が送る。
+  app.post("/api/campaigns/:id/approve", async (c) => {
+    const row = await findCampaign(c);
+    if (!row) return c.json({ error: "not_found" }, 404);
+    if (row.status === "sending" || row.status === "sent") {
+      return c.json({ error: "already", detail: "この配信はすでに送信を始めています" }, 400);
+    }
+    const recips = await resolveCampaignRecipients(c.get("ownerUid"), parseSegment(row.segment));
+    await prisma.emailCampaignRecipient.deleteMany({ where: { campaignId: row.id } });
+    if (recips.length > 0) {
+      await prisma.emailCampaignRecipient.createMany({
+        data: recips.map((r) => ({ campaignId: row.id, contactId: r.contactId })),
+        skipDuplicates: true,
+      });
+    }
+    const updated = await prisma.emailCampaign.update({
+      where: { id: row.id },
+      data: { status: "approved", approvedAt: new Date(), total: recips.length, sent: 0, failed: 0, skipped: 0 },
+    });
+    return c.json({ campaign: serializeCampaign(updated), audience: recips.length });
+  });
+
+  // テスト送信: 差し込みの見本を、指定のアドレス (自分宛て) に 1 通だけ送る。
+  app.post("/api/campaigns/:id/send-test", async (c) => {
+    const row = await findCampaign(c);
+    if (!row) return c.json({ error: "not_found" }, 404);
+    const b = (await c.req.json<{ to?: string }>().catch(() => ({}))) as { to?: string };
+    const to = typeof b.to === "string" ? b.to.trim() : "";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return c.json({ error: "invalid_email", detail: "送信先アドレスを確かめてください" }, 400);
+    if (!mailer) return c.json({ error: "unavailable", detail: "メール送信の準備がまだです" }, 503);
+    const sample = { name: "（宛名の例）", company: "（会社名）" };
+    const identity = row.fromName?.trim() || process.env.OUTREACH_SENDER_IDENTITY?.trim() || "bonds";
+    const unsubUrl = `${webBaseUrl()}/unsubscribe?t=${signUnsub(c.get("ownerUid"), to, campaignSecret())}`;
+    try {
+      await mailer({
+        to,
+        subject: `[テスト] ${renderTemplate(row.subject, sample)}`,
+        body: `${renderTemplate(row.body, sample)}\n${buildCampaignFooter(identity, unsubUrl)}`,
+      });
+      return c.json({ sent: true });
+    } catch (e) {
+      return c.json({ error: "send_failed", detail: (e instanceof Error ? e.message : String(e)).slice(0, 200) }, 502);
+    }
+  });
+
+  app.post("/api/campaigns/:id/cancel", async (c) => {
+    const row = await findCampaign(c);
+    if (!row) return c.json({ error: "not_found" }, 404);
+    const updated = await prisma.emailCampaign.update({ where: { id: row.id }, data: { status: "canceled" } });
+    return c.json({ campaign: serializeCampaign(updated) });
+  });
+
+  app.delete("/api/campaigns/:id", async (c) => {
+    const row = await findCampaign(c);
+    if (!row) return c.json({ error: "not_found" }, 404);
+    await prisma.emailCampaign.delete({ where: { id: row.id } });
+    return c.json({ deleted: true });
+  });
+
+  // 毎時 sweep: 承認済みの配信を、日次上限の範囲で少しずつ送る。配信停止・メール無しは skip。
+  app.post("/api/admin/campaigns/process", async (c) => {
+    const batch = Math.min(Math.max(parseInt(c.req.query("batch") ?? "50", 10) || 50, 1), 500);
+    if (!mailer) return c.json({ sent: 0, note: "メール送信が未設定のため保留 (設定後に送ります)" });
+    const campaigns = await prisma.emailCampaign.findMany({
+      where: { status: { in: ["approved", "sending"] } },
+      orderBy: { approvedAt: "asc" },
+      take: 10,
+    });
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    let globalBudget = batch;
+    let totalSent = 0;
+    let totalFailed = 0;
+    let totalSkipped = 0;
+    for (const camp of campaigns) {
+      if (globalBudget <= 0) break;
+      const sentToday = await prisma.emailCampaignRecipient.count({
+        where: { campaignId: camp.id, status: "sent", sentAt: { gte: startOfDay } },
+      });
+      const room = Math.min(camp.dailyLimit - sentToday, globalBudget);
+      if (room <= 0) continue;
+      const queued = await prisma.emailCampaignRecipient.findMany({
+        where: { campaignId: camp.id, status: "queued" },
+        take: room,
+      });
+      if (queued.length === 0) {
+        // 残りが無い = 送り切った
+        await prisma.emailCampaign.update({ where: { id: camp.id }, data: { status: "sent" } });
+        continue;
+      }
+      if (camp.status !== "sending") {
+        await prisma.emailCampaign.update({ where: { id: camp.id }, data: { status: "sending" } });
+      }
+      const identity = camp.fromName?.trim() || process.env.OUTREACH_SENDER_IDENTITY?.trim() || "bonds";
+      const suppressions = await prisma.emailSuppression.findMany({ where: { ownerUid: camp.ownerUid }, select: { emailHash: true } });
+      const suppressed = new Set(suppressions.map((s) => s.emailHash));
+      for (const r of queued) {
+        if (globalBudget <= 0) break;
+        const contact = await prisma.contact.findFirst({ where: { id: r.contactId, ownerUid: camp.ownerUid } });
+        const email = contact?.email ? normalizeEmail(contact.email) : "";
+        if (!contact || !email || contact.state !== "active" || suppressed.has(emailHash(email, campaignSecret()))) {
+          await prisma.emailCampaignRecipient.update({ where: { id: r.id }, data: { status: "skipped" } });
+          await prisma.emailCampaign.update({ where: { id: camp.id }, data: { skipped: { increment: 1 } } });
+          totalSkipped++;
+          continue;
+        }
+        const unsubUrl = `${webBaseUrl()}/unsubscribe?t=${signUnsub(camp.ownerUid, email, campaignSecret())}`;
+        const vars = { name: contact.name, company: contact.company };
+        try {
+          await mailer({
+            to: contact.email as string,
+            subject: renderTemplate(camp.subject, vars),
+            body: `${renderTemplate(camp.body, vars)}\n${buildCampaignFooter(identity, unsubUrl)}`,
+          });
+          await prisma.emailCampaignRecipient.update({ where: { id: r.id }, data: { status: "sent", sentAt: new Date() } });
+          await prisma.emailCampaign.update({ where: { id: camp.id }, data: { sent: { increment: 1 } } });
+          await prisma.contactInteraction.create({
+            data: { contactId: contact.id, type: "message", occurredAt: new Date(), notes: "一斉配信のお便りを送りました" },
+          });
+          totalSent++;
+        } catch (e) {
+          await prisma.emailCampaignRecipient.update({
+            where: { id: r.id },
+            data: { status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 200) },
+          });
+          await prisma.emailCampaign.update({ where: { id: camp.id }, data: { failed: { increment: 1 } } });
+          totalFailed++;
+        }
+        globalBudget--;
+      }
+      // 全部さばけたら sent に
+      const remaining = await prisma.emailCampaignRecipient.count({ where: { campaignId: camp.id, status: "queued" } });
+      if (remaining === 0) await prisma.emailCampaign.update({ where: { id: camp.id }, data: { status: "sent" } });
+    }
+    return c.json({ sent: totalSent, failed: totalFailed, skipped: totalSkipped });
+  });
+
+  // 配信停止 (公開・未認証)。メールのリンクから叩かれる。HMAC 署名トークンで本人性を担保。
+  app.get("/api/public/unsubscribe/:token", async (c) => {
+    const decoded = verifyUnsub(c.req.param("token"), campaignSecret());
+    if (!decoded) return c.json({ error: "invalid_token", detail: "リンクが正しくありません" }, 400);
+    await prisma.emailSuppression.upsert({
+      where: { ownerUid_emailHash: { ownerUid: decoded.ownerUid, emailHash: emailHash(decoded.email, campaignSecret()) } },
+      update: {},
+      create: { ownerUid: decoded.ownerUid, emailHash: emailHash(decoded.email, campaignSecret()), reason: "unsubscribe" },
+    });
+    return c.json({ ok: true });
+  });
+
+  // 公開掲示板 (/market) への問い合わせ (受け箱)。訪問者からの反応を一覧し、承認で
 
   // 公開掲示板 (/market) への問い合わせ (受け箱)。訪問者からの反応を一覧し、承認で
   // 新しい連絡先として取り込む (収集の入口)。名乗り・連絡先・本文は復号して返す = オーナーのみ。

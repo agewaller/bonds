@@ -612,3 +612,54 @@ model PersonLink {
   @@index([ownerUid, contactId])
   @@map("person_links")
 }
+
+/// 一斉配信 (メールのお便り)。1 通の文面を、選んだ相手にまとめて送る。
+/// 文面は暗号化。送信は少しずつ (日次上限) + 配信停止 + 送信者表示を必ず付ける。
+model EmailCampaign {
+  id         String                   @id @default(uuid())
+  ownerUid   String                   @map("owner_uid")
+  subject    String // 暗号化
+  body       String // 暗号化 (テンプレ。{{お名前}}/{{会社}} を差し込む)
+  segment    Json // 宛先セグメント条件 (距離・最終接触・会社・全員 など)
+  fromName   String?                  @map("from_name")
+  status     String                   @default("draft") // draft / approved / sending / sent / canceled
+  dailyLimit Int                      @default(200) @map("daily_limit")
+  total      Int                      @default(0)
+  sent       Int                      @default(0)
+  failed     Int                      @default(0)
+  skipped    Int                      @default(0)
+  createdAt  DateTime                 @default(now()) @map("created_at")
+  approvedAt DateTime?                @map("approved_at")
+  updatedAt  DateTime                 @updatedAt @map("updated_at")
+  recipients EmailCampaignRecipient[]
+
+  @@index([ownerUid, status])
+  @@map("email_campaigns")
+}
+
+model EmailCampaignRecipient {
+  id         String        @id @default(uuid())
+  campaignId String        @map("campaign_id")
+  campaign   EmailCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId  String        @map("contact_id")
+  status     String        @default("queued") // queued / sent / failed / skipped
+  error      String?
+  sentAt     DateTime?     @map("sent_at")
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  @@unique([campaignId, contactId])
+  @@index([campaignId, status])
+  @@map("email_campaign_recipients")
+}
+
+/// 配信停止リスト。復号せず突き合わせられるよう鍵つきハッシュで持つ (ownerUid 単位)。
+model EmailSuppression {
+  id        String   @id @default(uuid())
+  ownerUid  String   @map("owner_uid")
+  emailHash String   @map("email_hash")
+  reason    String   @default("unsubscribe")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([ownerUid, emailHash])
+  @@map("email_suppressions")
+}
