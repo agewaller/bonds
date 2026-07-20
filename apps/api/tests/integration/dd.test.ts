@@ -74,10 +74,10 @@ beforeEach(async () => {
 
 describe("prompts seed", () => {
   it("全プロンプトが seed され、再実行しても増えない (冪等)", async () => {
-    expect(await prisma.prompt.count()).toBe(16);
+    expect(await prisma.prompt.count()).toBe(17);
     const again = await seedDdPrompts(prisma);
     expect(again).toEqual([]);
-    expect(await prisma.prompt.count()).toBe(16);
+    expect(await prisma.prompt.count()).toBe(17);
   });
 });
 

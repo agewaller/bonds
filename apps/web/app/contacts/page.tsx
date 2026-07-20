@@ -241,9 +241,22 @@ export default function ContactsPage() {
     available: boolean;
     connected: boolean;
     extended?: boolean;
+    mailRead?: boolean;
     email?: string | null;
     lastSyncNote?: string | null;
   } | null>(null);
+  // 録音メモ (メール添付テキスト) からのタスクと課題
+  type VoiceMemo = {
+    id: string;
+    subject: string | null;
+    receivedAt: string | null;
+    summary: string | null;
+    tasks: { text: string; kind: string; done: boolean }[];
+    excerpt: string | null;
+    status: string;
+  };
+  const [voiceMemos, setVoiceMemos] = useState<VoiceMemo[]>([]);
+  const [plaudBusy, setPlaudBusy] = useState(false);
   // 贈り物の行事 (いま贈るとよい方)
   const [giftOccasions, setGiftOccasions] = useState<
     { kind: string; contactId: string | null; contactName: string | null; label: string; daysUntil: number; note: string }[]
@@ -311,6 +324,8 @@ export default function ContactsPage() {
     if (fcRes.ok) setFocusItems((await fcRes.json()).items ?? []);
     const grRes = await apiFetch("relationship/growth");
     if (grRes.ok) setGrowthItems((await grRes.json()).items ?? []);
+    const vmRes = await apiFetch("relationship/voice-memos");
+    if (vmRes.ok) setVoiceMemos((await vmRes.json()).memos ?? []);
     const csRes = await apiFetch("relationship/care-suggestions");
     if (csRes.ok) setCareItems((await csRes.json()).items ?? []);
     const dqRes = await apiFetch("relationship/daily-question");
@@ -385,6 +400,55 @@ export default function ContactsPage() {
     } else {
       setError("いまは保存できませんでした");
     }
+  };
+  // 録音メモ (メール添付テキスト) の読み込みとタスクの操作
+  const syncPlaud = async () => {
+    setPlaudBusy(true);
+    setError("");
+    try {
+      const res = await apiFetch("relationship/sync-plaud", { method: "POST", body: "{}" });
+      const b = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setNotice(
+          b.imported > 0
+            ? `録音メモを ${b.imported} 件読み込み、タスクと課題を整理しました`
+            : "新しい録音メモはありませんでした",
+        );
+        const vmRes = await apiFetch("relationship/voice-memos");
+        if (vmRes.ok) setVoiceMemos((await vmRes.json()).memos ?? []);
+      } else {
+        setError(b.detail ?? "いまは読み込めませんでした");
+      }
+    } finally {
+      setPlaudBusy(false);
+    }
+  };
+  const toggleMemoTask = async (memoId: string, taskIndex: number, done: boolean) => {
+    setVoiceMemos((cur) =>
+      cur.map((m) => (m.id === memoId ? { ...m, tasks: m.tasks.map((t, i) => (i === taskIndex ? { ...t, done } : t)) } : m)),
+    );
+    await apiFetch(`relationship/voice-memos/${memoId}`, { method: "PUT", body: JSON.stringify({ taskIndex, done }) }).catch(() => null);
+  };
+  const dismissMemo = async (memoId: string) => {
+    setVoiceMemos((cur) => cur.filter((m) => m.id !== memoId));
+    await apiFetch(`relationship/voice-memos/${memoId}`, { method: "PUT", body: JSON.stringify({ status: "dismissed" }) }).catch(() => null);
+  };
+  const digestMemo = async (memoId: string) => {
+    const res = await apiFetch(`relationship/voice-memos/${memoId}/digest`, { method: "POST", body: "{}" });
+    if (res.ok) {
+      setNotice("タスクと課題を整理しました");
+      const vmRes = await apiFetch("relationship/voice-memos");
+      if (vmRes.ok) setVoiceMemos((await vmRes.json()).memos ?? []);
+    } else {
+      const b = await res.json().catch(() => ({}));
+      setError(b.detail ?? "いまは整理できませんでした");
+    }
+  };
+  const connectMailRead = async () => {
+    const res = await apiFetch("google/auth-url?scope=mailread");
+    const b = await res.json().catch(() => ({}));
+    if (res.ok && b.url) window.location.href = b.url;
+    else setError(b.detail ?? "いまはつなげませんでした");
   };
   const importOfferings = async () => {
     if (!offerImportText.trim()) return;
@@ -1356,6 +1420,92 @@ export default function ContactsPage() {
               </li>
             ))}
           </ul>
+        </Fold>
+      )}
+
+      {googleStatus?.available && (googleStatus.connected || voiceMemos.length > 0) && (
+        <Fold k="cl24" defaultOpen={false} title={<>録音メモからのタスクと課題{voiceMemos.length > 0 ? ` (${voiceMemos.length})` : ""}</>} style={{ margin: "16px 0", border: "1px solid #c7d2fe", background: "#eef2ff", borderRadius: 12, padding: "12px 16px" }}>
+          <p style={{ fontSize: 13, color: "#3730a3", margin: "4px 0 10px" }}>
+            録音サービス (Plaud) からメールで届く文字起こしの添付テキストを開いて読み、タスク (やること) と課題を整理してここに並べます。
+          </p>
+          {!googleStatus.mailRead ? (
+            <div>
+              <p style={{ fontSize: 13, color: "#475569", margin: "0 0 8px", lineHeight: 1.8 }}>
+                読み取りには、Google の「メールを読む」追加の許可が必要です (読むのは録音サービスからのメールだけ。ほかのメールの中身は使いません)。
+              </p>
+              <button
+                onClick={() => void connectMailRead()}
+                style={{ padding: "8px 16px", background: "#4f46e5", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14 }}
+              >
+                録音メモを読めるようにする (Google の許可)
+              </button>
+            </div>
+          ) : (
+            <div>
+              <button
+                onClick={() => void syncPlaud()}
+                disabled={plaudBusy}
+                style={{ padding: "6px 14px", background: "#4f46e5", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, marginBottom: 10 }}
+              >
+                {plaudBusy ? "読み込んでいます…" : "いま読み込む"}
+              </button>
+              {voiceMemos.length === 0 && (
+                <p style={{ fontSize: 13, color: "#64748b", margin: 0 }}>
+                  まだ録音メモがありません。届くと自動でここに整理されます (1 時間ごとに確認します)。
+                </p>
+              )}
+              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 12 }}>
+                {voiceMemos.map((m) => (
+                  <li key={m.id} style={{ border: "1px solid #ddd6fe", borderRadius: 10, padding: "10px 12px", background: "#fff" }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                      <span style={{ fontWeight: 600, fontSize: 14, flex: 1 }}>
+                        {m.subject ?? "録音メモ"}
+                        {m.receivedAt && (
+                          <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 400, marginLeft: 8 }}>
+                            {new Date(m.receivedAt).toLocaleDateString("ja-JP")}
+                          </span>
+                        )}
+                      </span>
+                      {dismissX(`${m.subject ?? "この録音メモ"} を片付ける`, () => void dismissMemo(m.id))}
+                    </div>
+                    {m.summary && <p style={{ margin: "6px 0", color: "#334155", fontSize: 13, lineHeight: 1.7 }}>{m.summary}</p>}
+                    {m.tasks.length > 0 ? (
+                      <ul style={{ listStyle: "none", padding: 0, margin: "6px 0 0", display: "grid", gap: 4 }}>
+                        {m.tasks.map((t2, i) => (
+                          <li key={i} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 14 }}>
+                            <input
+                              type="checkbox"
+                              checked={t2.done}
+                              onChange={(e) => void toggleMemoTask(m.id, i, e.target.checked)}
+                              aria-label={`${t2.text} を済みにする`}
+                            />
+                            <span style={{ textDecoration: t2.done ? "line-through" : "none", color: t2.done ? "#94a3b8" : "#0f172a" }}>
+                              {t2.kind === "issue" && (
+                                <span style={{ color: "#b45309", fontSize: 12, border: "1px solid #fcd34d", background: "#fffbeb", borderRadius: 6, padding: "1px 6px", marginRight: 6 }}>
+                                  課題
+                                </span>
+                              )}
+                              {t2.text}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div style={{ marginTop: 6 }}>
+                        {m.excerpt && <p style={{ margin: "0 0 6px", color: "#64748b", fontSize: 13 }}>{m.excerpt}…</p>}
+                        <button
+                          onClick={() => void digestMemo(m.id)}
+                          style={{ padding: "5px 12px", background: "#fff", color: "#4f46e5", border: "1px solid #c7d2fe", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+                        >
+                          タスクと課題を整理する
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </Fold>
       )}
 

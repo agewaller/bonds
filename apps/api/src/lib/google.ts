@@ -33,6 +33,14 @@ export const GOOGLE_SCOPES_EXTENDED = [
   "https://www.googleapis.com/auth/drive.metadata.readonly",
 ];
 
+// 録音メモ (Plaud) のメール添付テキストを読むための追加の許可。gmail.readonly は
+// 本文・添付まで読める強い権限 (制限付き区分) なので、この機能を使いたい人だけの
+// 明示オプトインにする。読むのは録音サービスからのメールに限る (実装側で送信元を絞る)。
+export const GOOGLE_SCOPES_MAIL_READ = [
+  ...GOOGLE_SCOPES_EXTENDED.filter((s) => !s.includes("gmail.metadata")),
+  "https://www.googleapis.com/auth/gmail.readonly",
+];
+
 export const GOOGLE_SCOPES_GUEST = [
   "openid",
   "email",
@@ -43,7 +51,13 @@ export const GOOGLE_SCOPES_GUEST = [
 
 /** 保存済みの許可スコープに Gmail/Drive (追加の許可) が含まれるか。 */
 export function hasExtendedScopes(scopes: string | null | undefined): boolean {
-  return !!scopes && scopes.includes("gmail.metadata");
+  // gmail.readonly は metadata を包含する (メールの相手の取込にも使える)
+  return !!scopes && (scopes.includes("gmail.metadata") || scopes.includes("gmail.readonly"));
+}
+
+/** 保存済みの許可スコープで、メールの本文・添付 (録音メモ) まで読めるか。 */
+export function hasMailReadScope(scopes: string | null | undefined): boolean {
+  return !!scopes && scopes.includes("gmail.readonly");
 }
 
 // People API から取り込む連絡先の上限 (1 同期あたり)。

@@ -652,6 +652,26 @@ model EmailCampaignRecipient {
   @@map("email_campaign_recipients")
 }
 
+/// 録音メモ (Plaud のメール添付テキスト)。1 通 1 行・冪等 (gmailMessageId 一意)。
+/// 本文抜粋・要旨・タスクと課題 (JSON 文字列) は中身そのもの = 暗号化。
+model VoiceMemo {
+  id             String    @id @default(uuid())
+  ownerUid       String    @map("owner_uid")
+  gmailMessageId String    @map("gmail_message_id")
+  subject        String?
+  receivedAt     DateTime? @map("received_at")
+  content        String // 暗号化 (添付テキストの抜粋)
+  summary        String? // 暗号化 (要旨の散文)
+  tasks          String? // 暗号化 (JSON: [{text, kind: task|issue, done}])
+  status         String    @default("new") // new / done / dismissed
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@unique([ownerUid, gmailMessageId])
+  @@index([ownerUid, status])
+  @@map("voice_memos")
+}
+
 /// 配信停止リスト。復号せず突き合わせられるよう鍵つきハッシュで持つ (ownerUid 単位)。
 model EmailSuppression {
   id        String   @id @default(uuid())

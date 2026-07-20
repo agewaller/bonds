@@ -53,3 +53,6 @@ jobs:
           # 一斉配信 (お便り): 承認済みの配信を日次上限の範囲で少しずつ送る (配信停止・メール無しは skip)
           curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/campaigns/process?batch=100" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}" || true
+          # 録音メモ (Plaud) のメール添付テキスト → タスクと課題の整理 (mailread 許可のある接続だけ・新着少数ずつ)
+          curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/plaud/sync" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}" || true

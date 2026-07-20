@@ -282,7 +282,7 @@ describe("E: プロンプト版管理 (管理 API)", () => {
   it("一覧が返り、編集は新しい版として積まれる (既存版は不変)", async () => {
     const app = makeApp();
     const list = await (await app.request("/api/admin/prompts", { headers: H })).json();
-    expect(list.prompts.length).toBe(16);
+    expect(list.prompts.length).toBe(17);
     const post = await app.request("/api/admin/prompts/person_eval_7d", {
       method: "POST", headers: H, body: JSON.stringify({ body: "改訂版プロンプト" }),
     });

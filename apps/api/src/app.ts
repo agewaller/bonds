@@ -40,6 +40,14 @@ import {
   type Segment,
   type CampaignContact,
 } from "./lib/campaigns.js";
+import {
+  findTextAttachments,
+  decodeGmailData,
+  headerValue,
+  validatePlaudDigest,
+  type GmailPart,
+  type PlaudTask,
+} from "./lib/plaud.js";
 import { recentMeetings, pickDailyQuestion, type DailyPerson } from "./lib/capture.js";
 import { parseGoalField, serializeGoal, goalPlan, validateGoalInput, PURPOSE_LABEL } from "./lib/goals.js";
 import { pickFocusContacts, type FocusInput } from "./lib/priority.js";
@@ -150,8 +158,10 @@ import {
   verifyState,
   GOOGLE_SCOPES_BASE,
   GOOGLE_SCOPES_EXTENDED,
+  GOOGLE_SCOPES_MAIL_READ,
   GOOGLE_SCOPES_GUEST,
   hasExtendedScopes,
+  hasMailReadScope,
   GMAIL_MAX_MESSAGES,
   DRIVE_MAX_FILES,
   CONTACTS_MAX,
@@ -6468,6 +6478,8 @@ export function createApp(deps: AppDeps) {
       lastSyncNote: conn?.lastSyncNote ?? null,
       // 追加の許可 (メール・ドライブ) まで済んでいるか。web はこれで導線を出し分ける
       extended: hasExtendedScopes(conn?.scopes),
+      // 録音メモ (メール添付) まで読める許可が済んでいるか
+      mailRead: hasMailReadScope(conn?.scopes),
     });
   });
 
@@ -6481,8 +6493,227 @@ export function createApp(deps: AppDeps) {
     if (!state) {
       return c.json({ error: "unavailable", detail: "サーバの設定が未完了です" }, 503);
     }
-    const scopes = c.req.query("scope") === "extended" ? GOOGLE_SCOPES_EXTENDED : GOOGLE_SCOPES_BASE;
+    const scopeParam = c.req.query("scope");
+    const scopes =
+      scopeParam === "mailread"
+        ? GOOGLE_SCOPES_MAIL_READ // 録音メモ (メール添付) の読み取りまで (制限付き区分。希望者だけ)
+        : scopeParam === "extended"
+          ? GOOGLE_SCOPES_EXTENDED
+          : GOOGLE_SCOPES_BASE;
     return c.json({ url: google.authUrl(state, googleRedirectUri(), scopes) });
+  });
+
+  // ---------------- 録音メモ (Plaud) のメール添付テキスト → タスクと課題 ----------------
+  // 録音サービスから届くメールの「添付テキストファイル」を開いて読み (本文ではなく添付が正)、
+  // タスク (やること) と課題を整理して連絡帳に表示する。gmail.readonly の明示オプトインが前提。
+  // 読むのは from:plaud のメールに限る。1 回の同期で新規は少数ずつ (AI キャップにも従う)。
+  const PLAUD_QUERY = "from:plaud has:attachment newer_than:90d";
+  const PLAUD_MAX_NEW_PER_RUN = 5;
+  const runPlaudSync = async (
+    ownerUid: string,
+  ): Promise<
+    | { ok: true; found: number; imported: number; digested: number }
+    | { ok: false; status: 400 | 503; error: string; detail: string }
+  > => {
+    if (!google) return { ok: false, status: 503, error: "unavailable", detail: "Google 連携は準備中です" };
+    const conn = await prisma.googleConnection.findUnique({ where: { ownerUid } });
+    if (!conn) return { ok: false, status: 400, error: "not_connected", detail: "先に設定から Google とつないでください" };
+    if (!hasMailReadScope(conn.scopes)) {
+      return {
+        ok: false,
+        status: 400,
+        error: "scope_missing",
+        detail: "録音メモの読み取りには、メールを読む追加の許可が必要です。ボタンからもう一度 Google の同意を進めてください",
+      };
+    }
+    const accessToken = await google.refreshAccessToken(conn.refreshToken);
+    const list = (await google
+      .apiGet(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=25&q=${encodeURIComponent(PLAUD_QUERY)}`,
+        accessToken,
+      )
+      .catch(() => ({}))) as { messages?: Array<{ id: string }> };
+    const ids = (list.messages ?? []).map((m) => m.id);
+    if (ids.length === 0) return { ok: true, found: 0, imported: 0, digested: 0 };
+    const existing = await prisma.voiceMemo.findMany({
+      where: { ownerUid, gmailMessageId: { in: ids } },
+      select: { gmailMessageId: true },
+    });
+    const known = new Set(existing.map((x) => x.gmailMessageId));
+    const fresh = ids.filter((id) => !known.has(id)).slice(0, PLAUD_MAX_NEW_PER_RUN);
+    let imported = 0;
+    let digested = 0;
+    let aiStopped = false; // 月次キャップ 422 に当たったら以後の整理はやめる (取込は続ける)
+    for (const id of fresh) {
+      const msg = (await google
+        .apiGet(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, accessToken)
+        .catch(() => null)) as {
+        payload?: GmailPart & { headers?: Array<{ name?: string; value?: string }> };
+        internalDate?: string;
+      } | null;
+      if (!msg?.payload) continue;
+      // 本文ではなく、添付のテキストファイルを開いて読む (オーナー指示)
+      const atts = findTextAttachments(msg.payload);
+      if (atts.length === 0) continue;
+      const texts: string[] = [];
+      for (const att of atts.slice(0, 3)) {
+        let data = att.inlineData;
+        if (!data && att.attachmentId) {
+          const body = (await google
+            .apiGet(
+              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}/attachments/${att.attachmentId}`,
+              accessToken,
+            )
+            .catch(() => null)) as { data?: string } | null;
+          data = body?.data ?? null;
+        }
+        const text = decodeGmailData(data);
+        if (text) texts.push(text);
+      }
+      const content = texts.join("\n\n").slice(0, 20000);
+      if (!content.trim()) continue;
+      const subject = headerValue(msg.payload.headers, "Subject").slice(0, 200) || null;
+      const receivedAt = msg.internalDate ? new Date(Number(msg.internalDate)) : null;
+
+      // タスクと課題の整理 (AI)。使えない/キャップ到達でも、メモ自体は残す (あとで整理し直せる)
+      let summary: string | null = null;
+      let tasks: PlaudTask[] | null = null;
+      if (!aiStopped && generate) {
+        const r = await runRelationshipAi(
+          "plaud_tasks",
+          '出力は JSON オブジェクト 1 個だけ: {"summary": "...", "tasks": [{"text": "...", "kind": "task|issue"}]}',
+          content.slice(0, 12000),
+          "plaud_tasks",
+          "ja",
+          { actor: { ownerUid, isOwner: true } },
+        );
+        if (r.ok) {
+          const digest = validatePlaudDigest(extractJson(r.text));
+          summary = digest.summary || null;
+          tasks = digest.tasks;
+          digested++;
+        } else if (r.status === 422) {
+          aiStopped = true;
+        }
+      }
+      await prisma.voiceMemo.create({
+        data: {
+          ownerUid,
+          gmailMessageId: id,
+          subject,
+          receivedAt,
+          content,
+          summary,
+          tasks: tasks ? JSON.stringify(tasks) : null,
+        },
+      });
+      imported++;
+    }
+    return { ok: true, found: ids.length, imported, digested };
+  };
+
+  app.post("/api/relationship/sync-plaud", async (c) => {
+    try {
+      const r = await runPlaudSync(c.get("ownerUid"));
+      if (!r.ok) return c.json({ error: r.error, detail: r.detail }, r.status);
+      return c.json(r);
+    } catch {
+      return c.json({ error: "sync_failed", detail: "いまは読み込めませんでした。時間をおいてお試しください" }, 502);
+    }
+  });
+
+  const parseMemoTasks = (raw: string | null): PlaudTask[] => {
+    if (!raw) return [];
+    try {
+      const arr = JSON.parse(raw) as unknown;
+      return Array.isArray(arr) ? (arr as PlaudTask[]) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  app.get("/api/relationship/voice-memos", async (c) => {
+    const rows = await prisma.voiceMemo.findMany({
+      where: { ownerUid: c.get("ownerUid"), status: { not: "dismissed" } },
+      orderBy: [{ receivedAt: "desc" }, { createdAt: "desc" }],
+      take: 30,
+    });
+    return c.json({
+      memos: rows.map((m) => ({
+        id: m.id,
+        subject: m.subject,
+        receivedAt: m.receivedAt,
+        summary: m.summary,
+        tasks: parseMemoTasks(m.tasks),
+        excerpt: m.summary ? null : m.content.slice(0, 300), // 整理前はさわりだけ見せる
+        status: m.status,
+      })),
+    });
+  });
+
+  // タスクの済み印・メモの片付け (done / dismissed / new)。1 件単位で操作できる = データ主権。
+  app.put("/api/relationship/voice-memos/:id", async (c) => {
+    const memo = await prisma.voiceMemo.findFirst({ where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") } });
+    if (!memo) return c.json({ error: "not_found" }, 404);
+    const b = (await c.req.json<{ status?: string; taskIndex?: number; done?: boolean }>().catch(() => ({}))) as {
+      status?: string;
+      taskIndex?: number;
+      done?: boolean;
+    };
+    const data: { status?: string; tasks?: string } = {};
+    if (b.status === "done" || b.status === "dismissed" || b.status === "new") data.status = b.status;
+    if (typeof b.taskIndex === "number" && typeof b.done === "boolean") {
+      const tasks = parseMemoTasks(memo.tasks);
+      if (b.taskIndex >= 0 && b.taskIndex < tasks.length) {
+        tasks[b.taskIndex]!.done = b.done;
+        data.tasks = JSON.stringify(tasks);
+      }
+    }
+    if (Object.keys(data).length === 0) return c.json({ error: "invalid_input" }, 400);
+    const updated = await prisma.voiceMemo.update({ where: { id: memo.id }, data });
+    return c.json({ memo: { id: updated.id, status: updated.status, tasks: parseMemoTasks(updated.tasks) } });
+  });
+
+  // 整理し直す (取込時に AI が使えなかったメモの救済)
+  app.post("/api/relationship/voice-memos/:id/digest", async (c) => {
+    const memo = await prisma.voiceMemo.findFirst({ where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") } });
+    if (!memo) return c.json({ error: "not_found" }, 404);
+    const r = await runRelationshipAi(
+      "plaud_tasks",
+      '出力は JSON オブジェクト 1 個だけ: {"summary": "...", "tasks": [{"text": "...", "kind": "task|issue"}]}',
+      memo.content.slice(0, 12000),
+      "plaud_tasks",
+      "ja",
+      { actor: actorOf(c) },
+    );
+    if (!r.ok) return c.json(r.body as never, r.status);
+    const digest = validatePlaudDigest(extractJson(r.text));
+    const updated = await prisma.voiceMemo.update({
+      where: { id: memo.id },
+      data: { summary: digest.summary || null, tasks: JSON.stringify(digest.tasks) },
+    });
+    return c.json({ memo: { id: updated.id, summary: updated.summary, tasks: parseMemoTasks(updated.tasks) } });
+  });
+
+  // 毎時 sweep: メール読み取りの許可がある接続を順に同期 (新着だけ・少数ずつ)
+  app.post("/api/admin/plaud/sync", async (c) => {
+    if (!google) return c.json({ synced: 0, note: "Google 連携は準備中" });
+    const conns = await prisma.googleConnection.findMany({ select: { ownerUid: true, scopes: true }, take: 50 });
+    let synced = 0;
+    let imported = 0;
+    for (const conn of conns) {
+      if (!hasMailReadScope(conn.scopes)) continue;
+      try {
+        const r = await runPlaudSync(conn.ownerUid);
+        if (r.ok) {
+          synced++;
+          imported += r.imported;
+        }
+      } catch {
+        // 1 接続の失敗で全体を止めない
+      }
+    }
+    return c.json({ synced, imported });
   });
 
   // 日程調整の公開ページ用: 相手 (アカウント不要) が Google で空きを重ねるための同意 URL。
