@@ -187,6 +187,20 @@ test("連絡帳: Google 取り込み枠が出る (未設定環境では準備中
   expect(errors, errors.join("\n")).toHaveLength(0);
 });
 
+test("連絡帳: パーティで出会った方を貼り付けで迎えられる (出会いの記録つき)", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/contacts");
+  await expandAll(page);
+  await expect(page.getByRole("heading", { name: "パーティ・イベントで出会った方をまとめて迎える" })).toBeVisible();
+  const stamp = Date.now() % 100000;
+  await page.getByPlaceholder(/どこで出会いましたか/).fill(`監査交流会${stamp}`);
+  await page.getByPlaceholder(/1 行にお一人ずつ/).fill(`監査新顔 田代${stamp} https://x.com/tashiro${stamp}`);
+  await page.getByRole("button", { name: "まとめて迎える" }).click();
+  await expect(page.getByText(/1名を新しくお迎えしました/)).toBeVisible();
+  await expect(page.getByText(`監査新顔 田代${stamp}`).first()).toBeVisible();
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
 test("連絡帳: CSV 取り込みが画面から動く", async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto("/contacts");

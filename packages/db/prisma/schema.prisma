@@ -133,6 +133,8 @@ model ImportJob {
   filename          String?
   payload           String // 暗号化: テキスト本文 or base64(バイト列)
   locale            String   @default("ja")
+  eventName         String?  @map("event_name") // どこで出会ったか (パーティ・イベント取込)
+  eventDate         String?  @map("event_date") // いつ出会ったか (YYYY-MM-DD)
   status            String   @default("queued") // queued / processing / done / error
   attempts          Int      @default(0) // 処理を試みた回数 (停止した processing の回収と打ち切りに使う)
   imported          Int      @default(0)

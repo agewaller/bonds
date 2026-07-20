@@ -55,6 +55,7 @@ import { planCareActions, shouldSuggestAgain, type CarePlanInput } from "./lib/c
 import { contactMatches } from "./lib/search.js";
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
+import { parseNewcomerLines, normalizeEventDate, decorateWithEvent, type NewcomerEvent } from "./lib/newcomers.js";
 import { identityKeys, normalizeName } from "./lib/identity.js";
 import { parseImportFile, MAX_IMPORT_FILE_BYTES } from "./lib/import-file.js";
 import { computeGiftOccasions, summarizeGiftLedger } from "./lib/gifts.js";
@@ -1568,6 +1569,7 @@ export function createApp(deps: AppDeps) {
     filename: string | undefined,
     locale: string,
     actor: AiActor,
+    event?: NewcomerEvent, // イベント文脈 (どこで・いつ出会ったか) を添えて迎える
   ): Promise<ImportOutcome> => {
     const parsed =
       format === "csv" || format === "vcard"
@@ -1602,6 +1604,7 @@ export function createApp(deps: AppDeps) {
         actor,
       );
     }
+    if (event) toApply = decorateWithEvent(toApply, event);
     const result = await applyImport(ownerUid, toApply);
     return {
       ok: true,
@@ -1620,6 +1623,7 @@ export function createApp(deps: AppDeps) {
     filename: string | undefined,
     locale: string,
     actor: AiActor,
+    event?: NewcomerEvent, // 名刺写真などにもイベント文脈を添えられる
   ): Promise<ImportOutcome> => {
     const parsed = parseImportFile(bytes, filename);
     const aiContacts: ParsedContact[] = [];
@@ -1639,10 +1643,11 @@ export function createApp(deps: AppDeps) {
         aiInteractions.push(...r.interactions);
       } else aiUnavailable = true;
     }
-    const merged = {
+    let merged = {
       contacts: [...parsed.contacts, ...aiContacts],
       interactions: [...parsed.interactions, ...aiInteractions],
     };
+    if (event && merged.contacts.length > 0) merged = decorateWithEvent(merged, event);
     // トーク履歴 (単体/ZIP 内) は中身から相手の近況も整理して添える
     const talkNotes = await applyTalkDigests(parsed.talks, merged.contacts, locale, actor);
     if (merged.contacts.length === 0) {
@@ -1699,6 +1704,52 @@ export function createApp(deps: AppDeps) {
       skipped: out.skipped,
       sameName: out.sameName,
       talkNotes: out.talkNotes ?? 0,
+    });
+  });
+
+  // パーティ・イベントで一気に増えた知り合い (ニューカマー) をまとめて迎える。
+  // 1 行 1 人の貼り付け (名前と SNS の URL・メール・電話・会社・肩書きが混ざっていてよい) を
+  // 軽量パーサ (AI 不要) で読む。既知の構造化形式 (CSV/vCard/SNS エクスポート等) なら
+  // いつもの取込に、どちらでも読めなければ AI 抽出に落ちる。どの道でもイベント名と日付を
+  // 「出会いの記録」(メモ + meeting の接触) として各人に添える。
+  app.post("/api/contacts/newcomers", async (c) => {
+    const b = await c.req
+      .json<{ content?: string; eventName?: string; eventDate?: string; locale?: string }>()
+      .catch(() => ({}) as { content?: string; eventName?: string; eventDate?: string; locale?: string });
+    if (typeof b.content !== "string" || !b.content.trim()) {
+      return c.json({ error: "content_required", detail: "取り込む内容がありません" }, 400);
+    }
+    const eventName = (typeof b.eventName === "string" ? b.eventName.trim() : "").slice(0, 100) || "イベント";
+    const event: NewcomerEvent = { name: eventName, date: normalizeEventDate(b.eventDate) };
+    const ownerUid = c.get("ownerUid");
+    const structured = parseImportText(b.content);
+    if (structured.contacts.length === 0) {
+      const newcomers = parseNewcomerLines(b.content);
+      if (newcomers.length > 0) {
+        const result = await applyImport(
+          ownerUid,
+          decorateWithEvent({ contacts: newcomers, interactions: [] }, event),
+        );
+        return c.json({
+          imported: result.imported,
+          enriched: result.enriched,
+          interactionsAdded: result.interactionsAdded,
+          skipped: result.skipped,
+          sameName: result.sameName,
+          event,
+        });
+      }
+    }
+    const out = await importPastedText(ownerUid, b.content, "auto", undefined, normalizeLocale(b.locale), actorOf(c), event);
+    if (!out.ok) return c.json({ error: out.error, detail: out.detail }, out.status);
+    return c.json({
+      imported: out.imported,
+      enriched: out.enriched,
+      interactionsAdded: out.interactionsAdded,
+      skipped: out.skipped,
+      sameName: out.sameName,
+      talkNotes: out.talkNotes ?? 0,
+      event,
     });
   });
 
@@ -1790,15 +1841,19 @@ export function createApp(deps: AppDeps) {
     try {
       // 1 ジョブに時間の上限を設ける。これを超えたら「読み取り中」で固まる前に error にする
       // (Cloud Run にリクエストごと打ち切られると processing のまま孤児になるため、その前に自分で止める)。
+      const event: NewcomerEvent | undefined = job.eventName
+        ? { name: job.eventName, date: normalizeEventDate(job.eventDate) }
+        : undefined;
       const work =
         job.kind === "text"
-          ? importPastedText(job.ownerUid, job.payload, "auto", job.filename ?? undefined, job.locale, actor)
+          ? importPastedText(job.ownerUid, job.payload, "auto", job.filename ?? undefined, job.locale, actor, event)
           : importFileBytes(
               job.ownerUid,
               new Uint8Array(Buffer.from(job.payload, "base64")),
               job.filename ?? undefined,
               job.locale,
               actor,
+              event,
             );
       const out = await Promise.race([
         work,
@@ -1852,10 +1907,13 @@ export function createApp(deps: AppDeps) {
     let payload: string;
     let filename: string | null;
     let locale: string;
+    // イベント文脈 (パーティ等での出会い)。ファイル経路は query、JSON 経路は body で受ける。
+    let eventName: string | null = (c.req.query("eventName") ?? "").trim().slice(0, 100) || null;
+    let eventDate: string | null = c.req.query("eventDate") ?? null;
     if (ct.includes("application/json")) {
       const b = await c.req
-        .json<{ content?: string; locale?: string; filename?: string }>()
-        .catch(() => ({}) as { content?: string; locale?: string; filename?: string });
+        .json<{ content?: string; locale?: string; filename?: string; eventName?: string; eventDate?: string }>()
+        .catch(() => ({}) as { content?: string; locale?: string; filename?: string; eventName?: string; eventDate?: string });
       if (typeof b.content !== "string" || !b.content.trim()) {
         return c.json({ error: "content_required", detail: "取り込む内容がありません" }, 400);
       }
@@ -1863,6 +1921,8 @@ export function createApp(deps: AppDeps) {
       payload = b.content;
       filename = typeof b.filename === "string" ? b.filename : null;
       locale = normalizeLocale(b.locale);
+      if (typeof b.eventName === "string" && b.eventName.trim()) eventName = b.eventName.trim().slice(0, 100);
+      if (typeof b.eventDate === "string") eventDate = b.eventDate;
     } else {
       if (declaredTooLarge(c)) {
         return c.json({ error: "file_too_large", detail: "ファイルが大きすぎます (30MBまで)" }, 413);
@@ -1881,7 +1941,16 @@ export function createApp(deps: AppDeps) {
       return c.json({ error: "file_too_large", detail: "内容が大きすぎます" }, 413);
     }
     const job = await prisma.importJob.create({
-      data: { ownerUid, kind, filename, payload, locale, status: "queued" },
+      data: {
+        ownerUid,
+        kind,
+        filename,
+        payload,
+        locale,
+        status: "queued",
+        eventName,
+        eventDate: eventName ? normalizeEventDate(eventDate) : null,
+      },
     });
     return c.json({ job: { id: job.id, kind, filename, status: job.status } }, 201);
   });

@@ -105,6 +105,14 @@ export default function ContactsPage() {
   const [distance, setDistance] = useState("3");
   const [importText, setImportText] = useState("");
   const [showImport, setShowImport] = useState(false);
+  // パーティ・イベントのニューカマー取込 (どこで・いつ出会ったかを添えて迎える)
+  const [eventName, setEventName] = useState("");
+  const [eventDate, setEventDate] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
+  const [newcomerText, setNewcomerText] = useState("");
+  const [newcomerResult, setNewcomerResult] = useState("");
   const [connectHint, setConnectHint] = useState(""); // SNS連携ボタンを押したときの手順案内
   const [dragOver, setDragOver] = useState(false);
   // 距離感の見直し提案 (やりとりから 1〜5 を推し量る)
@@ -834,6 +842,47 @@ export default function ContactsPage() {
     }
   };
 
+  // パーティ・イベントで出会った方々の一括受け入れ。1 行 1 人 (名前と SNS の URL・メール
+  // が混ざっていてよい) の貼り付けを、イベント名と日付 (出会いの記録) を添えて迎える。
+  const newcomerQuery = () =>
+    eventName.trim()
+      ? `&eventName=${encodeURIComponent(eventName.trim())}&eventDate=${encodeURIComponent(eventDate)}`
+      : "";
+  const runNewcomers = async () => {
+    if (!newcomerText.trim() || busy) return;
+    setBusy(true);
+    setError("");
+    setNewcomerResult("");
+    try {
+      const res = await apiFetch("contacts/newcomers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: newcomerText,
+          eventName: eventName.trim() || undefined,
+          eventDate,
+        }),
+      });
+      const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) {
+        setError(`迎えられませんでした (エラー ${res.status})${body.detail ? `: ${body.detail}` : ""}`);
+        return;
+      }
+      const parts = [
+        `${(body.imported as number) ?? 0}名を新しくお迎えしました`,
+        (body.enriched as number) > 0 ? `${body.enriched}名の情報を書き足しました` : "",
+        (body.skipped as number) > 0 ? `${body.skipped}名はすでにいらっしゃいました` : "",
+      ].filter(Boolean);
+      setNewcomerResult(`${parts.join("。")}。出会いの記録も残しました`);
+      setNewcomerText("");
+      await load();
+    } catch (e) {
+      setError(`取り込み中にエラーが起きました: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // ファイル/ZIP/フォルダの取り込み — SNS の「データをダウンロード」も、Word・Excel・PDF・
   // メールなどの書類も、フォルダごとでもそのまま放り込める。
   const MAX_UPLOAD_FILES = 200;
@@ -881,7 +930,7 @@ export default function ContactsPage() {
     return out;
   };
 
-  const uploadFiles = async (files: FileList | File[]) => {
+  const uploadFiles = async (files: FileList | File[], extraQuery = "") => {
     if (busy) return;
     const list = Array.from(files)
       .filter((f) => f.size > 0 && !MEDIA_SKIP.test(f.name))
@@ -903,7 +952,7 @@ export default function ContactsPage() {
         const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
         setImportMsg(`受け付けています (${i + 1}/${list.length}件目): ${path}`);
         try {
-          const res = await apiFetch(`contacts/import-jobs?filename=${encodeURIComponent(path)}`, {
+          const res = await apiFetch(`contacts/import-jobs?filename=${encodeURIComponent(path)}${extraQuery}`, {
             method: "POST",
             headers: { "Content-Type": "application/octet-stream" },
             body: await file.arrayBuffer(),
@@ -2541,6 +2590,64 @@ export default function ContactsPage() {
           </p>
         )}
       </section>
+
+      <Fold k="cl27" defaultOpen={false} title={<>パーティ・イベントで出会った方をまとめて迎える</>} style={{ margin: "24px 0", border: "1px solid #fbcfe8", background: "#fdf2f8", borderRadius: 12, padding: "14px 16px" }}>
+        <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 10px", lineHeight: 1.7 }}>
+          交換した名刺や教えてもらった SNS を、アプリからダウンロードし直さなくてもその場で迎えられます。
+          1 行にお一人ずつ、お名前と SNS の URL やメールを混ぜて貼るだけ。どこで出会ったかは、
+          みなさんのメモと出会いの記録として自動で残ります。
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <input
+            value={eventName}
+            onChange={(e) => setEventName(e.target.value)}
+            placeholder="どこで出会いましたか (例: ◯◯交流会)"
+            style={{ flex: "2 1 220px", padding: "10px 12px", border: "1px solid #cbd5e1", borderRadius: 8 }}
+          />
+          <input
+            type="date"
+            value={eventDate}
+            onChange={(e) => setEventDate(e.target.value)}
+            aria-label="出会った日"
+            style={{ flex: "1 1 140px", padding: "10px 12px", border: "1px solid #cbd5e1", borderRadius: 8 }}
+          />
+        </div>
+        <textarea
+          value={newcomerText}
+          onChange={(e) => setNewcomerText(e.target.value)}
+          rows={5}
+          placeholder={"1 行にお一人ずつ。たとえば:\n田中太郎 https://x.com/tanaka_taro tanaka@example.com\n山田花子 株式会社青空 090-1234-5678"}
+          style={{ width: "100%", padding: "10px 12px", border: "1px solid #cbd5e1", borderRadius: 8, boxSizing: "border-box" }}
+        />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+          <button
+            onClick={runNewcomers}
+            disabled={busy || !newcomerText.trim()}
+            style={{ padding: "10px 16px", background: "#db2777", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
+          >
+            まとめて迎える
+          </button>
+          <label style={{ padding: "10px 16px", border: "1px solid #db2777", color: "#db2777", background: "#fff", borderRadius: 8, cursor: "pointer" }}>
+            いただいた名刺を撮って迎える
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              multiple
+              style={{ display: "none" }}
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) void uploadFiles(e.target.files, newcomerQuery());
+                e.target.value = "";
+              }}
+            />
+          </label>
+        </div>
+        {newcomerResult && <p style={{ color: "#166534", marginTop: 8 }}>{newcomerResult}</p>}
+        <p style={{ color: "#94a3b8", fontSize: 12, margin: "8px 0 0", lineHeight: 1.7 }}>
+          名刺の写真は読み取りに少し時間がかかります。上の「取り込みの状況」で進み具合が見られ、
+          読み終えた方にも同じ出会いの記録が付きます。
+        </p>
+      </Fold>
 
       <Fold k="cl18" defaultOpen={false} title={<>SNS・サービスと連携して、関係する人をまとめる</>} style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
         <p style={{ color: "#64748b", margin: "4px 0 10px", fontSize: 14 }}>
