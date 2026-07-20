@@ -101,7 +101,16 @@ import {
   MAX_PENDING_BOOKINGS_PER_OFFER,
   type StripeClient,
 } from "./lib/time-offers.js";
-import { parseSnsField, serializeSnsEntries, snsSearchQueries, snsPlatformLabel, type SnsEntry } from "./lib/sns.js";
+import {
+  parseSnsField,
+  serializeSnsEntries,
+  snsSearchQueries,
+  snsPlatformLabel,
+  extractSnsCandidates,
+  parseSnsCandidates,
+  type SnsEntry,
+} from "./lib/sns.js";
+import { searchByAxis, looksLikePublicFigure, AXES, AXIS_LABEL, type Axis, type AxisInput } from "./lib/axes.js";
 import {
   parseOfferingInput,
   parseOfferingsBulk,
@@ -137,6 +146,7 @@ import {
   clampProfileHint,
   identifyQueries,
   buildIdentifyDigest,
+  type IdentifyCandidate,
 } from "./lib/identify.js";
 import {
   BONDS_PITCH,
@@ -607,23 +617,13 @@ export function createApp(deps: AppDeps) {
 
   // 同姓同名の特定 — 評価の前に「どの人物のことか」の候補を簡単なプロフィール付きで返す。
   // AI キー無し環境は 503 (クライアントは名前のみで登録に縮退)。壊れた出力は候補ゼロで返す。
-  app.post("/api/dd/identify", async (c) => {
-    const body = await c.req
-      .json<{ name?: string }>()
-      .catch(() => ({}) as { name?: string });
-    const name = clampName(body.name);
-    if (!name) {
-      return c.json({ error: "name_required", detail: "人物名を入力してください" }, 400);
-    }
-    // AI キー無し環境は候補確認をスキップし「候補なし」で返す (名前のみで登録に縮退)。
-    // 実行系 (run) の 503 縮退とは違い、確認は補助機能のため画面を 5xx にしない。
-    if (!generate) {
-      return c.json({ name, candidates: [], unavailable: true });
-    }
+  // 名前から公人候補を確認する共通ヘルパ (identify エンドポイントと dd-scan の共用)。
+  const identifyPersonByName = async (
+    name: string,
+  ): Promise<{ ok: true; candidates: IdentifyCandidate[] } | { ok: false; status: 422 | 502 | 503 }> => {
+    if (!generate) return { ok: false, status: 503 };
     const cost = await getMonthlyCostJpy(prisma);
-    if (cost >= ownerMonthlyCapJpy()) {
-      return c.json({ error: "quota_exceeded", detail: "今月の評価枠は終了しました" }, 422);
-    }
+    if (cost >= ownerMonthlyCapJpy()) return { ok: false, status: 422 };
     const model = await resolveModel();
     // Tavily があれば名前で検索し、同姓同名の別人と最新の肩書きを手がかりに与える
     // (LLM の知識だけだと別人を取りこぼす・古くなるため)。キー無しは従来どおり知識のみ。
@@ -658,7 +658,7 @@ export function createApp(deps: AppDeps) {
           costJpy: calcCostJpy(canonical, gen.inputTokens, gen.outputTokens),
         },
       });
-      return c.json({ name, candidates: parseIdentifyCandidates(gen.text) });
+      return { ok: true, candidates: parseIdentifyCandidates(gen.text) };
     } catch (err) {
       console.error(
         JSON.stringify({
@@ -667,11 +667,29 @@ export function createApp(deps: AppDeps) {
           detail: err instanceof Error ? err.message : String(err),
         }),
       );
-      return c.json(
-        { error: "ai_failed", detail: "候補の確認に失敗しました。名前のみで登録できます" },
-        502,
-      );
+      return { ok: false, status: 502 };
     }
+  };
+
+  app.post("/api/dd/identify", async (c) => {
+    const body = await c.req
+      .json<{ name?: string }>()
+      .catch(() => ({}) as { name?: string });
+    const name = clampName(body.name);
+    if (!name) {
+      return c.json({ error: "name_required", detail: "人物名を入力してください" }, 400);
+    }
+    // AI キー無し環境は候補確認をスキップし「候補なし」で返す (名前のみで登録に縮退)。
+    // 実行系 (run) の 503 縮退とは違い、確認は補助機能のため画面を 5xx にしない。
+    if (!generate) {
+      return c.json({ name, candidates: [], unavailable: true });
+    }
+    const r = await identifyPersonByName(name);
+    if (!r.ok) {
+      if (r.status === 422) return c.json({ error: "quota_exceeded", detail: "今月の評価枠は終了しました" }, 422);
+      return c.json({ error: "ai_failed", detail: "候補の確認に失敗しました。名前のみで登録できます" }, 502);
+    }
+    return c.json({ name, candidates: r.candidates });
   });
 
   app.post("/api/dd/subjects", async (c) => {
@@ -3739,6 +3757,218 @@ export function createApp(deps: AppDeps) {
     return c.json({ ok: true });
   });
 
+  // ---------------- 軸検索 (影響力・専門性・価値観・誠実さ/評判) ----------------
+  // 蓄積した記録と、公人リンク先の評価スコアだけで採点する (AI 不要・毎回無料・web 検索なし)。
+  app.get("/api/relationship/axis-search", async (c) => {
+    const axis = c.req.query("axis") as Axis;
+    if (!AXES.includes(axis)) return c.json({ error: "invalid_axis", detail: "軸を指定してください" }, 400);
+    const ownerUid = c.get("ownerUid");
+    const contacts = await prisma.contact.findMany({ where: { ownerUid, state: "active" } });
+    if (contacts.length === 0) return c.json({ axis, label: AXIS_LABEL[axis], items: [] });
+    // 公人リンク → 最新 completed 評価の moduleScore (10 段階)
+    const links = await prisma.personLink.findMany({ where: { ownerUid }, select: { contactId: true, subjectId: true } });
+    const subjectIds = [...new Set(links.map((l) => l.subjectId))];
+    const runs = subjectIds.length
+      ? await prisma.personDueDiligence.findMany({
+          where: { subjectId: { in: subjectIds }, status: "completed" },
+          orderBy: { createdAt: "desc" },
+          select: { subjectId: true, ddType: true, moduleScore: true },
+        })
+      : [];
+    const scoreBySubject = new Map<string, { dd7: number | null; svc: number | null }>();
+    for (const r of runs) {
+      const cur = scoreBySubject.get(r.subjectId) ?? { dd7: null, svc: null };
+      if (r.ddType === "consciousness_7d" && cur.dd7 == null) cur.dd7 = r.moduleScore;
+      if (r.ddType === "social_value_creation" && cur.svc == null) cur.svc = r.moduleScore;
+      scoreBySubject.set(r.subjectId, cur);
+    }
+    const ddByContact = new Map<string, { dd7: number | null; svc: number | null }>();
+    for (const l of links) {
+      const s = scoreBySubject.get(l.subjectId);
+      if (s && !ddByContact.has(l.contactId)) ddByContact.set(l.contactId, s);
+    }
+    const people: AxisInput[] = contacts.map((ct) => {
+      let facetsSkills: string[] = [];
+      let facetsValues: string | null = null;
+      if (ct.profileFacets) {
+        try {
+          const f = JSON.parse(ct.profileFacets) as { skills?: unknown; values?: unknown };
+          if (Array.isArray(f.skills)) facetsSkills = f.skills.filter((x): x is string => typeof x === "string");
+          if (typeof f.values === "string") facetsValues = f.values;
+        } catch {
+          // 壊れた facets は無視
+        }
+      }
+      const dd = ddByContact.get(ct.id);
+      return {
+        id: ct.id,
+        name: ct.name,
+        company: ct.company,
+        title: ct.title,
+        distance: ct.distance,
+        sourceHits: ct.sourceHits,
+        valuesProfile: ct.valuesProfile,
+        notes: ct.notes,
+        digest: ct.profileDigest,
+        facetsSkills,
+        facetsValues,
+        hasGoal: !!ct.goal,
+        ddScore7d: dd?.dd7 ?? null,
+        ddScoreSvc: dd?.svc ?? null,
+      };
+    });
+    return c.json({ axis, label: AXIS_LABEL[axis], items: searchByAxis(axis, people, 30) });
+  });
+
+  // ---------------- 公人評価の自動下ごしらえ (dd-scan) ----------------
+  // 公人らしい肩書きの連絡先を候補確認 (identify) にかけ、一意に特定できた方は評価対象に
+  // 自動登録して順に評価する。特定不能・候補多数は保留にし、ユーザーが候補から選ぶ
+  // (最終判断はユーザー・人物DD の倫理は不変 = 公人のみ・私人は評価しない)。
+  const createSubjectWithHint = async (name: string, profileHint: string | null) => {
+    const base = slugify(name);
+    let slug = base;
+    for (let i = 2; await prisma.ddSubject.findUnique({ where: { slug } }); i++) slug = `${base}-${i}`;
+    return prisma.ddSubject.create({
+      data: { slug, name, subjectType: "other", profileHint: clampProfileHint(profileHint ?? undefined) },
+    });
+  };
+
+  app.post("/api/admin/contacts/dd-scan", async (c) => {
+    const batch = Math.min(Math.max(parseInt(c.req.query("batch") ?? "2", 10) || 2, 0), 5);
+    // フェーズ1: 未確認の公人らしい方を identify にかける
+    const [existingSug, linked] = await Promise.all([
+      prisma.ddSuggestion.findMany({ select: { ownerUid: true, contactId: true } }),
+      prisma.personLink.findMany({ select: { contactId: true } }),
+    ]);
+    const sugKey = new Set(existingSug.map((s) => `${s.ownerUid}:${s.contactId}`));
+    const linkedIds = new Set(linked.map((l) => l.contactId));
+    const pool = await prisma.contact.findMany({
+      where: { state: "active" },
+      orderBy: { createdAt: "desc" },
+      take: 500,
+    });
+    const targets = pool
+      .filter(
+        (ct) =>
+          ct.focusPreference !== "excluded" &&
+          !linkedIds.has(ct.id) &&
+          !sugKey.has(`${ct.ownerUid}:${ct.id}`) &&
+          looksLikePublicFigure(ct),
+      )
+      .slice(0, batch);
+    let identified = 0;
+    let held = 0;
+    for (const ct of targets) {
+      const r = await identifyPersonByName(ct.name);
+      if (!r.ok) {
+        if (r.status === 422 || r.status === 503) break; // キャップ/未設定: 今回はここまで
+        continue; // 一時失敗は次回また
+      }
+      if (r.candidates.length === 1) {
+        // 一意に特定 → 評価対象に自動登録 + 連絡先とリンク (評価はフェーズ2 が順に実施)
+        const subject = await createSubjectWithHint(r.candidates[0]!.name, r.candidates[0]!.description);
+        await prisma.personLink.create({ data: { ownerUid: ct.ownerUid, contactId: ct.id, subjectId: subject.id } });
+        await prisma.ddSuggestion.create({
+          data: { ownerUid: ct.ownerUid, contactId: ct.id, status: "resolved", subjectId: subject.id, candidates: JSON.stringify(r.candidates) },
+        });
+        identified++;
+      } else {
+        // 特定できない (0件) / 候補が多い (2件以上) → 保留してユーザーが選ぶ
+        await prisma.ddSuggestion.create({
+          data: { ownerUid: ct.ownerUid, contactId: ct.id, status: "pending", candidates: JSON.stringify(r.candidates) },
+        });
+        held++;
+      }
+    }
+    // フェーズ2: 登録済みでまだ評価が無い対象を 1 件だけ評価する (コストを抑えて順に)
+    let evaluated = 0;
+    const ng = await preflight();
+    if (!ng) {
+      const resolved = await prisma.ddSuggestion.findMany({
+        where: { status: "resolved", subjectId: { not: null } },
+        orderBy: { updatedAt: "asc" },
+        take: 20,
+      });
+      for (const sug of resolved) {
+        const runCount = await prisma.personDueDiligence.count({ where: { subjectId: sug.subjectId! } });
+        if (runCount > 0) continue; // 実施済み (失敗含む。無限再試行しない)
+        const model = await resolveModel();
+        await Promise.allSettled(
+          DD_TYPES.map((ddType) =>
+            runPersonDd({ prisma, generate: generate!, search: ddSearch }, { subjectId: sug.subjectId!, ddType, model, locale: "ja" }),
+          ),
+        );
+        evaluated++;
+        break; // 1 sweep に 1 人 (評価は重い)
+      }
+    }
+    return c.json({ scanned: targets.length, identified, held, evaluated });
+  });
+
+  // 公人評価の確認待ち (保留) の一覧。連絡先名と候補を返し、ユーザーが選ぶ。
+  app.get("/api/relationship/dd-suggestions", async (c) => {
+    const rows = await prisma.ddSuggestion.findMany({
+      where: { ownerUid: c.get("ownerUid"), status: "pending" },
+      orderBy: { createdAt: "desc" },
+      take: 30,
+    });
+    if (rows.length === 0) return c.json({ items: [] });
+    const contacts = await prisma.contact.findMany({
+      where: { id: { in: rows.map((r) => r.contactId) } },
+      select: { id: true, name: true, company: true, title: true },
+    });
+    const byId = new Map(contacts.map((ct) => [ct.id, ct]));
+    return c.json({
+      items: rows
+        .filter((r) => byId.has(r.contactId))
+        .map((r) => {
+          let candidates: IdentifyCandidate[] = [];
+          try {
+            candidates = r.candidates ? (JSON.parse(r.candidates) as IdentifyCandidate[]) : [];
+          } catch {
+            candidates = [];
+          }
+          const ct = byId.get(r.contactId)!;
+          return { id: r.id, contactId: ct.id, name: ct.name, company: ct.company, title: ct.title, candidates };
+        }),
+    });
+  });
+
+  // 保留の解決: ユーザーが候補を選ぶ (candidateIndex)。省略時は連絡先の名前のまま登録。
+  // 評価そのものは次の毎時 sweep (dd-scan フェーズ2) が順に実施する。
+  app.post("/api/relationship/dd-suggestions/:id/resolve", async (c) => {
+    const sug = await prisma.ddSuggestion.findFirst({ where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") } });
+    if (!sug || sug.status !== "pending") return c.json({ error: "not_found" }, 404);
+    const contact = await prisma.contact.findFirst({ where: { id: sug.contactId, ownerUid: c.get("ownerUid") } });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const b = (await c.req.json<{ candidateIndex?: number }>().catch(() => ({}))) as { candidateIndex?: number };
+    let candidates: IdentifyCandidate[] = [];
+    try {
+      candidates = sug.candidates ? (JSON.parse(sug.candidates) as IdentifyCandidate[]) : [];
+    } catch {
+      candidates = [];
+    }
+    const chosen =
+      typeof b.candidateIndex === "number" && b.candidateIndex >= 0 && b.candidateIndex < candidates.length
+        ? candidates[b.candidateIndex]!
+        : { name: contact.name, description: "" };
+    const subject = await createSubjectWithHint(chosen.name, chosen.description || null);
+    await prisma.personLink.upsert({
+      where: { ownerUid_contactId_subjectId: { ownerUid: contact.ownerUid, contactId: contact.id, subjectId: subject.id } },
+      update: {},
+      create: { ownerUid: contact.ownerUid, contactId: contact.id, subjectId: subject.id },
+    });
+    await prisma.ddSuggestion.update({ where: { id: sug.id }, data: { status: "resolved", subjectId: subject.id } });
+    return c.json({ resolved: true, subjectSlug: subject.slug });
+  });
+
+  app.post("/api/relationship/dd-suggestions/:id/dismiss", async (c) => {
+    const sug = await prisma.ddSuggestion.findFirst({ where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") } });
+    if (!sug) return c.json({ error: "not_found" }, 404);
+    await prisma.ddSuggestion.update({ where: { id: sug.id }, data: { status: "dismissed" } });
+    return c.json({ dismissed: true });
+  });
+
   // 公開掲示板 (/market) への問い合わせ (受け箱)。訪問者からの反応を一覧し、承認で
 
   // 公開掲示板 (/market) への問い合わせ (受け箱)。訪問者からの反応を一覧し、承認で
@@ -5303,7 +5533,10 @@ export function createApp(deps: AppDeps) {
     includePublic: boolean,
     locale: string,
     actor: AiActor,
-  ): Promise<{ ok: true; digest: string; searched: boolean } | { ok: false; status: 422 | 503 | 502; body: unknown }> => {
+  ): Promise<
+    | { ok: true; digest: string; searched: boolean; snsCandidates: SnsEntry[] }
+    | { ok: false; status: 422 | 503 | 502; body: unknown }
+  > => {
     const snsEntries = parseSnsField(contact.sns);
     const snsNote =
       snsEntries.length > 0
@@ -5313,6 +5546,7 @@ export function createApp(deps: AppDeps) {
         : "";
     let searchNote = "";
     let searched = false;
+    let snsCandidates: SnsEntry[] = [];
     // 公開情報の検索はユーザーが明示的に頼んだときだけ。SNS ハンドルを軸に本人を特定し、
     // 近況 (最近の公開の発信) を優先して集める (相手の尊厳: 私生活の過剰詮索はしない)。
     if (includePublic && ddSearch && (snsEntries.length > 0 || contact.company)) {
@@ -5322,14 +5556,15 @@ export function createApp(deps: AppDeps) {
           queries.map((q) => ddSearch(q).catch(() => [])),
         );
         const seen = new Set<string>();
-        const items = batches
-          .flat()
-          .filter((r) => r.url && !seen.has(r.url) && seen.add(r.url))
-          .slice(0, 6);
+        const allItems = batches.flat().filter((r) => r.url && !seen.has(r.url) && seen.add(r.url));
+        const items = allItems.slice(0, 6);
         if (items.length > 0) {
           searchNote = items.map((r) => `出典 ${r.url} : ${r.title} ${r.snippet.slice(0, 300)}`).join("\n");
           searched = true;
         }
+        // 本人と思われる SNS プロフィール URL を「候補 (未確認)」として決定的に抽出する。
+        // 登録は仮置き = 承認/削除は必ずユーザー (最終判断はユーザー)。
+        snsCandidates = extractSnsCandidates(allItems, snsEntries);
       } catch {
         // 検索の失敗で全体を止めない (記録のみで続行)
       }
@@ -5359,7 +5594,31 @@ export function createApp(deps: AppDeps) {
     if (!digest) {
       return { ok: false, status: 502, body: { error: "invalid_output", detail: "まとめづくりに失敗しました" } };
     }
-    return { ok: true, digest, searched };
+    return { ok: true, digest, searched, snsCandidates };
+  };
+
+  // 見つかった SNS 候補 (未確認) を連絡先に仮置きする。ユーザーが以前に削除 (見送り) した
+  // 候補は再提示しない。既存の登録・既存の候補と重ねない。
+  const saveSnsCandidates = async (ownerUid: string, contactId: string, found: SnsEntry[]): Promise<number> => {
+    if (found.length === 0) return 0;
+    const [contact, dismissals] = await Promise.all([
+      prisma.contact.findFirst({ where: { id: contactId, ownerUid }, select: { sns: true, snsCandidates: true } }),
+      prisma.suggestionDismissal.findMany({ where: { ownerUid, kind: "sns_candidate" }, select: { key: true } }),
+    ]);
+    if (!contact) return 0;
+    const dismissed = new Set(dismissals.map((d) => d.key));
+    const existing = parseSnsField(contact.sns);
+    const current = parseSnsCandidates(contact.snsCandidates);
+    const known = new Set([...existing, ...current].map((e) => `${e.platform}:${e.handle.toLowerCase()}`));
+    const fresh = found.filter(
+      (e) => !known.has(`${e.platform}:${e.handle.toLowerCase()}`) && !dismissed.has(`${contactId}:${e.platform}:${e.handle.toLowerCase()}`),
+    );
+    if (fresh.length === 0) return 0;
+    await prisma.contact.update({
+      where: { id: contactId },
+      data: { snsCandidates: JSON.stringify([...current, ...fresh].slice(0, 8)) },
+    });
+    return fresh.length;
   };
 
   // 相手ノートの更新 (個別)。includePublic を付けたときだけ公開情報も調べる。
@@ -5381,7 +5640,8 @@ export function createApp(deps: AppDeps) {
       where: { id: ctx.contact.id },
       data: { profileDigest: r.digest, profileDigestAt: new Date() },
     });
-    return c.json({ digest: updated.profileDigest, digestAt: updated.profileDigestAt, searched: r.searched });
+    const snsFound = await saveSnsCandidates(c.get("ownerUid"), ctx.contact.id, r.snsCandidates);
+    return c.json({ digest: updated.profileDigest, digestAt: updated.profileDigestAt, searched: r.searched, snsFound });
   });
 
   // SNS アカウントの参照。暗号化された自由記述 sns を「platform ごとの公開アカウント」に
@@ -5389,10 +5649,59 @@ export function createApp(deps: AppDeps) {
   app.get("/api/contacts/:id/sns", async (c) => {
     const contact = await prisma.contact.findFirst({
       where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
-      select: { id: true, sns: true },
+      select: { id: true, sns: true, snsCandidates: true },
     });
     if (!contact) return c.json({ error: "not_found" }, 404);
-    return c.json({ accounts: parseSnsField(contact.sns) });
+    return c.json({ accounts: parseSnsField(contact.sns), candidates: parseSnsCandidates(contact.snsCandidates) });
+  });
+
+  // SNS 候補 (未確認) の承認/削除。承認で正式な登録 (sns) に移り、削除は二度と提示しない。
+  // 最終判断はユーザー = 自動では本人と断定しない。
+  app.post("/api/contacts/:id/sns-candidates", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+      select: { id: true, sns: true, snsCandidates: true },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const b = (await c.req.json<{ action?: string; platform?: string; handle?: string }>().catch(() => ({}))) as {
+      action?: string;
+      platform?: string;
+      handle?: string;
+    };
+    const candidates = parseSnsCandidates(contact.snsCandidates);
+    const idx = candidates.findIndex(
+      (e) => e.platform === b.platform && e.handle.toLowerCase() === (b.handle ?? "").toLowerCase(),
+    );
+    if (idx < 0 || (b.action !== "approve" && b.action !== "reject")) {
+      return c.json({ error: "invalid_input", detail: "候補が見つかりませんでした" }, 400);
+    }
+    const [entry] = candidates.splice(idx, 1);
+    const data: { snsCandidates: string | null; sns?: string } = {
+      snsCandidates: candidates.length ? JSON.stringify(candidates) : null,
+    };
+    if (b.action === "approve") {
+      // 本人として承認 → 正式な登録に追記
+      data.sns = serializeSnsEntries([...parseSnsField(contact.sns), entry!]);
+    } else {
+      // 削除 → 見送りを記録し、以後の自動巡回でも再提示しない
+      await prisma.suggestionDismissal.upsert({
+        where: {
+          ownerUid_kind_key: {
+            ownerUid: c.get("ownerUid"),
+            kind: "sns_candidate",
+            key: `${contact.id}:${entry!.platform}:${entry!.handle.toLowerCase()}`,
+          },
+        },
+        update: {},
+        create: {
+          ownerUid: c.get("ownerUid"),
+          kind: "sns_candidate",
+          key: `${contact.id}:${entry!.platform}:${entry!.handle.toLowerCase()}`,
+        },
+      });
+    }
+    const updated = await prisma.contact.update({ where: { id: contact.id }, data });
+    return c.json({ accounts: parseSnsField(updated.sns), candidates: parseSnsCandidates(updated.snsCandidates) });
   });
 
   // SNS アカウントの保存。ユーザーが知っている公開アカウント (URL / "platform: handle") を
@@ -5514,6 +5823,7 @@ export function createApp(deps: AppDeps) {
         where: { id: t.id },
         data: { profileDigest: r.digest, profileDigestAt: new Date() },
       });
+      await saveSnsCandidates(t.ownerUid, t.id, r.snsCandidates); // 本人らしき SNS は候補として仮置き
       refreshed++;
     }
     return c.json({ refreshed, searched, candidates: candidates.length, failed: failures.length });

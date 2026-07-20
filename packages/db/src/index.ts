@@ -30,6 +30,8 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
     "profileFacets",
     // 関係の目標 (用途・目標距離感・ねらい)。恋活婚活など要配慮の意図を含みうる = 暗号化
     "goal",
+    // 本人と思われる SNS の候補 (未確認)。本人性の推定そのもの = 暗号化
+    "snsCandidates",
   ],
   contactInteraction: ["notes"],
   contactGift: ["notes"],
@@ -41,6 +43,8 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
   emailCampaign: ["subject", "body"],
   // 録音メモ: 添付テキストの抜粋・要旨・タスク (JSON 文字列) は中身そのもの = 暗号化
   voiceMemo: ["content", "summary", "tasks"],
+  // 公人評価の下ごしらえ: 候補 (人物名+プロフィール) は連絡先の同定情報 = 暗号化
+  ddSuggestion: ["candidates"],
   // 提携先アウトリーチ (ADR-0022 移植): 連絡先メールと本文は要配慮のため暗号化
   partnerTarget: ["contactEmail"],
   partnerMessage: ["body"],

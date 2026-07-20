@@ -167,6 +167,7 @@ export default function ContactDetailPage() {
   const [exStatus, setExStatus] = useState("done");
   const [exDueAt, setExDueAt] = useState("");
   const [snsAccounts, setSnsAccounts] = useState<{ platform: string; handle: string; url: string }[]>([]);
+  const [snsCandidates, setSnsCandidates] = useState<{ platform: string; handle: string; url: string }[]>([]);
   const [snsInput, setSnsInput] = useState("");
   const [channel, setChannel] = useState("email");
   const [sendAt, setSendAt] = useState("");
@@ -226,7 +227,11 @@ export default function ContactDetailPage() {
       setExLedger(exBody.ledger ?? null);
     }
     const snsRes = await apiFetch(`contacts/${id}/sns`);
-    if (snsRes.ok) setSnsAccounts((await snsRes.json()).accounts ?? []);
+    if (snsRes.ok) {
+      const snsBody = await snsRes.json();
+      setSnsAccounts(snsBody.accounts ?? []);
+      setSnsCandidates(snsBody.candidates ?? []);
+    }
     setForm({
       name: body.contact.name ?? "",
       furigana: body.contact.furigana ?? "",
@@ -743,6 +748,65 @@ export default function ContactDetailPage() {
           </ul>
         ) : (
           <p style={{ fontSize: 14, color: "#64748b", margin: "8px 0" }}>まだ登録がありません</p>
+        )}
+        {snsCandidates.length > 0 && (
+          <div style={{ margin: "10px 0", border: "1px dashed #fbbf24", background: "#fffbeb", borderRadius: 10, padding: "10px 12px" }}>
+            <p style={{ margin: "0 0 6px", fontSize: 13, color: "#92400e", fontWeight: 600 }}>
+              この方のものと思われるアカウント（未確認）
+            </p>
+            <p style={{ margin: "0 0 8px", fontSize: 12, color: "#a16207" }}>
+              公開情報の検索で見つかった候補です。ご本人のものか確かめてから「本人です」を押してください。違うものは ✕ で消せます（もう出てきません）。
+            </p>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 6 }}>
+              {snsCandidates.map((cand, i) => (
+                <li key={i} style={{ fontSize: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ color: "#92400e", minWidth: 110 }}>{SNS_LABEL[cand.platform] ?? cand.platform}</span>
+                  {safeExternalUrl(cand.url) ? (
+                    <a href={safeExternalUrl(cand.url)!} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", wordBreak: "break-all", flex: 1 }}>
+                      {cand.handle || cand.url}
+                    </a>
+                  ) : (
+                    <span style={{ flex: 1 }}>{cand.handle || cand.url}</span>
+                  )}
+                  <button
+                    style={{ padding: "4px 12px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 12 }}
+                    disabled={!!busy}
+                    onClick={async () => {
+                      const body = await call(
+                        `contacts/${contact.id}/sns-candidates`,
+                        { method: "POST", body: JSON.stringify({ action: "approve", platform: cand.platform, handle: cand.handle }) },
+                        "本人のアカウントとして登録しました",
+                      );
+                      if (body) {
+                        setSnsAccounts(body.accounts ?? []);
+                        setSnsCandidates(body.candidates ?? []);
+                      }
+                    }}
+                  >
+                    本人です
+                  </button>
+                  <button
+                    style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 14 }}
+                    disabled={!!busy}
+                    aria-label={`${cand.handle} の候補を消す`}
+                    onClick={async () => {
+                      const body = await call(
+                        `contacts/${contact.id}/sns-candidates`,
+                        { method: "POST", body: JSON.stringify({ action: "reject", platform: cand.platform, handle: cand.handle }) },
+                        "候補を消しました",
+                      );
+                      if (body) {
+                        setSnsAccounts(body.accounts ?? []);
+                        setSnsCandidates(body.candidates ?? []);
+                      }
+                    }}
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input

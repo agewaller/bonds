@@ -175,6 +175,66 @@ export function serializeSnsEntries(entries: SnsEntry[]): string {
     .join("\n");
 }
 
+// ------- 本人と思われる SNS の候補 (未確認) の抽出 -------
+// 公開検索の結果 URL から「プロフィールページの形」をした URL だけを決定的に拾う
+// (AI 不要)。あくまで候補 = 未確認。承認/削除は必ずユーザーが行う (最終判断はユーザー)。
+
+// 投稿・動画など「プロフィールでない」パス。候補にしない。
+const NON_PROFILE_PATH = /\/(status|statuses|posts|p|reel|reels|watch|video|videos|hashtag|search|share|events|groups|photo|photos|notes?\/n)\//i;
+
+/**
+ * 検索結果からプロフィール URL の候補を抽出する。既存の登録 (existing)・既知の候補と
+ * 重ならないものだけ。プラットフォームごとに最初の 1 件 (乱立させない)。
+ */
+export function extractSnsCandidates(
+  results: Array<{ url: string; title?: string }>,
+  existing: SnsEntry[],
+  max = 4,
+): SnsEntry[] {
+  const known = new Set(existing.map((e) => `${e.platform}:${e.handle.toLowerCase()}`));
+  const seenPlatform = new Set(existing.map((e) => e.platform));
+  const out: SnsEntry[] = [];
+  for (const r of results) {
+    if (out.length >= max) break;
+    let u: URL;
+    try {
+      u = new URL(r.url);
+    } catch {
+      continue;
+    }
+    const platform = platformFromHost(u.hostname.toLowerCase());
+    if (platform === "blog") continue; // 一般サイトは本人性の推定が難しいので候補にしない
+    if (NON_PROFILE_PATH.test(u.pathname)) continue;
+    // プロフィールの形: /handle または /in/handle (LinkedIn)。深い階層は投稿の可能性が高い
+    const segs = u.pathname.split("/").filter(Boolean);
+    const profileShaped =
+      segs.length === 1 || (platform === "linkedin" && segs.length === 2 && segs[0] === "in") || (platform === "youtube" && segs.length === 1);
+    if (!profileShaped) continue;
+    const handle = (platform === "linkedin" ? segs[1]! : segs[0]!).replace(/^@/, "");
+    if (!handle || handle.length > 60) continue;
+    const key = `${platform}:${handle.toLowerCase()}`;
+    if (known.has(key) || seenPlatform.has(platform)) continue; // 既に登録/候補のある場は増やさない
+    known.add(key);
+    seenPlatform.add(platform);
+    out.push({ platform, handle, url: r.url });
+  }
+  return out;
+}
+
+/** 候補 (JSON 文字列) の読み書き。壊れていれば空。 */
+export function parseSnsCandidates(raw: string | null | undefined): SnsEntry[] {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .filter((x): x is SnsEntry => !!x && typeof x === "object" && typeof (x as SnsEntry).platform === "string")
+      .slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
 // 相手の近況を公開情報から把握するための検索クエリ。氏名を軸に、記録済みの
 // SNS ハンドルを添えて別人 (同姓同名) を拾いにくくする。直近を優先。
 export function snsSearchQueries(name: string, entries: SnsEntry[], company?: string | null): string[] {

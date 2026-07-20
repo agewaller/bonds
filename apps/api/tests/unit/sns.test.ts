@@ -1,6 +1,43 @@
 // SNS 情報の構造化・URL 組み立て・検索クエリのユニットテスト。
 import { describe, it, expect } from "vitest";
-import { parseSnsField, serializeSnsEntries, snsSearchQueries, snsPlatformLabel } from "../../src/lib/sns.js";
+import {
+  parseSnsField,
+  serializeSnsEntries,
+  snsSearchQueries,
+  snsPlatformLabel,
+  extractSnsCandidates,
+  parseSnsCandidates,
+} from "../../src/lib/sns.js";
+
+describe("extractSnsCandidates (本人らしき SNS の候補・未確認)", () => {
+  it("検索結果からプロフィールの形をした URL だけを候補にする (投稿・一般サイトは除く)", () => {
+    const results = [
+      { url: "https://x.com/tanaka_taro" }, // 候補
+      { url: "https://x.com/tanaka_taro/status/123456" }, // 投稿 → 除外
+      { url: "https://www.linkedin.com/in/taro-tanaka" }, // 候補
+      { url: "https://example.com/profile/tanaka" }, // 一般サイト → 除外
+      { url: "https://www.instagram.com/p/abc123/" }, // 投稿 → 除外
+      { url: "https://x.com/another_tanaka" }, // 同じ platform の 2 件目 → 乱立させない
+    ];
+    const cands = extractSnsCandidates(results, []);
+    expect(cands.map((c) => `${c.platform}:${c.handle}`)).toEqual(["x:tanaka_taro", "linkedin:taro-tanaka"]);
+  });
+
+  it("既に登録済みの platform には候補を足さない", () => {
+    const existing = parseSnsField("https://x.com/registered");
+    const cands = extractSnsCandidates([{ url: "https://x.com/someone_else" }], existing);
+    expect(cands).toHaveLength(0);
+  });
+});
+
+describe("parseSnsCandidates", () => {
+  it("JSON 文字列を読み、壊れていれば空", () => {
+    const arr = [{ platform: "x", handle: "a", url: "https://x.com/a" }];
+    expect(parseSnsCandidates(JSON.stringify(arr))).toHaveLength(1);
+    expect(parseSnsCandidates("broken")).toEqual([]);
+    expect(parseSnsCandidates(null)).toEqual([]);
+  });
+});
 
 describe("parseSnsField", () => {
   it("URL から platform と handle と正規 URL を作る", () => {

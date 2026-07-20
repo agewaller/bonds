@@ -257,6 +257,23 @@ export default function ContactsPage() {
   };
   const [voiceMemos, setVoiceMemos] = useState<VoiceMemo[]>([]);
   const [plaudBusy, setPlaudBusy] = useState(false);
+  // 軸検索 (影響力・専門性・価値観・誠実さ/評判)
+  const [axis, setAxis] = useState<string | null>(null);
+  const [axisItems, setAxisItems] = useState<
+    { contactId: string; name: string; company: string | null; title: string | null; reasons: string[] }[]
+  >([]);
+  const [axisBusy, setAxisBusy] = useState(false);
+  // 公人評価の確認待ち (保留。ユーザーが候補から選ぶ)
+  const [ddSuggestions, setDdSuggestions] = useState<
+    {
+      id: string;
+      contactId: string;
+      name: string;
+      company: string | null;
+      title: string | null;
+      candidates: { name: string; description: string }[];
+    }[]
+  >([]);
   // 贈り物の行事 (いま贈るとよい方)
   const [giftOccasions, setGiftOccasions] = useState<
     { kind: string; contactId: string | null; contactName: string | null; label: string; daysUntil: number; note: string }[]
@@ -326,6 +343,8 @@ export default function ContactsPage() {
     if (grRes.ok) setGrowthItems((await grRes.json()).items ?? []);
     const vmRes = await apiFetch("relationship/voice-memos");
     if (vmRes.ok) setVoiceMemos((await vmRes.json()).memos ?? []);
+    const dsRes = await apiFetch("relationship/dd-suggestions");
+    if (dsRes.ok) setDdSuggestions((await dsRes.json()).items ?? []);
     const csRes = await apiFetch("relationship/care-suggestions");
     if (csRes.ok) setCareItems((await csRes.json()).items ?? []);
     const dqRes = await apiFetch("relationship/daily-question");
@@ -400,6 +419,37 @@ export default function ContactsPage() {
     } else {
       setError("いまは保存できませんでした");
     }
+  };
+  // 軸検索: 押した軸で連絡先を探す (もう一度押すと閉じる)
+  const runAxisSearch = async (a: string) => {
+    if (axis === a) {
+      setAxis(null);
+      setAxisItems([]);
+      return;
+    }
+    setAxis(a);
+    setAxisBusy(true);
+    try {
+      const res = await apiFetch(`relationship/axis-search?axis=${a}`);
+      if (res.ok) setAxisItems((await res.json()).items ?? []);
+      else setAxisItems([]);
+    } finally {
+      setAxisBusy(false);
+    }
+  };
+  // 公人評価の保留の解決 (候補を選ぶ / 名前のまま / 評価しない)
+  const resolveDdSuggestion = async (id: string, candidateIndex?: number) => {
+    setDdSuggestions((cur) => cur.filter((s) => s.id !== id));
+    const res = await apiFetch(`relationship/dd-suggestions/${id}/resolve`, {
+      method: "POST",
+      body: JSON.stringify(typeof candidateIndex === "number" ? { candidateIndex } : {}),
+    });
+    if (res.ok) setNotice("評価対象に登録しました。評価は順に自動で実施されます");
+    else setError("いまは登録できませんでした");
+  };
+  const dismissDdSuggestion = async (id: string) => {
+    setDdSuggestions((cur) => cur.filter((s) => s.id !== id));
+    await apiFetch(`relationship/dd-suggestions/${id}/dismiss`, { method: "POST", body: "{}" }).catch(() => null);
   };
   // 録音メモ (メール添付テキスト) の読み込みとタスクの操作
   const syncPlaud = async () => {
@@ -1509,6 +1559,57 @@ export default function ContactsPage() {
         </Fold>
       )}
 
+      {ddSuggestions.length > 0 && (
+        <Fold k="cl26" defaultOpen={false} title={<>公人評価の確認待ち ({ddSuggestions.length})</>} style={{ margin: "16px 0", border: "1px solid #f5d0fe", background: "#fdf4ff", borderRadius: 12, padding: "12px 16px" }}>
+          <p style={{ fontSize: 13, color: "#86198f", margin: "4px 0 10px" }}>
+            公人として評価できそうな方です。同じ名前の別人がいる、または特定しきれないため、どなたか選んでいただいてから評価します。
+            選ぶと評価対象に登録され、評価は順に自動で実施されます。
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 12 }}>
+            {ddSuggestions.map((s) => (
+              <li key={s.id} style={{ border: "1px solid #f0abfc", borderRadius: 10, padding: "10px 12px", background: "#fff" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  <Link href={`/contacts/${s.contactId}`} style={{ color: "#a21caf", fontWeight: 700, textDecoration: "none", flex: 1 }}>
+                    {s.name}
+                  </Link>
+                  {(s.company || s.title) && (
+                    <span style={{ color: "#94a3b8", fontSize: 12 }}>{[s.company, s.title].filter(Boolean).join(" ")}</span>
+                  )}
+                  {dismissX(`${s.name}さんの公人評価を見送る`, () => void dismissDdSuggestion(s.id))}
+                </div>
+                {s.candidates.length > 0 ? (
+                  <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                    <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>どの方でしょうか:</p>
+                    {s.candidates.map((cand, i) => (
+                      <button
+                        key={i}
+                        onClick={() => void resolveDdSuggestion(s.id, i)}
+                        style={{ textAlign: "left", padding: "8px 10px", border: "1px solid #e9d5ff", background: "#faf5ff", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+                      >
+                        <span style={{ fontWeight: 600 }}>{cand.name}</span>
+                        <span style={{ display: "block", color: "#64748b", marginTop: 2 }}>{cand.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ margin: "8px 0 0", fontSize: 13, color: "#64748b" }}>
+                    公人として特定できませんでした。お名前のまま評価することもできます。
+                  </p>
+                )}
+                <div style={{ marginTop: 8 }}>
+                  <button
+                    onClick={() => void resolveDdSuggestion(s.id)}
+                    style={{ padding: "6px 12px", border: "1px solid #d8b4fe", background: "#fff", color: "#7e22ce", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+                  >
+                    お名前のまま評価する
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Fold>
+      )}
+
       {shownGoalItems.length > 0 && (
         <Fold k="cl8" defaultOpen={false} title={<>目標に向かっている関係</>} style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#6b21a8", margin: "4px 0 8px" }}>
@@ -2534,6 +2635,59 @@ export default function ContactsPage() {
               メール・共有ファイルの相手も拾えるようにする
             </button>
           </div>
+        )}
+      </Fold>
+
+      <Fold k="cl25" defaultOpen={false} title={<>軸で探す (影響力・専門性・価値観・誠実さ)</>} style={{ margin: "16px 0", border: "1px solid #cbd5e1", background: "#f8fafc", borderRadius: 12, padding: "12px 16px" }}>
+        <p style={{ fontSize: 13, color: "#475569", margin: "4px 0 10px" }}>
+          蓄積した記録 (肩書き・論点整理・価値観・公人評価) から、軸に合いそうな方を挙げます。手がかりのある方だけが載ります。
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+          {[
+            { key: "influence", label: "影響力の強い方" },
+            { key: "expertise", label: "専門性の高い方" },
+            { key: "values", label: "価値観の合いそうな方" },
+            { key: "integrity", label: "誠実さ・評判の高い方" },
+          ].map((a) => (
+            <button
+              key={a.key}
+              onClick={() => void runAxisSearch(a.key)}
+              style={{
+                padding: "7px 14px",
+                borderRadius: 999,
+                border: axis === a.key ? "1px solid #2563eb" : "1px solid #cbd5e1",
+                background: axis === a.key ? "#2563eb" : "#fff",
+                color: axis === a.key ? "#fff" : "#334155",
+                cursor: "pointer",
+                fontSize: 13,
+              }}
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
+        {axis && axisBusy && <p style={{ color: "#64748b", fontSize: 13 }}>探しています…</p>}
+        {axis && !axisBusy && axisItems.length === 0 && (
+          <p style={{ color: "#64748b", fontSize: 13 }}>
+            この軸で挙げられる方はまだ見つかりませんでした。肩書き・メモ・論点整理が増えると挙がるようになります。
+          </p>
+        )}
+        {axis && axisItems.length > 0 && (
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
+            {axisItems.map((it) => (
+              <li key={it.contactId} style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "8px 12px", background: "#fff", fontSize: 14 }}>
+                <Link href={`/contacts/${it.contactId}`} style={{ color: "#1d4ed8", fontWeight: 600, textDecoration: "none" }}>
+                  {it.name}
+                </Link>
+                {(it.company || it.title) && (
+                  <span style={{ color: "#94a3b8", fontSize: 12, marginLeft: 8 }}>{[it.company, it.title].filter(Boolean).join(" ")}</span>
+                )}
+                {it.reasons.length > 0 && (
+                  <span style={{ display: "block", color: "#64748b", fontSize: 12, marginTop: 2 }}>{it.reasons.join("・")}</span>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
       </Fold>
 

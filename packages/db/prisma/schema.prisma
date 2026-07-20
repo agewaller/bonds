@@ -165,6 +165,7 @@ model Contact {
   company         String?
   title           String?
   sns             String? // 暗号化 (JSON 文字列)
+  snsCandidates   String?   @map("sns_candidates") // 暗号化: 本人と思われる SNS の候補 (未確認)。承認で sns へ、削除で消える
   personalProfile String?   @map("personal_profile") // 暗号化: 健康・家族友人・悩み・課題・夢など
   socialPosition  String?   @map("social_position") // 暗号化: 社会的位置づけ
   valuesProfile   String?   @map("values_profile") // 暗号化: 価値観・目標/目的
@@ -650,6 +651,23 @@ model EmailCampaignRecipient {
   @@unique([campaignId, contactId])
   @@index([campaignId, status])
   @@map("email_campaign_recipients")
+}
+
+/// 公人評価の下ごしらえ (連絡先 → 人物DD)。自動で特定できた方は resolved で評価へ、
+/// 特定不能・候補多数は pending で保留し、ユーザーが候補から選ぶ (最終判断はユーザー)。
+model DdSuggestion {
+  id         String   @id @default(uuid())
+  ownerUid   String   @map("owner_uid")
+  contactId  String   @map("contact_id")
+  candidates String? // 暗号化: identify の候補 [{name, description}] の JSON
+  status     String   @default("pending") // pending / resolved / dismissed / none (候補なし)
+  subjectId  String?  @map("subject_id") // resolved のとき、作成した dd_subjects.id
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([ownerUid, contactId])
+  @@index([ownerUid, status])
+  @@map("dd_suggestions")
 }
 
 /// 録音メモ (Plaud のメール添付テキスト)。1 通 1 行・冪等 (gmailMessageId 一意)。

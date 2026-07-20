@@ -56,3 +56,6 @@ jobs:
           # 録音メモ (Plaud) のメール添付テキスト → タスクと課題の整理 (mailread 許可のある接続だけ・新着少数ずつ)
           curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/plaud/sync" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}" || true
+          # 公人評価の自動下ごしらえ (公人らしい肩書きの方を候補確認→一意なら自動登録・曖昧は保留。評価は 1 sweep 1 人)
+          curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/contacts/dd-scan?batch=2" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}" || true
