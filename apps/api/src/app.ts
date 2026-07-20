@@ -56,6 +56,7 @@ import { contactMatches } from "./lib/search.js";
 import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { parseNewcomerLines, normalizeEventDate, decorateWithEvent, type NewcomerEvent } from "./lib/newcomers.js";
+import { normalizeActionKind, sortActionItems, ACTION_KIND_LABEL } from "./lib/actions.js";
 import { identityKeys, normalizeName } from "./lib/identity.js";
 import { parseImportFile, MAX_IMPORT_FILE_BYTES } from "./lib/import-file.js";
 import { computeGiftOccasions, summarizeGiftLedger } from "./lib/gifts.js";
@@ -329,6 +330,8 @@ export function createApp(deps: AppDeps) {
   // 一斉配信 (オーナー側)。配信停止だけは公開 (/api/public/unsubscribe/:token、HMAC 署名)
   app.use("/api/campaigns/*", requireUser);
   app.use("/api/campaigns", requireUser);
+  app.use("/api/actions/*", requireUser);
+  app.use("/api/actions", requireUser);
   // 日程調整・時間の出品 (オーナー側)。公開側は /api/public/schedule/* と /api/public/offers/*
   // で、shareKey / offerKey (推測不能な URL) がそのままスコープになるため認証を掛けない。
   app.use("/api/schedule/*", requireUser);
@@ -2631,6 +2634,90 @@ export function createApp(deps: AppDeps) {
     const status = b.status === "done" ? "done" : "dismissed";
     await prisma.careSuggestion.update({ where: { id: row.id }, data: { status } });
     return c.json({ status });
+  });
+
+  // ---- 実行待ち (受け入れた提案の在庫) ----
+  // ホームの提案 (サービスの提供・時間調整・メール連絡・贈り物など) をユーザーが
+  // 受け入れたら貯めておき、実際に動きやすい形で種類別に並べて返す。
+  // source (kind+key) が付いていれば同じ提案の二重受け入れを防ぐ (冪等)。
+  app.post("/api/actions", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const b = await c.req
+      .json<{ kind?: string; contactId?: string; title?: string; note?: string; sourceKind?: string; sourceKey?: string }>()
+      .catch(() => ({}) as Record<string, never>);
+    const title = typeof b.title === "string" ? b.title.trim().slice(0, 200) : "";
+    if (!title) return c.json({ error: "title_required", detail: "何をするかを書いてください" }, 400);
+    const kind = normalizeActionKind(b.kind);
+    let contactId: string | null = null;
+    if (typeof b.contactId === "string" && b.contactId) {
+      const ct = await prisma.contact.findFirst({ where: { id: b.contactId, ownerUid }, select: { id: true } });
+      if (!ct) return c.json({ error: "contact_not_found" }, 404);
+      contactId = ct.id;
+    }
+    const note = typeof b.note === "string" && b.note.trim() ? b.note.trim().slice(0, 500) : null;
+    const sourceKind = typeof b.sourceKind === "string" && b.sourceKind.trim() ? b.sourceKind.trim().slice(0, 60) : null;
+    const sourceKey = typeof b.sourceKey === "string" && b.sourceKey.trim() ? b.sourceKey.trim().slice(0, 200) : null;
+    if (sourceKind && sourceKey) {
+      const existing = await prisma.actionItem.findFirst({ where: { ownerUid, sourceKind, sourceKey } });
+      if (existing) {
+        // 済み/見送り後にもう一度受け入れたら pending に戻す。pending のままなら何もしない
+        if (existing.status !== "pending") {
+          await prisma.actionItem.update({ where: { id: existing.id }, data: { status: "pending", doneAt: null } });
+        }
+        return c.json({ action: { id: existing.id, status: "pending" }, already: existing.status === "pending" });
+      }
+    }
+    const created = await prisma.actionItem.create({
+      data: { ownerUid, contactId, kind, title, note, sourceKind, sourceKey },
+    });
+    return c.json({ action: { id: created.id, status: created.status } }, 201);
+  });
+
+  app.get("/api/actions", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const status = c.req.query("status") === "done" ? "done" : "pending";
+    const rows = await prisma.actionItem.findMany({
+      where: { ownerUid, status },
+      orderBy: { createdAt: "asc" },
+      take: 200,
+    });
+    const ids = [...new Set(rows.map((r) => r.contactId).filter((v): v is string => !!v))];
+    const contacts = ids.length
+      ? await prisma.contact.findMany({ where: { id: { in: ids }, ownerUid }, select: { id: true, name: true, email: true } })
+      : [];
+    const byId = new Map(contacts.map((ct) => [ct.id, ct]));
+    const items = sortActionItems(rows).map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      kindLabel: ACTION_KIND_LABEL[normalizeActionKind(r.kind)],
+      title: r.title,
+      note: r.note,
+      contactId: r.contactId,
+      name: r.contactId ? (byId.get(r.contactId)?.name ?? null) : null,
+      email: r.contactId ? (byId.get(r.contactId)?.email ?? null) : null,
+      createdAt: r.createdAt,
+    }));
+    return c.json({ items });
+  });
+
+  // 済み/見送り/戻す (1 件単位)。記録そのものは消さない (削除は DELETE で明示的に)。
+  app.put("/api/actions/:id", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const row = await prisma.actionItem.findFirst({ where: { id: c.req.param("id"), ownerUid } });
+    if (!row) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<{ status?: string }>().catch(() => ({}) as { status?: string });
+    const status = b.status === "done" ? "done" : b.status === "pending" ? "pending" : "dismissed";
+    await prisma.actionItem.update({
+      where: { id: row.id },
+      data: { status, doneAt: status === "done" ? new Date() : null },
+    });
+    return c.json({ status });
+  });
+
+  app.delete("/api/actions/:id", async (c) => {
+    const r = await prisma.actionItem.deleteMany({ where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") } });
+    if (r.count === 0) return c.json({ error: "not_found" }, 404);
+    return c.json({ deleted: true });
   });
 
   // 提案の見送り (✖️) — 連絡帳の各提案でユーザーが消したものを記録し、再表示しない。

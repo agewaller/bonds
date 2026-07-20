@@ -703,3 +703,24 @@ model EmailSuppression {
   @@unique([ownerUid, emailHash])
   @@map("email_suppressions")
 }
+
+// 実行待ち (受け入れた提案の在庫)。ホームの提案 (サービスの提供・時間調整・メール連絡・
+// 贈り物など) をユーザーが受け入れたら、ここに貯めて実行しやすい形で並べる。
+model ActionItem {
+  id         String    @id @default(uuid())
+  ownerUid   String    @default("owner") @map("owner_uid")
+  contactId  String?   @map("contact_id")
+  kind       String    @default("other") // email / meet / gift / offer / other
+  title      String // 暗号化 (何をするか)
+  note       String? // 暗号化 (補足)
+  sourceKind String?   @map("source_kind") // 由来 (today/growth/offering/gift_occasion/manual など)
+  sourceKey  String?   @map("source_key") // 由来キー (同じ提案の二重受け入れ防止)
+  status     String    @default("pending") // pending / done / dismissed
+  doneAt     DateTime? @map("done_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@unique([ownerUid, sourceKind, sourceKey])
+  @@index([ownerUid, status])
+  @@map("action_items")
+}

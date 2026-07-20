@@ -113,6 +113,12 @@ export default function ContactsPage() {
   });
   const [newcomerText, setNewcomerText] = useState("");
   const [newcomerResult, setNewcomerResult] = useState("");
+  // 実行待ち (受け入れた提案の在庫)。ホームの提案を受け入れたらここに貯まり、
+  // 実際に動きやすい形 (種類別 + 実行の近道つき) で並ぶ。
+  const [actionItems, setActionItems] = useState<
+    { id: string; kind: string; kindLabel: string; title: string; note: string | null; contactId: string | null; name: string | null; email: string | null }[]
+  >([]);
+  const [manualAction, setManualAction] = useState("");
   const [connectHint, setConnectHint] = useState(""); // SNS連携ボタンを押したときの手順案内
   const [dragOver, setDragOver] = useState(false);
   // 距離感の見直し提案 (やりとりから 1〜5 を推し量る)
@@ -369,7 +375,49 @@ export default function ContactsPage() {
     if (oiRes.ok) setOfferInterests((await oiRes.json()).interests ?? []);
     const soRes = await apiFetch("schedule/offers");
     if (soRes.ok) setMarketUrl((await soRes.json()).marketUrl ?? null);
+    const acRes = await apiFetch("actions");
+    if (acRes.ok) setActionItems((await acRes.json()).items ?? []);
   }, []);
+
+  // 実行待ちへの受け入れ・済み/見送り。受け入れは source キーで冪等 (二重に貯まらない)。
+  const refreshActions = async () => {
+    const res = await apiFetch("actions");
+    if (res.ok) setActionItems((await res.json()).items ?? []);
+  };
+  const acceptAction = async (a: { kind: string; contactId?: string; title: string; note?: string; sourceKind: string; sourceKey: string }) => {
+    const res = await apiFetch("actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(a),
+    });
+    if (res.ok) {
+      setNotice("実行待ちに入れました。上の「実行待ちのこと」から進められます");
+      await refreshActions();
+    } else {
+      setError("いまは実行待ちに入れられませんでした。時間をおいてお試しください");
+    }
+  };
+  const settleAction = async (id: string, status: "done" | "dismissed") => {
+    setActionItems((prev) => prev.filter((x) => x.id !== id)); // 楽観更新 (押した瞬間に片付く)
+    const res = await apiFetch(`actions/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) await refreshActions();
+  };
+  const addManualAction = async () => {
+    if (!manualAction.trim()) return;
+    const res = await apiFetch("actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "other", title: manualAction.trim() }),
+    });
+    if (res.ok) {
+      setManualAction("");
+      await refreshActions();
+    }
+  };
 
   // 申し出の登録・削除、および「この方に申し出る」(やり取り台帳に favor として下書き記録)。
   const addOffering = async () => {
@@ -555,6 +603,14 @@ export default function ContactsPage() {
     if (res.ok) {
       setOfferedTo((s) => ({ ...s, [`${offeringId}:${contactId}`]: true }));
       setNotice("台帳に「申し出」として控えました。実際の連絡は連絡先の画面からどうぞ");
+      // 受け入れた申し出は実行待ちにも入れて、連絡の実行を忘れないようにする
+      await acceptAction({
+        kind: "offer",
+        contactId,
+        title: `${title}を申し出る連絡をする`,
+        sourceKind: "offering",
+        sourceKey: `${offeringId}:${contactId}`,
+      });
     } else {
       setError("いまは控えられませんでした。時間をおいてお試しください");
     }
@@ -1205,19 +1261,36 @@ export default function ContactsPage() {
                   さん
                   <span style={{ color: "#64748b", marginLeft: 8 }}>{sug.reason}</span>
                 </span>
-                <button
-                  onClick={() => void logContact(sug.contactId)}
-                  style={{
-                    padding: "6px 12px",
-                    border: "1px solid #2563eb",
-                    color: "#2563eb",
-                    background: "#fff",
-                    borderRadius: 8,
-                    cursor: "pointer",
-                  }}
-                >
-                  {t("contacted")}
-                </button>
+                <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <button
+                    onClick={() =>
+                      void acceptAction({
+                        kind: "email",
+                        contactId: sug.contactId,
+                        title: "近況伺いの連絡をする",
+                        note: sug.reason,
+                        sourceKind: "today",
+                        sourceKey: sug.contactId,
+                      })
+                    }
+                    style={{ padding: "6px 12px", border: "1px solid #d97706", color: "#92400e", background: "#fffbeb", borderRadius: 8, cursor: "pointer" }}
+                  >
+                    実行待ちに入れる
+                  </button>
+                  <button
+                    onClick={() => void logContact(sug.contactId)}
+                    style={{
+                      padding: "6px 12px",
+                      border: "1px solid #2563eb",
+                      color: "#2563eb",
+                      background: "#fff",
+                      borderRadius: 8,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {t("contacted")}
+                  </button>
+                </span>
               </li>
             ))}
           </ul>
@@ -1226,6 +1299,71 @@ export default function ContactsPage() {
       {summary && summary.today.length === 0 && contacts.length > 0 && (
         <p style={{ color: "#27ae60" }}>すべての方と適切な頻度でつながれています。素晴らしいですね。</p>
       )}
+
+      <Fold k="cl28" defaultOpen={false} title={<>実行待ちのこと{actionItems.length > 0 ? ` (${actionItems.length})` : ""}</>} style={{ margin: "16px 0", border: "2px solid #f59e0b", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
+        <p style={{ fontSize: 13, color: "#92400e", margin: "4px 0 10px", lineHeight: 1.7 }}>
+          受け入れた提案 (連絡・会う約束・贈り物・力になれることの申し出) をここに貯めています。
+          上から順に、それぞれの近道ボタンで進められます。
+        </p>
+        {actionItems.length === 0 && (
+          <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 8px" }}>
+            いまは空です。各提案の「実行待ちに入れる」を押すと、ここに貯まります。
+          </p>
+        )}
+        <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
+          {actionItems.map((a) => (
+            <li key={a.id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, border: "1px solid #fde68a", background: "#fff", borderRadius: 10, padding: "8px 12px", fontSize: 14 }}>
+              <span style={{ fontSize: 12, color: "#92400e", background: "#fef3c7", borderRadius: 6, padding: "2px 8px", whiteSpace: "nowrap" }}>
+                {a.kindLabel}
+              </span>
+              <span style={{ flex: 1, minWidth: 180 }}>
+                {a.contactId && a.name && (
+                  <Link href={`/contacts/${a.contactId}`} style={{ color: "#b45309", fontWeight: 700, marginRight: 6 }}>
+                    {a.name}
+                  </Link>
+                )}
+                {a.title}
+                {a.note && <span style={{ color: "#78716c", fontSize: 12 }}> — {a.note}</span>}
+              </span>
+              {a.kind === "email" && a.email ? (
+                <a href={`mailto:${a.email}`} style={{ padding: "5px 12px", border: "1px solid #f59e0b", background: "#fef3c7", color: "#92400e", borderRadius: 8, textDecoration: "none", fontSize: 13 }}>
+                  ✉ メールを送る
+                </a>
+              ) : a.contactId ? (
+                <Link href={`/contacts/${a.contactId}`} style={{ padding: "5px 12px", border: "1px solid #f59e0b", background: "#fef3c7", color: "#92400e", borderRadius: 8, textDecoration: "none", fontSize: 13 }}>
+                  {a.kind === "meet" ? "日程を決める" : a.kind === "gift" ? "贈り物を選ぶ" : a.kind === "email" ? "文面を作る" : "この方のページへ"}
+                </Link>
+              ) : a.kind === "meet" ? (
+                <Link href="/schedule" style={{ padding: "5px 12px", border: "1px solid #f59e0b", background: "#fef3c7", color: "#92400e", borderRadius: 8, textDecoration: "none", fontSize: 13 }}>
+                  日程調整を開く
+                </Link>
+              ) : null}
+              <button
+                onClick={() => void settleAction(a.id, "done")}
+                style={{ padding: "5px 12px", background: "#d97706", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+              >
+                済みました
+              </button>
+              {dismissX(`${a.title} を見送る`, () => settleAction(a.id, "dismissed"))}
+            </li>
+          ))}
+        </ul>
+        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <input
+            value={manualAction}
+            onChange={(e) => setManualAction(e.target.value)}
+            placeholder="自分で書き足す (例: 中村さんに電話)"
+            style={{ flex: "1 1 220px", padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8 }}
+          />
+          <button
+            onClick={() => void addManualAction()}
+            disabled={!manualAction.trim()}
+            style={{ padding: "8px 14px", border: "1px solid #d97706", color: "#92400e", background: "#fff", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+          >
+            書き足す
+          </button>
+        </div>
+      </Fold>
 
       {shownOccasions.length > 0 && (
         <Fold k="cl3" defaultOpen={false} title={<>いま贈るとよい方・行事</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
@@ -1242,6 +1380,22 @@ export default function ContactsPage() {
                   )}
                   <span style={{ color: "#78716c" }}> — {o.note}</span>
                 </span>
+                <button
+                  onClick={() =>
+                    void acceptAction({
+                      kind: "gift",
+                      contactId: o.contactId ?? undefined,
+                      title: o.label,
+                      note: o.note,
+                      sourceKind: "gift_occasion",
+                      sourceKey: giftKey(o),
+                    })
+                  }
+                  aria-label={`${o.label} を実行待ちに入れる`}
+                  style={{ padding: "4px 10px", border: "1px solid #d97706", color: "#92400e", background: "#fffbeb", borderRadius: 8, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" }}
+                >
+                  実行待ちに入れる
+                </button>
                 {dismissX(`${o.label} を見送る`, () => dismissSuggestion("gift_occasion", giftKey(o)))}
               </li>
             ))}
@@ -1488,33 +1642,41 @@ export default function ContactsPage() {
                 </div>
                 {g.reason && <p style={{ margin: "4px 0 8px", color: "#065f46", fontSize: 13 }}>{g.reason}</p>}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {g.moves.map((mv, i) =>
-                    mv.kind === "catchup" && g.email ? (
-                      <a
-                        key={i}
-                        href={`mailto:${g.email}`}
-                        style={{ padding: "5px 12px", border: "1px solid #6ee7b7", background: "#d1fae5", color: "#065f46", borderRadius: 8, textDecoration: "none", fontSize: 13 }}
+                  {g.moves.map((mv, i) => (
+                    <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                      {mv.kind === "catchup" && g.email ? (
+                        <a
+                          href={`mailto:${g.email}`}
+                          style={{ padding: "5px 12px", border: "1px solid #6ee7b7", background: "#d1fae5", color: "#065f46", borderRadius: 8, textDecoration: "none", fontSize: 13 }}
+                        >
+                          ✉ {mv.label}
+                        </a>
+                      ) : (
+                        <Link
+                          href={`/contacts/${g.contactId}`}
+                          style={{ padding: "5px 12px", border: "1px solid #6ee7b7", background: "#d1fae5", color: "#065f46", borderRadius: 8, textDecoration: "none", fontSize: 13 }}
+                        >
+                          {mv.label}
+                        </Link>
+                      )}
+                      <button
+                        onClick={() =>
+                          void acceptAction({
+                            kind: mv.kind === "catchup" ? "email" : mv.kind === "meet" ? "meet" : mv.kind === "offer" ? "offer" : "other",
+                            contactId: g.contactId,
+                            title: mv.label,
+                            sourceKind: "growth_move",
+                            sourceKey: `${g.contactId}:${mv.kind}`,
+                          })
+                        }
+                        aria-label={`${g.name}さんの「${mv.label}」を実行待ちに入れる`}
+                        title="実行待ちに入れる"
+                        style={{ padding: "4px 8px", border: "1px solid #d97706", color: "#92400e", background: "#fffbeb", borderRadius: 8, cursor: "pointer", fontSize: 12 }}
                       >
-                        ✉ {mv.label}
-                      </a>
-                    ) : mv.kind === "meet" ? (
-                      <Link
-                        key={i}
-                        href={`/contacts/${g.contactId}`}
-                        style={{ padding: "5px 12px", border: "1px solid #6ee7b7", background: "#d1fae5", color: "#065f46", borderRadius: 8, textDecoration: "none", fontSize: 13 }}
-                      >
-                        {mv.label}
-                      </Link>
-                    ) : (
-                      <Link
-                        key={i}
-                        href={`/contacts/${g.contactId}`}
-                        style={{ padding: "5px 12px", border: "1px solid #6ee7b7", background: "#d1fae5", color: "#065f46", borderRadius: 8, textDecoration: "none", fontSize: 13 }}
-                      >
-                        {mv.label}
-                      </Link>
-                    ),
-                  )}
+                        ＋
+                      </button>
+                    </span>
+                  ))}
                 </div>
               </li>
             ))}

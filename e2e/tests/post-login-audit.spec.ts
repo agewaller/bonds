@@ -187,6 +187,27 @@ test("連絡帳: Google 取り込み枠が出る (未設定環境では準備中
   expect(errors, errors.join("\n")).toHaveLength(0);
 });
 
+test("連絡帳: 実行待ちのこと — 書き足し・済み・見送りが一周する", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/contacts");
+  await expandAll(page);
+  await expect(page.getByRole("heading", { name: /実行待ちのこと/ })).toBeVisible();
+  const stamp = Date.now() % 100000;
+  const title = `監査実行待ち 電話をかける${stamp}`;
+  await page.getByPlaceholder(/自分で書き足す/).fill(title);
+  await page.getByRole("button", { name: "書き足す" }).click();
+  await expect(page.getByText(title).first()).toBeVisible();
+  // 済みにすると一覧から片付く
+  const row = page.getByText(title).first().locator("xpath=ancestor::li");
+  await row.getByRole("button", { name: "済みました" }).click();
+  await expect(page.getByText(title)).toBeHidden();
+  // 再読み込み後も出てこない (サーバに記録されている)
+  await page.reload();
+  await expandAll(page);
+  await expect(page.getByText(title)).toBeHidden();
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
 test("連絡帳: パーティで出会った方を貼り付けで迎えられる (出会いの記録つき)", async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto("/contacts");
