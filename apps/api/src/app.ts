@@ -123,7 +123,7 @@ import {
   type OfferingLike,
   type ContactNeed,
 } from "./lib/offerings.js";
-import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import {
   SHARE_STATUSES,
   normalizeKind,
@@ -7904,6 +7904,83 @@ export function createApp(deps: AppDeps) {
       data: { contactId: contact.id, type: "message", occurredAt: new Date(), notes: "返信あり" },
     });
     return c.json({ matched: true, threadId: thread.id });
+  });
+
+  // 録音デバイス汎用の受信口 (Omi 等の会話ウェアラブルが webhook で文字起こしを送る)。
+  // 認証は inbound/email と同じ共有シークレット。届いた会話は Plaud と同じ「録音メモ」
+  // として保存し、同じ plaud_tasks でタスクと課題を整理する (AI 不可でもメモは残る)。
+  // 冪等: 外部 id (無ければ本文ハッシュ) を voice_memos.gmailMessageId に "ext:" 接頭辞で
+  // 入れて一意制約に乗せる (スキーマ変更なし。gmail の実 id と接頭辞で衝突しない)。
+  app.post("/api/inbound/conversation", async (c) => {
+    const secret = process.env.INBOUND_WEBHOOK_SECRET;
+    if (!secret) return c.json({ error: "unavailable", detail: "受信の設定が未完了です" }, 503);
+    const provided = c.req.header("x-inbound-secret") ?? c.req.query("secret");
+    if (!secretMatches(provided, secret)) return c.json({ error: "unauthorized" }, 401);
+
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const str = (v: unknown) => (typeof v === "string" ? v : "");
+    // 本文: text をそのまま、無ければ Omi 形式 (transcript_segments) を平文に落とす
+    let text = str(b.text) || str(b.transcript);
+    if (!text) {
+      const segs = Array.isArray(b.transcript_segments) ? b.transcript_segments : [];
+      text = segs
+        .map((s) => {
+          const seg = s as { text?: unknown; speaker?: unknown };
+          const line = str(seg.text).trim();
+          if (!line) return "";
+          const speaker = str(seg.speaker).trim();
+          return speaker ? `${speaker}: ${line}` : line;
+        })
+        .filter(Boolean)
+        .join("\n");
+    }
+    text = text.trim().slice(0, 20000);
+    if (!text) return c.json({ error: "text_required" }, 400);
+
+    const source = (c.req.query("source") || "device").replace(/[^a-z0-9_-]/gi, "").slice(0, 20) || "device";
+    const structured = (b.structured ?? {}) as { title?: unknown; overview?: unknown };
+    const subject = (str(b.title) || str(structured.title)).trim().slice(0, 200) || null;
+    const externalId = str(b.id).trim().slice(0, 100) || createHash("sha256").update(text).digest("hex").slice(0, 32);
+    const memoKey = `ext:${source}:${externalId}`;
+    const createdAtRaw = str(b.occurredAt) || str(b.created_at);
+    const receivedAt = createdAtRaw && !Number.isNaN(Date.parse(createdAtRaw)) ? new Date(createdAtRaw) : new Date();
+
+    const ownerUid = "owner"; // 単一オーナー前提 (inbound/email と同じ)
+    const existing = await prisma.voiceMemo.findFirst({ where: { ownerUid, gmailMessageId: memoKey } });
+    if (existing) return c.json({ stored: false, duplicate: true, id: existing.id });
+
+    // タスクと課題の整理 (AI)。使えない/キャップ到達でもメモ自体は残す (あとで整理し直せる)
+    let summary: string | null = null;
+    let tasks: PlaudTask[] | null = null;
+    let digested = false;
+    if (generate) {
+      const r = await runRelationshipAi(
+        "plaud_tasks",
+        '出力は JSON オブジェクト 1 個だけ: {"summary": "...", "tasks": [{"text": "...", "kind": "task|issue"}]}',
+        text.slice(0, 12000),
+        "plaud_tasks",
+        "ja",
+        { actor: { ownerUid, isOwner: true } },
+      );
+      if (r.ok) {
+        const digest = validatePlaudDigest(extractJson(r.text));
+        summary = digest.summary || null;
+        tasks = digest.tasks;
+        digested = true;
+      }
+    }
+    const memo = await prisma.voiceMemo.create({
+      data: {
+        ownerUid,
+        gmailMessageId: memoKey,
+        subject,
+        receivedAt,
+        content: text,
+        summary,
+        tasks: tasks ? JSON.stringify(tasks) : null,
+      },
+    });
+    return c.json({ stored: true, id: memo.id, digested });
   });
 
   // 実行詳細 (ステップ含む)
