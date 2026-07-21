@@ -45,6 +45,7 @@ import {
   decodeGmailData,
   headerValue,
   validatePlaudDigest,
+  transcriptHash,
   type GmailPart,
   type PlaudTask,
 } from "./lib/plaud.js";
@@ -2142,7 +2143,41 @@ export function createApp(deps: AppDeps) {
     } catch {
       // sweep が再処理する
     }
-    return c.json({ ok: true, jobId: job.id }, 202);
+    // 録音メモ (タスクと課題) にも取り込む。同じ文字起こしを Gmail 経由で既に
+    // 読んでいれば二重にしない (正規化ハッシュで同一性を判定 = 経路またぎの冪等)。
+    let memo: "created" | "duplicate" | "failed" = "failed";
+    try {
+      await backfillMemoHashes(ownerUid);
+      const content = transcript.slice(0, 20000);
+      const hash = transcriptHash(content);
+      const existing = await prisma.voiceMemo.findFirst({
+        where: { ownerUid, contentHash: hash },
+        select: { id: true },
+      });
+      if (existing) {
+        memo = "duplicate";
+      } else {
+        const d = await digestPlaudContent(ownerUid, content);
+        await prisma.voiceMemo.create({
+          data: {
+            ownerUid,
+            gmailMessageId: `zentrack:${hash.slice(0, 48)}`,
+            source: "zentrack",
+            contentHash: hash,
+            subject: (label || (date ? `${date} の録音メモ` : "録音メモ")).slice(0, 200),
+            receivedAt: date ? new Date(`${date}T12:00:00`) : new Date(),
+            content,
+            summary: d.summary,
+            tasks: d.tasks ? JSON.stringify(d.tasks) : null,
+          },
+        });
+        memo = "created";
+      }
+    } catch {
+      // unique 競合 (同時着) や AI 失敗はここで止めない。取込ジョブ側は既に受理済み
+      memo = "failed";
+    }
+    return c.json({ ok: true, jobId: job.id, memo }, 202);
   });
 
   // 接触記録 (連絡済み)。距離スコアの検証還流。
@@ -7096,6 +7131,39 @@ export function createApp(deps: AppDeps) {
   // 読むのは from:plaud のメールに限る。1 回の同期で新規は少数ずつ (AI キャップにも従う)。
   const PLAUD_QUERY = "from:plaud has:attachment newer_than:90d";
   const PLAUD_MAX_NEW_PER_RUN = 5;
+
+  // 文字起こし 1 本をタスクと課題に整理する (AI 未設定/失敗は null。capped=月次キャップ 422)。
+  // Gmail 経路と ZenTrack 経路の両方が使う共通の整理口。
+  const digestPlaudContent = async (
+    ownerUid: string,
+    content: string,
+  ): Promise<{ summary: string | null; tasks: PlaudTask[] | null; capped: boolean }> => {
+    if (!generate) return { summary: null, tasks: null, capped: false };
+    const r = await runRelationshipAi(
+      "plaud_tasks",
+      '出力は JSON オブジェクト 1 個だけ: {"summary": "...", "tasks": [{"text": "...", "kind": "task|issue"}]}',
+      content.slice(0, 12000),
+      "plaud_tasks",
+      "ja",
+      { actor: { ownerUid, isOwner: true } },
+    );
+    if (!r.ok) return { summary: null, tasks: null, capped: r.status === 422 };
+    const digest = validatePlaudDigest(extractJson(r.text));
+    return { summary: digest.summary || null, tasks: digest.tasks, capped: false };
+  };
+
+  // ハッシュ未計上の既存メモに本文ハッシュを付ける (経路またぎの二重取り込み防止の下ごしらえ)。
+  // 同じ内容が既にハッシュ済みなら unique 違反になるが、それは重複行そのものなので静かに残す。
+  const backfillMemoHashes = async (ownerUid: string): Promise<void> => {
+    const rows = await prisma.voiceMemo.findMany({ where: { ownerUid, contentHash: null }, take: 100 });
+    for (const m of rows) {
+      try {
+        await prisma.voiceMemo.update({ where: { id: m.id }, data: { contentHash: transcriptHash(m.content) } });
+      } catch {
+        // unique 違反 = 同じ内容のメモが既にある。ここでは消さない (1 件単位の削除はユーザーの手で)
+      }
+    }
+  };
   // Gmail はアクセストークンに gmail.metadata が同居していると検索 (q) を 403 で拒否する。
   // 検索を使うこの経路だけ、readonly スコープに絞ったトークンを取り直す (再同意は不要)。
   const GMAIL_SEARCH_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
@@ -7116,6 +7184,7 @@ export function createApp(deps: AppDeps) {
         detail: "録音メモの読み取りには、メールを読む追加の許可が必要です。ボタンからもう一度 Google の同意を進めてください",
       };
     }
+    await backfillMemoHashes(ownerUid); // 経路またぎの重複判定の下ごしらえ
     const accessToken = await google.refreshAccessToken(conn.refreshToken, GMAIL_SEARCH_SCOPE);
     const list = (await google
       .apiGet(
@@ -7162,41 +7231,42 @@ export function createApp(deps: AppDeps) {
       }
       const content = texts.join("\n\n").slice(0, 20000);
       if (!content.trim()) continue;
+      // 同じ文字起こしを ZenTrack 経由などで既に取り込んでいれば二重にしない
+      const hash = transcriptHash(content);
+      const dupe = await prisma.voiceMemo.findFirst({ where: { ownerUid, contentHash: hash }, select: { id: true } });
+      if (dupe) continue;
       const subject = headerValue(msg.payload.headers, "Subject").slice(0, 200) || null;
       const receivedAt = msg.internalDate ? new Date(Number(msg.internalDate)) : null;
 
       // タスクと課題の整理 (AI)。使えない/キャップ到達でも、メモ自体は残す (あとで整理し直せる)
       let summary: string | null = null;
       let tasks: PlaudTask[] | null = null;
-      if (!aiStopped && generate) {
-        const r = await runRelationshipAi(
-          "plaud_tasks",
-          '出力は JSON オブジェクト 1 個だけ: {"summary": "...", "tasks": [{"text": "...", "kind": "task|issue"}]}',
-          content.slice(0, 12000),
-          "plaud_tasks",
-          "ja",
-          { actor: { ownerUid, isOwner: true } },
-        );
-        if (r.ok) {
-          const digest = validatePlaudDigest(extractJson(r.text));
-          summary = digest.summary || null;
-          tasks = digest.tasks;
+      if (!aiStopped) {
+        const d = await digestPlaudContent(ownerUid, content);
+        if (d.capped) aiStopped = true;
+        else if (d.summary !== null || d.tasks !== null) {
+          summary = d.summary;
+          tasks = d.tasks;
           digested++;
-        } else if (r.status === 422) {
-          aiStopped = true;
         }
       }
-      await prisma.voiceMemo.create({
-        data: {
-          ownerUid,
-          gmailMessageId: id,
-          subject,
-          receivedAt,
-          content,
-          summary,
-          tasks: tasks ? JSON.stringify(tasks) : null,
-        },
-      });
+      try {
+        await prisma.voiceMemo.create({
+          data: {
+            ownerUid,
+            gmailMessageId: id,
+            source: "gmail",
+            contentHash: hash,
+            subject,
+            receivedAt,
+            content,
+            summary,
+            tasks: tasks ? JSON.stringify(tasks) : null,
+          },
+        });
+      } catch {
+        continue; // 同時取り込みの競合 (unique 違反) = 既に入っている
+      }
       imported++;
     }
     return { ok: true, found: ids.length, imported, digested };

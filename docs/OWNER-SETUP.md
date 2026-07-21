@@ -428,3 +428,38 @@ Google 連携のボタンを押したとき、いまは「このアプリは Goo
 - 日程調整の共有ページの「Google でカレンダーをつなぐ」も同じアプリ名で審査されるため、
   審査が通れば相手側の警告も消えます（相手が見るのは「空いているかどうか」の確認だけの、
   いちばん軽い権限です）。
+
+---
+
+## タスク7：禅トラック連携（録音メモを bonds と cares に自動で流す）
+
+これができると、禅トラックに届いた Plaud の文字起こしが、**bonds では「録音メモからのタスクと課題」に、
+cares では「記録」として健康の気づきに**、自動で流れ込みます。bonds が Gmail から直接読む仕組みとは
+本文の照合で重複しないようになっているので、両方が動いていても二重にはなりません。
+
+- ▼ ねらい: 3 つのシステムが同じ「あいことば」を持ち合う。①bonds に 1 つ ②cares に 1 つ ③禅トラックのサーバに宛先と合わせて設定。
+- 事前に用意するもの: 長いランダムな文字列（あいことば）を 1 つ。パスワード生成サイトで 32 文字以上を作ればよいです。
+  bonds 用と cares 用は同じ値でも別の値でもかまいません（同じにすると管理が楽です）。
+
+### 7-A. bonds 側にあいことばを入れる（Google Cloud）
+1. https://console.cloud.google.com/security/secret-manager?project=arctic-anvil-497002-q2 を開く。
+2. 一覧に **`BONDS_ZENTRACK_INGEST_SECRET`** があればクリック→「新しいバージョン」で貼り付け。
+   無ければ「+ シークレットを作成」で名前を `BONDS_ZENTRACK_INGEST_SECRET` にして値にあいことばを貼る。
+3. bonds を本番反映（私に「bonds を本番反映して」でよいです。反映されるまで連携は「準備中」のままで、壊れません）。
+
+### 7-B. cares 側にあいことばを入れる（Google Cloud）
+1. 同じ Secret Manager で、名前 **`cares-zentrack-ingest-secret`** のシークレットを作成（または新バージョン追加）し、あいことばを貼る。
+2. cares を本番反映（cares のデプロイは承認が要るので、私に「cares をデプロイして」と言ってください。手順とゲートはこちらで進めます）。
+
+### 7-C. 禅トラックのサーバに宛先とあいことばを設定する
+禅トラックは AWS のサーバで動いており、環境変数で設定します（systemd の環境設定に追記して再起動）。
+1. サーバの環境変数に次の 4 つを足す:
+   - `CONFIG_BONDS_INGEST_URL` = `https://bonds-api-xj6szhutkq-an.a.run.app/api/ingest/zentrack`
+   - `CONFIG_BONDS_INGEST_SECRET` = （bonds に入れたあいことば）
+   - `CONFIG_CARES_INGEST_URL` = （cares の API の URL）`/api/ingest/zentrack`
+     - cares の API の URL は https://console.cloud.google.com/run?project=arctic-anvil-497002-q2 の `cares-api` の行で確認できます。
+   - `CONFIG_CARES_INGEST_SECRET` = （cares に入れたあいことば）
+2. 禅トラックのアプリを再起動（`sudo systemctl restart zentrack`）。
+3. 疎通確認: 禅トラックのサーバで `curl -X POST http://localhost:8080/test/integrations/forward?days=3` を実行すると、
+   直近 3 日分の文字起こしが bonds と cares に流れます（受け側は同じ内容を二重に取り込まないので、何度実行しても安全です）。
+- 分からなければ止めて、画面の写真を送って相談してください。設定が終わるまで転送は行われないだけで、どのアプリも壊れません。
