@@ -169,10 +169,9 @@ test("連絡帳: 同じお名前は確認を挟み、別の人として追加で
   // 別の人と特定 → 追加され、一覧に同名が 2 件になる
   await page.getByRole("button", { name: "別の人として追加する" }).click();
   await expect(page.getByText(/すでに連絡帳にいます/)).toBeHidden();
-  // 全員検索で同名 2 件 (一覧は 30 名超で畳まれるため、常に動く検索の導線で確かめる)
-  const everyone = page.locator("section", { has: page.getByRole("heading", { name: /みなさん/ }) });
-  await everyone.getByPlaceholder(/お名前・ふりがな/).fill(name);
-  await expect(everyone.getByRole("link", { name: new RegExp(name) })).toHaveCount(2);
+  // 全員検索で同名 2 件 (検索窓はページ一番上。一覧は 30 名超で畳まれるため、常に動く検索の導線で確かめる)
+  await page.getByLabel("人物を探す").fill(name);
+  await expect(page.getByRole("link", { name: new RegExp(name) })).toHaveCount(2);
   expect(errors, errors.join("\n")).toHaveLength(0);
 });
 

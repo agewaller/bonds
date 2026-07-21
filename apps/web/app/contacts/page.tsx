@@ -1190,6 +1190,52 @@ export default function ContactsPage() {
       </p>
       <h1 style={{ fontSize: 24 }}>{t("contacts_title")}</h1>
 
+      {/* 人物の検索はページの一番上に (オーナー指示 2026-07-21)。全員が対象のサーバ検索 */}
+      <div style={{ margin: "12px 0 16px" }}>
+        <input
+          value={nameFilter}
+          onChange={(e) => setNameFilter(e.target.value)}
+          placeholder={`お名前・ふりがな・ローマ字・メール・電話・会社などで探す${totalContacts ? ` (${totalContacts}名)` : ""}`}
+          aria-label="人物を探す"
+          style={{ width: "100%", boxSizing: "border-box", padding: "12px 14px", border: "2px solid #cbd5e1", borderRadius: 10, fontSize: 15 }}
+        />
+        {nameFilter.trim() && (
+          <div style={{ marginTop: 8 }}>
+            <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 8px" }}>
+              {searchResults === null
+                ? "探しています…"
+                : `全員の中から ${searchResults.length} 名が見つかりました${searchResults.length >= 100 ? " (多いため先頭の100名まで)" : ""}`}
+            </p>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 6 }}>
+              {(searchResults ?? []).slice(0, 30).map((c) => (
+                <li key={c.id} style={{ display: "flex", alignItems: "stretch", gap: 6 }}>
+                  <Link
+                    href={`/contacts/${c.id}`}
+                    style={{ flex: 1, display: "flex", justifyContent: "space-between", border: "1px solid #e2e8f0", background: "#fff", borderRadius: 10, padding: "10px 14px", textDecoration: "none", color: "inherit" }}
+                  >
+                    <span>
+                      {c.name}
+                      {c.company && <small style={{ color: "#64748b", marginLeft: 8 }}>{c.company}</small>}
+                    </span>
+                    <small style={{ color: "#64748b" }}>{DISTANCE_LABEL[c.distance] ?? ""}</small>
+                  </Link>
+                  {c.email && (
+                    <a
+                      href={`mailto:${c.email}`}
+                      aria-label={`${c.name}さんにメールする`}
+                      title="メールする"
+                      style={{ display: "flex", alignItems: "center", padding: "0 12px", border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 10, textDecoration: "none", fontSize: 13, whiteSpace: "nowrap" }}
+                    >
+                      ✉ メール
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
       {summary && (
         <Fold k="cl0" defaultOpen={false} title={<>{t("connection_score")}</>} style={{
             borderLeft: `5px solid ${level.color}`,
@@ -2962,13 +3008,7 @@ export default function ContactsPage() {
 
       <Fold k="cl20" defaultOpen={false} title={<>{t("everyone")} ({totalContacts ?? contacts.length})</>}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-          <input
-            value={nameFilter}
-            onChange={(e) => setNameFilter(e.target.value)}
-            placeholder="お名前・ふりがな・ローマ字・メール・電話・会社などで探す"
-            style={{ flex: 1, minWidth: 200, padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14 }}
-          />
-          {contacts.length > 30 && !nameFilter && (
+          {contacts.length > 30 && (
             <button
               onClick={() => setShowAll((v) => !v)}
               style={{ padding: "8px 14px", background: "transparent", color: "#475569", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
@@ -2977,23 +3017,13 @@ export default function ContactsPage() {
             </button>
           )}
         </div>
-        {contacts.length > 30 && !showAll && !nameFilter && (
+        {contacts.length > 30 && !showAll && (
           <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 8px" }}>
-            人数が多いため一覧は畳んでいます。上の「大切にしたい方々」から開くか、検索してください。全員の記録はそのまま残っています。
-          </p>
-        )}
-        {nameFilter.trim() && searchResults && (
-          <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 8px" }}>
-            全員の中から {searchResults.length} 名が見つかりました{searchResults.length >= 100 ? " (多いため先頭の100名まで)" : ""}
+            人数が多いため一覧は畳んでいます。お探しの方は、ページ一番上の検索窓からどうぞ。全員の記録はそのまま残っています。
           </p>
         )}
         <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 6 }}>
-          {(nameFilter.trim()
-            ? (searchResults ?? [])
-            : contacts.length > 30 && !showAll
-              ? []
-              : contacts
-          ).map((c) => (
+          {(contacts.length > 30 && !showAll ? [] : contacts).map((c) => (
             <li key={c.id} style={{ display: "flex", alignItems: "stretch", gap: 6 }}>
               <Link
                 href={`/contacts/${c.id}`}
