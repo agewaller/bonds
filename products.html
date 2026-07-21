@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>人生のカルテ — ブルー・マーリン・パートナーズのプロダクト</title>
-<meta name="description" content="健康・意識・才能・関係・資産。人生の五つの層をひとつずつ支える道具たち。ひとつのGoogleアカウントでつながります。">
+<meta name="description" content="意識・健康・時間・貢献・信用・資産。人生の流れをひとつずつ支える道具たち。ひとつのGoogleアカウントでつながります。">
 <style>
   :root{
     --bg:#faf9f6; --fg:#26221c; --sub:#6b6459; --card:#ffffff; --line:#e8e4dc;
@@ -22,13 +22,22 @@
     font-family:"Hiragino Kaku Gothic ProN","Yu Gothic Medium","Noto Sans JP",system-ui,sans-serif;
     line-height:1.85; -webkit-font-smoothing:antialiased;
   }
-  .serif{font-family:"Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif}
+  .serif{font-family:"Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",Georgia,serif}
+  html[lang="en"] body{font-family:Georgia,"Times New Roman",system-ui,serif; line-height:1.7}
+  html[lang="en"] .serif{font-family:Georgia,"Times New Roman",serif}
   .wrap{max-width:920px; margin:0 auto; padding:0 24px}
 
-  header{padding:88px 0 40px; text-align:center}
+  .langbar{position:absolute; top:18px; right:20px}
+  .langbar button{
+    font-size:12.5px; letter-spacing:.06em; background:var(--card); color:var(--sub);
+    border:1px solid var(--line); border-radius:999px; padding:6px 14px; cursor:pointer;
+  }
+  .langbar button:hover{color:var(--fg)}
+
+  header{padding:88px 0 40px; text-align:center; position:relative}
   .kicker{font-size:13px; letter-spacing:.35em; color:var(--sub); text-transform:uppercase}
-  h1{font-size:clamp(30px,6vw,44px); font-weight:600; letter-spacing:.06em; margin:18px 0 20px}
-  .lede{max-width:600px; margin:0 auto; color:var(--sub); font-size:15.5px}
+  h1{font-size:clamp(30px,6vw,44px); font-weight:600; letter-spacing:.06em; margin:18px 0 20px; text-wrap:balance}
+  .lede{max-width:620px; margin:0 auto; color:var(--sub); font-size:15.5px}
 
   .layers{display:flex; justify-content:center; gap:6px; flex-wrap:wrap; margin:44px auto 8px}
   .layers span{
@@ -62,10 +71,6 @@
     transition:opacity .15s;
   }
   .cta a:hover{opacity:.7}
-  .cta .soon{
-    display:inline-block; font-size:14px; color:var(--sub);
-    border:1.5px dashed var(--line); border-radius:999px; padding:8px 22px;
-  }
   .c-health{--ac:var(--health)} .c-mind{--ac:var(--mind)} .c-talent{--ac:var(--talent)}
   .c-ties{--ac:var(--ties)} .c-money{--ac:var(--money)}
   .interlude{--ac:var(--line); border-top-style:dashed; padding:18px 28px}
@@ -92,25 +97,26 @@
 <body>
 
 <header class="wrap">
+  <div class="langbar"><button id="langToggle" type="button" aria-label="Switch language">English</button></div>
   <p class="kicker">Blue Marlin Partners</p>
-  <h1 class="serif">人生のカルテを、そろえる。</h1>
-  <p class="lede">意識がととのうと、からだが健やかになる。<br>
+  <h1 class="serif" data-t="h1">人生のカルテを、そろえる。</h1>
+  <p class="lede" data-t="lede">意識がととのうと、からだが健やかになる。<br>
   健やかさは時間を生み、時間は誰かへの貢献にかわる。<br>
   貢献は信用というつながりを育て、信用はやがて資産になる。<br>
   私たちはこの流れを信じて、それぞれの段を支える道具を作っています。<br>
   どれも単体で使えて、同じアカウントでつながります。</p>
   <div class="layers">
-    <span class="l2"><b>意識</b></span>
+    <span class="l2"><b data-t="ly1">意識</b></span>
     <span class="arrow">→</span>
-    <span class="l1"><b>健康</b></span>
+    <span class="l1"><b data-t="ly2">健康</b></span>
     <span class="arrow">→</span>
-    <span class="l0"><b>時間</b></span>
+    <span class="l0"><b data-t="ly3">時間</b></span>
     <span class="arrow">→</span>
-    <span class="l3"><b>貢献</b></span>
+    <span class="l3"><b data-t="ly4">貢献</b></span>
     <span class="arrow">→</span>
-    <span class="l4"><b>信用</b>　関係</span>
+    <span class="l4"><b data-t="ly5">信用</b></span>
     <span class="arrow">→</span>
-    <span class="l5"><b>資産</b>　お金</span>
+    <span class="l5"><b data-t="ly6">資産</b></span>
   </div>
 </header>
 
@@ -118,52 +124,52 @@
   <div class="grid">
 
     <section class="card c-mind">
-      <p class="tag">一　意識</p>
-      <h2 class="serif">禅トラック</h2>
+      <p class="tag" data-t="t1">一　意識</p>
+      <h2 class="serif" data-t="n1">禅トラック</h2>
       <p class="en">ZenTrack</p>
-      <p class="mission">こころの状態を、毎日おなじ場所から眺める。</p>
-      <p class="desc">すべてはここから始まります。意識の状態を七つの層で定点観測し、変化を見えるようにします。坐禅や日記、音声の記録とつないで、気分ではなく「観測」でこころを整える習慣をつくります。</p>
-      <p class="cta"><a href="https://zentrack-frontend-i1zp.onrender.com/" target="_blank" rel="noopener">禅トラックをひらく</a></p>
+      <p class="mission" data-t="m1">こころの状態を、毎日おなじ場所から眺める。</p>
+      <p class="desc" data-t="d1">すべてはここから始まります。意識の状態を七つの層で定点観測し、変化を見えるようにします。坐禅や日記、音声の記録とつないで、気分ではなく「観測」でこころを整える習慣をつくります。</p>
+      <p class="cta"><a href="https://zentrack-frontend-i1zp.onrender.com/" target="_blank" rel="noopener" data-t="c1">禅トラックをひらく</a></p>
     </section>
 
     <section class="card c-health">
-      <p class="tag">二　健康</p>
-      <h2 class="serif">健康日記</h2>
+      <p class="tag" data-t="t2">二　健康</p>
+      <h2 class="serif" data-t="n2">健康日記</h2>
       <p class="en">cares</p>
-      <p class="mission">病気と向き合う毎日を、ひとりで抱えない。</p>
-      <p class="desc">ととのった意識は、からだに向き合う力になります。体調や症状を毎日すこしずつ記録すると、蓄積から気づきが返ってきます。診察の前には、経過と質問事項を医師に伝わる形に自動でまとめられます。慢性の不調と長くつき合う方のための、体調の相棒です。</p>
-      <p class="cta"><a href="https://cares.advisers.jp" target="_blank" rel="noopener">健康日記をひらく</a></p>
+      <p class="mission" data-t="m2">病気と向き合う毎日を、ひとりで抱えない。</p>
+      <p class="desc" data-t="d2">ととのった意識は、からだに向き合う力になります。体調や症状を毎日すこしずつ記録すると、蓄積から気づきが返ってきます。診察の前には、経過と質問事項を医師に伝わる形に自動でまとめられます。慢性の不調と長くつき合う方のための、体調の相棒です。</p>
+      <p class="cta"><a href="https://cares.advisers.jp" target="_blank" rel="noopener" data-t="c2">健康日記をひらく</a></p>
     </section>
 
     <div class="card interlude full">
-      <p><span class="num">三　時間</span>　ととのった意識と健やかなからだが、あなたの時間をつくります。時間そのものを分かち合う道具は、いま仕込んでいるところです。</p>
+      <p><span class="num" data-t="t3">三　時間</span>　<span data-t="d3">ととのった意識と健やかなからだが、あなたの時間をつくります。時間そのものを分かち合う道具は、いま仕込んでいるところです。</span></p>
     </div>
 
     <section class="card c-talent">
-      <p class="tag">四　貢献 ─ 才能を活かす</p>
-      <h2 class="serif">ジーニアスファインダー</h2>
+      <p class="tag" data-t="t4">四　貢献 ─ 才能を活かす</p>
+      <h2 class="serif" data-t="n4">ジーニアスファインダー</h2>
       <p class="en">Genius Finder</p>
-      <p class="mission">自分だけの天才性を見つけ、貢献にかえる。</p>
-      <p class="desc">健やかさが生んだ時間を、何に使うか。生まれ持った特性=天才性を診断と対話で掘り当て、それが最も活きる形で誰かの役に立つ道筋を組み直します。書籍から生まれ、六千人以上が自分の入口を見つけたメソッドです。</p>
-      <p class="cta"><a href="https://geniusfinder.me/" target="_blank" rel="noopener">診断をうける</a></p>
+      <p class="mission" data-t="m4">自分だけの天才性を見つけ、貢献にかえる。</p>
+      <p class="desc" data-t="d4">健やかさが生んだ時間を、何に使うか。生まれ持った特性=天才性を診断と対話で掘り当て、それが最も活きる形で誰かの役に立つ道筋を組み直します。書籍から生まれ、六千人以上が自分の入口を見つけたメソッドです。</p>
+      <p class="cta"><a href="https://geniusfinder.me/" target="_blank" rel="noopener" data-t="c4">診断をうける</a></p>
     </section>
 
     <section class="card c-ties">
-      <p class="tag">五　信用 ─ 関係</p>
+      <p class="tag" data-t="t5">五　信用 ─ 関係</p>
       <h2 class="serif">bonds</h2>
       <p class="en">bonds</p>
-      <p class="mission">大切な人との縁を、途切れさせない。</p>
-      <p class="desc">貢献の積み重ねは、信用というつながりになって返ってきます。連絡先とやりとりの記録から、いま連絡すべき人と、ちょうどよい距離感を教えてくれます。時間や知恵やモノを分かち合う申し出も、リンクひとつで。縁を人生の資産として育てる道具です。</p>
-      <p class="cta"><a href="https://bonds-web-xj6szhutkq-an.a.run.app/" target="_blank" rel="noopener">bonds をみる</a></p>
+      <p class="mission" data-t="m5">大切な人との縁を、途切れさせない。</p>
+      <p class="desc" data-t="d5">貢献の積み重ねは、信用というつながりになって返ってきます。連絡先とやりとりの記録から、いま連絡すべき人と、ちょうどよい距離感を教えてくれます。時間や知恵やモノを分かち合う申し出も、リンクひとつで。縁を人生の資産として育てる道具です。</p>
+      <p class="cta"><a href="https://bonds-web-xj6szhutkq-an.a.run.app/" target="_blank" rel="noopener" data-t="c5">bonds をみる</a></p>
     </section>
 
     <section class="card c-money full">
-      <p class="tag">六　資産 ─ お金</p>
-      <h2 class="serif">バリュエーションマトリクス</h2>
+      <p class="tag" data-t="t6">六　資産 ─ お金</p>
+      <h2 class="serif" data-t="n6">バリュエーションマトリクス</h2>
       <p class="en">ValuationMatrix</p>
-      <p class="mission">株価ではなく、価値を見る。</p>
-      <p class="desc">有価証券報告書などの開示の一次情報を、比較できる形に整えるところから作った企業分析サイトです。会社ごと・年度ごと・会計基準ごとにばらばらな財務の科目を統一の物差しに載せているので、どの会社も同じ土俵で正しく比べられます。財務の実態、事業の価値、経営の質までを一続きに。じっくり選んで長く持つ投資のための道具です。</p>
-      <p class="cta"><a href="https://next.valuationmatrix.com/" target="_blank" rel="noopener">バリュエーションマトリクスをひらく</a></p>
+      <p class="mission" data-t="m6">株価ではなく、価値を見る。</p>
+      <p class="desc" data-t="d6">有価証券報告書などの開示の一次情報を、比較できる形に整えるところから作った企業分析サイトです。会社ごと・年度ごと・会計基準ごとにばらばらな財務の科目を統一の物差しに載せているので、どの会社も同じ土俵で正しく比べられます。財務の実態、事業の価値、経営の質までを一続きに。じっくり選んで長く持つ投資のための道具です。</p>
+      <p class="cta"><a href="https://next.valuationmatrix.com/" target="_blank" rel="noopener" data-t="c6">バリュエーションマトリクスをひらく</a></p>
     </section>
 
   </div>
@@ -171,17 +177,78 @@
   <section class="connect">
     <p class="gmark">
       <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
-      Google アカウントでつながります
+      <span data-t="gmark">Google アカウントでつながります</span>
     </p>
-    <h3 class="serif">五つの道具、ひとつのあなた。</h3>
-    <p>それぞれのサービスは、ふだんお使いの Google アカウントでログインできます。同じアカウントで使うほど、道具どうしの連携が深まり、あなたの「人生のカルテ」がひとつにそろっていきます（連携は順次ひろがります）。記録はあなたのものです。いつでも書き出せて、いつでも消せます。</p>
+    <h3 class="serif" data-t="ch3">五つの道具、ひとつのあなた。</h3>
+    <p data-t="cp">それぞれのサービスは、ふだんお使いの Google アカウントでログインできます。同じアカウントで使うほど、道具どうしの連携が深まり、あなたの「人生のカルテ」がひとつにそろっていきます（連携は順次ひろがります）。記録はあなたのものです。いつでも書き出せて、いつでも消せます。</p>
   </section>
 </main>
 
 <footer>
-  <p>ブルー・マーリン・パートナーズ株式会社／株式会社シェアーズ</p>
+  <p data-t="f1">ブルー・マーリン・パートナーズ株式会社／株式会社シェアーズ</p>
   <p><a href="https://bluemarl.in" target="_blank" rel="noopener">bluemarl.in</a></p>
 </footer>
+
+<script>
+(function(){
+  var EN = {
+    _title: "The Chart of a Life — Products by Blue Marlin Partners",
+    h1: "Bringing the chart of your life together.",
+    lede: "When the mind settles, the body grows well.<br>Health gives you time, and time becomes contribution to others.<br>Contribution builds trust, and trust, in time, becomes wealth.<br>We believe in this flow, and we build a tool for each of its steps.<br>Each works on its own. All of them connect through one account.",
+    ly1:"Mind", ly2:"Health", ly3:"Time", ly4:"Contribution", ly5:"Trust", ly6:"Wealth",
+    t1:"I&nbsp;&nbsp;MIND", n1:"ZenTrack",
+    m1:"Watch your mind from the same place, every day.",
+    d1:"Everything starts here. ZenTrack observes the state of your consciousness across seven layers and makes its changes visible. Connected with zazen, journaling and voice notes, it builds a habit of settling the mind by observation, not by mood.",
+    c1:"Open ZenTrack",
+    t2:"II&nbsp;&nbsp;HEALTH", n2:"Health Diary",
+    m2:"No one should face illness alone, day after day.",
+    d2:"A settled mind gives you strength to face your body. Record how you feel a little each day, and the accumulation starts returning insights. Before an appointment, it gathers your history and questions into a form your doctor understands. A companion for those living with chronic conditions.",
+    c2:"Open Health Diary",
+    t3:"III&nbsp;&nbsp;TIME",
+    d3:"A settled mind and a healthy body create your time. A tool for sharing time itself is in the making.",
+    t4:"IV&nbsp;&nbsp;CONTRIBUTION — putting your gift to work", n4:"Genius Finder",
+    m4:"Find your one-of-a-kind genius, and turn it into contribution.",
+    d4:"What will you do with the time your health has given you? Through assessment and dialogue, Genius Finder uncovers the singular gift you were born with, and helps you rebuild life and work around the way it serves others best. Born from a book; over six thousand people have found their doorway.",
+    c4:"Take the assessment",
+    t5:"V&nbsp;&nbsp;TRUST — relationships",
+    m5:"Never let a precious bond go quiet.",
+    d5:"Contribution, over time, returns as trust. From your contacts and history, bonds tells you who to reach out to today, and at what distance. Offer your time, wisdom or belongings with a single link. A tool for growing your relationships into the wealth of a lifetime.",
+    c5:"See bonds",
+    t6:"VI&nbsp;&nbsp;WEALTH — money", n6:"ValuationMatrix",
+    m6:"See value, not price.",
+    d6:"A company-analysis platform built from the ground up on primary disclosures — annual securities reports and filings — normalized until they can truly be compared. Because line items that differ by company, by year and by accounting standard are mapped onto one common yardstick, every company stands on the same ground. Financial reality, business value and quality of management, in one continuous read. A tool for choosing carefully and holding long.",
+    c6:"Open ValuationMatrix",
+    gmark:"Connects with your Google account",
+    ch3:"Five tools. One you.",
+    cp:"Each service signs in with the Google account you already use. The more you use them with the same account, the more they connect, and the chart of your life comes together as one. (Connections roll out step by step.) Your records belong to you: export them anytime, delete them anytime.",
+    f1:"Blue Marlin Partners, Inc. / Sharez, Inc."
+  };
+  var JA = {}; // 初期HTMLが日本語正本。切替時に復元するため初回に採取する
+  var btn = document.getElementById('langToggle');
+  var nodes = document.querySelectorAll('[data-t]');
+  nodes.forEach(function(n){ JA[n.getAttribute('data-t')] = n.innerHTML; });
+  var jaTitle = document.title;
+
+  function apply(lang){
+    var dict = lang === 'en' ? EN : JA;
+    nodes.forEach(function(n){
+      var k = n.getAttribute('data-t');
+      if (dict[k] !== undefined) n.innerHTML = dict[k];
+    });
+    document.documentElement.setAttribute('lang', lang);
+    document.title = lang === 'en' ? EN._title : jaTitle;
+    btn.textContent = lang === 'en' ? '日本語' : 'English';
+    try { localStorage.setItem('bmp-lang', lang); } catch(e){}
+  }
+  btn.addEventListener('click', function(){
+    apply(document.documentElement.getAttribute('lang') === 'en' ? 'ja' : 'en');
+  });
+  var saved = null;
+  try { saved = localStorage.getItem('bmp-lang'); } catch(e){}
+  var initial = saved || ((navigator.language || '').toLowerCase().indexOf('ja') === 0 ? 'ja' : 'en');
+  if (initial === 'en') apply('en');
+})();
+</script>
 
 </body>
 </html>
