@@ -91,6 +91,23 @@
   .cap p{font-size:13.5px; color:var(--sub)}
   .cap .via{margin-top:12px; font-size:12.5px; color:var(--ac); font-weight:600}
 
+  .pricing{margin:52px 0 0}
+  .pricing h3{font-size:19px; font-weight:600; letter-spacing:.06em; text-align:center; margin-bottom:8px}
+  .pricing .sub{text-align:center; font-size:14px; color:var(--sub); margin-bottom:22px}
+  .price-scroll{overflow-x:auto; border:1px solid var(--line); border-radius:var(--radius); background:var(--card)}
+  table.price{border-collapse:collapse; width:100%; min-width:640px; font-size:13.5px}
+  table.price th, table.price td{padding:12px 14px; text-align:center; border-bottom:1px solid var(--line)}
+  table.price th{font-weight:600}
+  table.price thead th{font-size:14px; letter-spacing:.04em; border-bottom:2px solid var(--line)}
+  table.price tbody th{text-align:left; font-weight:600; color:var(--fg); white-space:nowrap}
+  table.price tr:last-child td, table.price tr:last-child th{border-bottom:none}
+  table.price .yr{display:block; font-size:12px; color:var(--sub); font-weight:400; margin-top:2px}
+  table.price .yes{color:var(--health); font-weight:700}
+  table.price .no{color:var(--line)}
+  table.price .std{background:color-mix(in srgb, var(--health) 6%, transparent)}
+  table.price .note-cell{font-size:12.5px; color:var(--sub)}
+  .pricing .foot{text-align:center; font-size:12.5px; color:var(--sub); margin-top:12px}
+
   .connect{
     margin:52px 0 0; padding:36px 32px; text-align:center;
     background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
@@ -213,6 +230,37 @@
     </div>
   </section>
 
+  <section class="pricing">
+    <h3 class="serif" data-t="pr_h">料金プラン</h3>
+    <p class="sub" data-t="pr_sub">まずは無料から。暮らしに根づいたら、道具と伴走を少しずつ足せます。</p>
+    <div class="price-scroll">
+    <table class="price">
+      <thead>
+        <tr>
+          <th></th>
+          <th data-t="pr_free">フリー<span class="yr">¥0</span></th>
+          <th class="std" data-t="pr_std">スタンダード<span class="yr">年間 ¥60,000</span></th>
+          <th data-t="pr_prm">プレミアム<span class="yr">年間 ¥120,000</span></th>
+          <th data-t="pr_exe">エグゼクティブ<span class="yr">年間 ¥1,200,000</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><th data-t="pr_r1">健康日記</th><td class="yes">◯</td><td class="std yes">◯</td><td class="yes">◯</td><td class="yes">◯</td></tr>
+        <tr><th>bonds</th><td class="yes">◯</td><td class="std yes">◯</td><td class="yes">◯</td><td class="yes">◯</td></tr>
+        <tr><th data-t="pr_r3">ジーニアスファインダー</th><td class="note-cell" data-t="pr_diag1">診断</td><td class="std note-cell" data-t="pr_diag2">診断</td><td class="note-cell" data-t="pr_diag3">診断</td><td class="note-cell" data-t="pr_diag4">診断</td></tr>
+        <tr><th data-t="pr_r4">バリュエーションマトリクス</th><td class="note-cell" data-t="pr_vm1">一部機能</td><td class="std note-cell" data-t="pr_vm2">一部機能</td><td class="note-cell" data-t="pr_vm3">一部機能</td><td class="note-cell" data-t="pr_vm4">一部機能</td></tr>
+        <tr><th data-t="pr_r5">禅トラック</th><td class="no">−</td><td class="std yes">◯</td><td class="yes">◯</td><td class="yes">◯</td></tr>
+        <tr><th data-t="pr_r6">bonds のタスク管理</th><td class="no">−</td><td class="std yes">◯</td><td class="yes">◯</td><td class="yes">◯</td></tr>
+        <tr><th data-t="pr_r7">健康日記への録音メモ取り込み</th><td class="no">−</td><td class="std yes">◯</td><td class="yes">◯</td><td class="yes">◯</td></tr>
+        <tr><th data-t="pr_r8">Plaud 端末の貸与（使い放題）</th><td class="no">−</td><td class="std yes">◯</td><td class="yes">◯</td><td class="yes">◯</td></tr>
+        <tr><th data-t="pr_r9">サポート</th><td class="no">−</td><td class="std no">−</td><td class="yes">◯</td><td class="note-cell" data-t="pr_ded1">専任</td></tr>
+        <tr><th data-t="pr_r10">コーチング</th><td class="no">−</td><td class="std no">−</td><td class="yes">◯</td><td class="note-cell" data-t="pr_ded2">専任</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="foot" data-t="pr_foot">価格は税別の年額です。お申し込み・ご相談は info@bluemarl.in へどうぞ。</p>
+  </section>
+
   <section class="connect">
     <p class="gmark">
       <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
@@ -268,6 +316,25 @@
     cap3_n:"Financial capital \u2014 the asset of money",
     cap3_d:"An eye for value, choosing carefully and holding long. The capital of money, built last, on top of health and trust.",
     cap3_v:"Accrues through ValuationMatrix",
+    pr_h:"Plans and pricing",
+    pr_sub:"Start free. As the tools take root in your life, add more, and add companionship.",
+    pr_free:'Free<span class="yr">\u00a50</span>',
+    pr_std:'Standard<span class="yr">\u00a560,000 / year</span>',
+    pr_prm:'Premium<span class="yr">\u00a5120,000 / year</span>',
+    pr_exe:'Executive<span class="yr">\u00a51,200,000 / year</span>',
+    pr_r1:"Health Diary",
+    pr_r3:"Genius Finder",
+    pr_r4:"ValuationMatrix",
+    pr_r5:"ZenTrack",
+    pr_r6:"Task management in bonds",
+    pr_r7:"Voice-memo import into Health Diary",
+    pr_r8:"Plaud recorder on loan, unlimited use",
+    pr_r9:"Support",
+    pr_r10:"Coaching",
+    pr_diag1:"Assessment", pr_diag2:"Assessment", pr_diag3:"Assessment", pr_diag4:"Assessment",
+    pr_vm1:"Core features", pr_vm2:"Core features", pr_vm3:"Core features", pr_vm4:"Core features",
+    pr_ded1:"Dedicated", pr_ded2:"Dedicated",
+    pr_foot:"Annual prices, tax excluded. To sign up or talk it over, write to info@bluemarl.in.",
     gmark:"Connects with your Google account",
     ch3:"Five tools. One you.",
     cp:"Each service signs in with the Google account you already use. The more you use them with the same account, the more they connect, and the chart of your life comes together as one. (Connections roll out step by step.) Your records belong to you: export them anytime, delete them anytime.",
