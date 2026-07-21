@@ -77,6 +77,20 @@
   .interlude p{font-size:13.5px; color:var(--sub)}
   .interlude .num{font-weight:600; letter-spacing:.22em; color:var(--fg)}
 
+  .capitals{margin:52px 0 0}
+  .capitals h3{font-size:19px; font-weight:600; letter-spacing:.06em; text-align:center; margin-bottom:8px}
+  .capitals .sub{text-align:center; font-size:14px; color:var(--sub); margin-bottom:22px}
+  .cap-grid{display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px}
+  @media (max-width:760px){ .cap-grid{grid-template-columns:1fr} }
+  .cap{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    border-top:3px solid var(--ac); padding:24px 22px 20px;
+  }
+  .cap .cap-en{font-size:11.5px; letter-spacing:.18em; color:var(--ac); font-weight:600; text-transform:uppercase}
+  .cap h4{font-size:16.5px; font-weight:600; margin:8px 0 8px}
+  .cap p{font-size:13.5px; color:var(--sub)}
+  .cap .via{margin-top:12px; font-size:12.5px; color:var(--ac); font-weight:600}
+
   .connect{
     margin:52px 0 0; padding:36px 32px; text-align:center;
     background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
@@ -174,6 +188,31 @@
 
   </div>
 
+  <section class="capitals">
+    <h3 class="serif" data-t="cap_h">使うほど、三つの資本がたまる。</h3>
+    <p class="sub" data-t="cap_sub">毎日の記録ややりとりは、消えていく作業ではなく、あなたに積み上がる資本です。</p>
+    <div class="cap-grid">
+      <div class="cap c-health">
+        <p class="cap-en">Physical Capital</p>
+        <h4 data-t="cap1_n">フィジカルキャピタル ─ 健康資産</h4>
+        <p data-t="cap1_d">体調の記録と気づきの蓄積が、からだといういちばんの元手を守り、育てます。すべての活動の土台になる資本です。</p>
+        <p class="via" data-t="cap1_v">健康日記でたまります</p>
+      </div>
+      <div class="cap c-ties">
+        <p class="cap-en">Social Capital</p>
+        <h4 data-t="cap2_n">ソーシャルキャピタル ─ 社会関係資本</h4>
+        <p data-t="cap2_d">縁を途切れさせず、貢献を重ねることで育つ信頼とつながり。困ったときに助け合える、人の資本です。</p>
+        <p class="via" data-t="cap2_v">bonds でたまります</p>
+      </div>
+      <div class="cap c-money">
+        <p class="cap-en">Financial Capital</p>
+        <h4 data-t="cap3_n">フィナンシャルキャピタル ─ 金融資産</h4>
+        <p data-t="cap3_d">価値を見る目で、じっくり選んで長く持つ。健やかさと信頼の上に、最後に積み上がるお金の資本です。</p>
+        <p class="via" data-t="cap3_v">バリュエーションマトリクスでたまります</p>
+      </div>
+    </div>
+  </section>
+
   <section class="connect">
     <p class="gmark">
       <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
@@ -218,6 +257,17 @@
     m6:"See value, not price.",
     d6:"A company-analysis platform built from the ground up on primary disclosures — annual securities reports and filings — normalized until they can truly be compared. Because line items that differ by company, by year and by accounting standard are mapped onto one common yardstick, every company stands on the same ground. Financial reality, business value and quality of management, in one continuous read. A tool for choosing carefully and holding long.",
     c6:"Open ValuationMatrix",
+    cap_h:"The more you use them, the more capital you build.",
+    cap_sub:"Your daily records and exchanges are not chores that vanish. They are capital that accrues to you.",
+    cap1_n:"Physical capital \u2014 the asset of health",
+    cap1_d:"An accumulating record of your condition protects and grows your body, the first asset you own and the ground of everything else.",
+    cap1_v:"Accrues through Health Diary",
+    cap2_n:"Social capital \u2014 the asset of relationships",
+    cap2_d:"Trust and connection grow as you keep bonds alive and contributions flowing. The capital of people, there for you when it matters.",
+    cap2_v:"Accrues through bonds",
+    cap3_n:"Financial capital \u2014 the asset of money",
+    cap3_d:"An eye for value, choosing carefully and holding long. The capital of money, built last, on top of health and trust.",
+    cap3_v:"Accrues through ValuationMatrix",
     gmark:"Connects with your Google account",
     ch3:"Five tools. One you.",
     cp:"Each service signs in with the Google account you already use. The more you use them with the same account, the more they connect, and the chart of your life comes together as one. (Connections roll out step by step.) Your records belong to you: export them anytime, delete them anytime.",
