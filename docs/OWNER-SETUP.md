@@ -431,7 +431,42 @@ Google 連携のボタンを押したとき、いまは「このアプリは Goo
 
 ---
 
-## タスク7：からだの記録のデバイス連携（Oura リング / Withings マット）を有効にする
+## タスク7：禅トラック連携（録音メモを bonds と cares に自動で流す）
+
+これができると、禅トラックに届いた Plaud の文字起こしが、**bonds では「録音メモからのタスクと課題」に、
+cares では「記録」として健康の気づきに**、自動で流れ込みます。bonds が Gmail から直接読む仕組みとは
+本文の照合で重複しないようになっているので、両方が動いていても二重にはなりません。
+
+- ▼ ねらい: 3 つのシステムが同じ「あいことば」を持ち合う。①bonds に 1 つ ②cares に 1 つ ③禅トラックのサーバに宛先と合わせて設定。
+- 事前に用意するもの: 長いランダムな文字列（あいことば）を 1 つ。パスワード生成サイトで 32 文字以上を作ればよいです。
+  bonds 用と cares 用は同じ値でも別の値でもかまいません（同じにすると管理が楽です）。
+
+### 7-A. bonds 側にあいことばを入れる（Google Cloud）
+1. https://console.cloud.google.com/security/secret-manager?project=arctic-anvil-497002-q2 を開く。
+2. 一覧に **`BONDS_ZENTRACK_INGEST_SECRET`** があればクリック→「新しいバージョン」で貼り付け。
+   無ければ「+ シークレットを作成」で名前を `BONDS_ZENTRACK_INGEST_SECRET` にして値にあいことばを貼る。
+3. bonds を本番反映（私に「bonds を本番反映して」でよいです。反映されるまで連携は「準備中」のままで、壊れません）。
+
+### 7-B. cares 側にあいことばを入れる（Google Cloud）
+1. 同じ Secret Manager で、名前 **`cares-zentrack-ingest-secret`** のシークレットを作成（または新バージョン追加）し、あいことばを貼る。
+2. cares を本番反映（cares のデプロイは承認が要るので、私に「cares をデプロイして」と言ってください。手順とゲートはこちらで進めます）。
+
+### 7-C. 禅トラックのサーバに宛先とあいことばを設定する
+禅トラックは AWS のサーバで動いており、環境変数で設定します（systemd の環境設定に追記して再起動）。
+1. サーバの環境変数に次の 4 つを足す:
+   - `CONFIG_BONDS_INGEST_URL` = `https://bonds-api-xj6szhutkq-an.a.run.app/api/ingest/zentrack`
+   - `CONFIG_BONDS_INGEST_SECRET` = （bonds に入れたあいことば）
+   - `CONFIG_CARES_INGEST_URL` = （cares の API の URL）`/api/ingest/zentrack`
+     - cares の API の URL は https://console.cloud.google.com/run?project=arctic-anvil-497002-q2 の `cares-api` の行で確認できます。
+   - `CONFIG_CARES_INGEST_SECRET` = （cares に入れたあいことば）
+2. 禅トラックのアプリを再起動（`sudo systemctl restart zentrack`）。
+3. 疎通確認: 禅トラックのサーバで `curl -X POST http://localhost:8080/test/integrations/forward?days=3` を実行すると、
+   直近 3 日分の文字起こしが bonds と cares に流れます（受け側は同じ内容を二重に取り込まないので、何度実行しても安全です）。
+- 分からなければ止めて、画面の写真を送って相談してください。設定が終わるまで転送は行われないだけで、どのアプリも壊れません。
+
+---
+
+## タスク8：からだの記録のデバイス連携（Oura リング / Withings マット）を有効にする
 
 ▼ ねらい: 指輪やベッドのマットで測った眠り・体調の記録を、毎日自動で bonds（共通の取り込み基盤）に
 集め、健康日記などの道具でそのまま使えるようにする。
@@ -439,7 +474,7 @@ Google 連携のボタンを押したとき、いまは「このアプリは Goo
 終わるまでこの機能は「準備中」と表示されるだけで、アプリは壊れません。
 デバイスをまだ持っていなければ、このタスクはデバイスが届いてからで大丈夫です。
 
-### 7-A. Oura（指輪）のアプリ登録
+### 8-A. Oura（指輪）のアプリ登録
 
 1. https://cloud.ouraring.com/oauth/applications を開く（Oura アカウントでログイン）
    【検索キーワード】Oura API OAuth application
@@ -448,19 +483,19 @@ Google 連携のボタンを押したとき、いまは「このアプリは Goo
    `https://bonds-api-xj6szhutkq-an.a.run.app/api/devices/callback`
 4. 発行された **Client ID**（公開値）と **Client Secret**（秘密の値）を控える
 
-### 7-B. Withings（マット）のアプリ登録
+### 8-B. Withings（マット）のアプリ登録
 
 1. https://developer.withings.com/ を開き、アカウント登録 → 「Create an application」
    【検索キーワード】Withings developer create application
-2. 種類は Public API integration でよい。Callback URL に 7-A と同じ URL を入れる
+2. 種類は Public API integration でよい。Callback URL に 8-A と同じ URL を入れる
 3. **Client ID** と **Client Secret** を控える
 
-### 7-C. 鍵の投入（Secret と公開値の置き場所を間違えないこと）
+### 8-C. 鍵の投入（Secret と公開値の置き場所を間違えないこと）
 
 - **秘密の値（Secret Manager）**: `BONDS_OURA_CLIENT_SECRET` と `BONDS_WITHINGS_CLIENT_SECRET`
   に各 Client Secret を投入（`bash infra/scripts/01-create-secrets.sh` で器はできます）
 - **公開値（デプロイ時の環境変数）**: `OURA_CLIENT_ID` / `WITHINGS_CLIENT_ID` /
-  `DEVICE_OAUTH_REDIRECT_URL`（= 7-A の URL）を GitHub の Variables か deploy 実行時の env に
+  `DEVICE_OAUTH_REDIRECT_URL`（= 8-A の URL）を GitHub の Variables か deploy 実行時の env に
 
 投入後にデプロイすると、設定ページの「からだの記録のデバイス連携」に「つなぐ」ボタンが
 現れます。押して各社の同意画面を通れば、以後は 1 時間ごとに自動で取り込まれます。

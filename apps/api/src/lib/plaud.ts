@@ -2,7 +2,15 @@
 // Gmail API の message payload (MIME ツリー) から「添付のテキストファイル」を見つけ、
 // attachments.get で取った base64url データを本文テキストに落とす。
 // 本文 (メールの body) ではなく添付ファイルを正とする (オーナー指示 2026-07-20)。
+import { createHash } from "node:crypto";
 import { sanitizeProse } from "./plain-text.js";
+
+/** 文字起こし本文の正規化ハッシュ。Gmail 経由と ZenTrack 経由で同じ内容が届いても
+ *  一度だけ取り込むための同一性キー (空白のゆらぎを吸収してから sha256)。 */
+export function transcriptHash(content: string): string {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  return createHash("sha256").update(normalized, "utf8").digest("hex");
+}
 
 export type GmailPart = {
   partId?: string;

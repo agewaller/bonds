@@ -28,7 +28,7 @@ afterAll(async () => {
   delete process.env.ZENTRACK_INGEST_SECRET;
 });
 beforeEach(async () => {
-  await prisma.$executeRawUnsafe('TRUNCATE "import_jobs", "contacts", "contact_interactions", "ai_usage_logs", "prompts" CASCADE');
+  await prisma.$executeRawUnsafe('TRUNCATE "import_jobs", "contacts", "contact_interactions", "ai_usage_logs", "prompts", "voice_memos" CASCADE');
   await seedDdPrompts(prisma);
 });
 
@@ -86,5 +86,60 @@ describe("ZenTrack 受け口 (/api/ingest/zentrack)", () => {
     const job = await prisma.importJob.findUnique({ where: { id: body.jobId } });
     expect(job!.status).toBe("done");
     expect(job!.payload).toBe("");
+    // 録音メモ (タスクと課題) にも入る (source=zentrack・ハッシュつき)
+    expect(body.memo).toBe("created");
+    const memos = await prisma.voiceMemo.findMany({ where: { ownerUid: "owner" } });
+    expect(memos).toHaveLength(1);
+    expect(memos[0]!.source).toBe("zentrack");
+    expect(memos[0]!.contentHash).toBeTruthy();
+    expect(memos[0]!.subject).toBe("朝のふりかえり");
+  });
+
+  it("同じ文字起こしをもう一度送っても録音メモは増えない (経路内の冪等)", async () => {
+    process.env.ZENTRACK_INGEST_SECRET = INGEST_SECRET;
+    const app = createApp({ prisma, generate: fakeExtract });
+    const payload = {
+      transcript: "会議メモ。金曜までに見積もりを送る。",
+      date: "2026-07-20",
+      label: "会議",
+    };
+    const first = await app.request("/api/ingest/zentrack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-zentrack-secret": INGEST_SECRET },
+      body: JSON.stringify(payload),
+    });
+    expect((await first.json()).memo).toBe("created");
+    const again = await app.request("/api/ingest/zentrack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-zentrack-secret": INGEST_SECRET },
+      body: JSON.stringify(payload),
+    });
+    expect((await again.json()).memo).toBe("duplicate");
+    expect(await prisma.voiceMemo.count()).toBe(1);
+  });
+
+  it("Gmail 経由で取り込み済みの文字起こしは、ZenTrack から届いても二重にしない (経路またぎの冪等)", async () => {
+    process.env.ZENTRACK_INGEST_SECRET = INGEST_SECRET;
+    const app = createApp({ prisma, generate: fakeExtract });
+    const transcript = "打ち合わせ。来週の火曜に資料を持参する。  ";
+    // Gmail 経路で入った既存メモ (ハッシュ未計上の旧行 = backfill の対象) を再現
+    await prisma.voiceMemo.create({
+      data: {
+        ownerUid: "owner",
+        gmailMessageId: "gm-1",
+        source: "gmail",
+        content: "打ち合わせ。来週の火曜に資料を持参する。",
+      },
+    });
+    const res = await app.request("/api/ingest/zentrack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-zentrack-secret": INGEST_SECRET },
+      body: JSON.stringify({ transcript, label: "打ち合わせ" }),
+    });
+    expect((await res.json()).memo).toBe("duplicate"); // 空白のゆらぎがあっても同一と判定
+    expect(await prisma.voiceMemo.count()).toBe(1);
+    // backfill で既存行にもハッシュが付いている
+    const row = await prisma.voiceMemo.findFirstOrThrow({ where: { gmailMessageId: "gm-1" } });
+    expect(row.contentHash).toBeTruthy();
   });
 });

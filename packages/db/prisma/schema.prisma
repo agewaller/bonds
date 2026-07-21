@@ -810,7 +810,9 @@ model DdSuggestion {
 model VoiceMemo {
   id             String    @id @default(uuid())
   ownerUid       String    @map("owner_uid")
-  gmailMessageId String    @map("gmail_message_id")
+  gmailMessageId String    @map("gmail_message_id") // Gmail 由来は実 id、ZenTrack 由来は "zentrack:<hash>"
+  source         String    @default("gmail") // gmail / zentrack
+  contentHash    String?   @map("content_hash") // 正規化した本文の sha256。経路が違っても同じ文字起こしを一度だけにする
   subject        String?
   receivedAt     DateTime? @map("received_at")
   content        String // 暗号化 (添付テキストの抜粋)
@@ -821,6 +823,7 @@ model VoiceMemo {
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
   @@unique([ownerUid, gmailMessageId])
+  @@unique([ownerUid, contentHash])
   @@index([ownerUid, status])
   @@map("voice_memos")
 }

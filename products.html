@@ -77,6 +77,52 @@
   .interlude p{font-size:13.5px; color:var(--sub)}
   .interlude .num{font-weight:600; letter-spacing:.22em; color:var(--fg)}
 
+  .capitals{margin:52px 0 0}
+  .capitals h3{font-size:19px; font-weight:600; letter-spacing:.06em; text-align:center; margin-bottom:8px}
+  .capitals .sub{text-align:center; font-size:14px; color:var(--sub); margin-bottom:22px}
+  .cap-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  @media (max-width:760px){ .cap-grid{grid-template-columns:1fr} }
+  .cap{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    border-top:3px solid var(--ac); padding:24px 22px 20px;
+  }
+  .cap .cap-en{font-size:11.5px; letter-spacing:.18em; color:var(--ac); font-weight:600; text-transform:uppercase}
+  .cap h4{font-size:16.5px; font-weight:600; margin:8px 0 8px}
+  .cap p{font-size:13.5px; color:var(--sub)}
+  .cap .via{margin-top:12px; font-size:12.5px; color:var(--ac); font-weight:600}
+
+  .pricing{margin:52px 0 0}
+  .pricing h3{font-size:19px; font-weight:600; letter-spacing:.06em; text-align:center; margin-bottom:8px}
+  .pricing .sub{text-align:center; font-size:14px; color:var(--sub); margin-bottom:22px}
+  .price-scroll{overflow-x:auto; border:1px solid var(--line); border-radius:var(--radius); background:var(--card)}
+  table.price{border-collapse:collapse; width:100%; min-width:640px; font-size:13.5px}
+  table.price th, table.price td{padding:12px 14px; text-align:center; border-bottom:1px solid var(--line)}
+  table.price th{font-weight:600}
+  table.price thead th{font-size:14px; letter-spacing:.04em; border-bottom:2px solid var(--line)}
+  table.price tbody th{text-align:left; font-weight:600; color:var(--fg); white-space:nowrap}
+  table.price tr:last-child td, table.price tr:last-child th{border-bottom:none}
+  table.price .yr{display:block; font-size:12px; color:var(--sub); font-weight:400; margin-top:2px}
+  table.price .yes{color:var(--health); font-weight:700}
+  table.price .no{color:var(--line)}
+  table.price .std{background:color-mix(in srgb, var(--health) 6%, transparent)}
+  table.price .note-cell{font-size:12.5px; color:var(--sub)}
+  .pricing .foot{text-align:center; font-size:12.5px; color:var(--sub); margin-top:12px}
+  .contact{max-width:560px; margin:56px auto 0; padding:0 8px}
+  .contact h3{font-size:19px; font-weight:600; letter-spacing:.06em; text-align:center; margin-bottom:8px}
+  .contact .sub{text-align:center; font-size:14px; color:var(--sub); margin-bottom:20px}
+  .contact label{display:block; font-size:13px; color:var(--sub); margin:14px 0 6px}
+  .contact input, .contact textarea{
+    width:100%; box-sizing:border-box; font:inherit; font-size:14px; color:var(--fg);
+    background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 12px;
+  }
+  .contact textarea{min-height:120px; resize:vertical}
+  .contact button{
+    display:block; margin:20px auto 0; font:inherit; font-size:14px; letter-spacing:.04em;
+    background:var(--fg); color:var(--bg); border:none; border-radius:999px; padding:11px 30px; cursor:pointer;
+  }
+  .contact button:hover{opacity:.85}
+  .contact .note{text-align:center; font-size:12.5px; color:var(--sub); margin-top:12px}
+
   .connect{
     margin:52px 0 0; padding:36px 32px; text-align:center;
     background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
@@ -168,11 +214,73 @@
       <h2 class="serif" data-t="n6">バリュエーションマトリクス</h2>
       <p class="en">ValuationMatrix</p>
       <p class="mission" data-t="m6">株価ではなく、価値を見る。</p>
-      <p class="desc" data-t="d6">有価証券報告書などの開示の一次情報を、比較できる形に整えるところから作った企業分析サイトです。会社ごと・年度ごと・会計基準ごとにばらばらな財務の科目を統一の物差しに載せているので、どの会社も同じ土俵で正しく比べられます。財務の実態、事業の価値、経営の質までを一続きに。じっくり選んで長く持つ投資のための道具です。</p>
+      <p class="desc" data-t="d6">会社の「次の一手」まで織り込む、戦略オプション付きの企業価値評価（DCF）が主役です。そこに、会計の誠実さ、経営者の評価、事業の本質的な強さといった、数字の外側を見る他にはない8つの定性分析を重ねて、会社を立体的に評価します。じっくり選んで長く持つ投資のための道具です。</p>
       <p class="cta"><a href="https://next.valuationmatrix.com/" target="_blank" rel="noopener" data-t="c6">バリュエーションマトリクスをひらく</a></p>
     </section>
 
   </div>
+
+  <section class="capitals">
+    <h3 class="serif" data-t="cap_h">使うほど、人生の資本がたまる。</h3>
+    <p class="sub" data-t="cap_sub">毎日の記録ややりとりは、消えていく作業ではなく、あなたに積み上がる資本です。</p>
+    <p class="sub" data-t="cap_src">そしてこれらすべての元手になるのが、ととのった意識です。禅トラックはその土壌を耕します。</p>
+    <div class="cap-grid">
+      <div class="cap c-health">
+        <p class="cap-en">Physical Capital</p>
+        <h4 data-t="cap1_n">フィジカルキャピタル ─ 健康資産</h4>
+        <p data-t="cap1_d">体調の記録と気づきの蓄積が、からだといういちばんの元手を守り、育てます。すべての活動の土台になる資本です。</p>
+        <p class="via" data-t="cap1_v">健康日記でたまります</p>
+      </div>
+      <div class="cap c-talent">
+        <p class="cap-en">Talent Capital</p>
+        <h4 data-t="cap4_n">タレントキャピタル ─ 才能資産</h4>
+        <p data-t="cap4_d">自分だけの天才性は、見つけて磨いて使うほど値打ちを増す元手です。誰かの役に立てるたびに積み上がる、あなた固有の資本です。</p>
+        <p class="via" data-t="cap4_v">ジーニアスファインダーでたまります</p>
+      </div>
+      <div class="cap c-ties">
+        <p class="cap-en">Social Capital</p>
+        <h4 data-t="cap2_n">ソーシャルキャピタル ─ 社会関係資本</h4>
+        <p data-t="cap2_d">縁を途切れさせず、貢献を重ねることで育つ信頼とつながり。困ったときに助け合える、人の資本です。</p>
+        <p class="via" data-t="cap2_v">bonds でたまります</p>
+      </div>
+      <div class="cap c-money">
+        <p class="cap-en">Financial Capital</p>
+        <h4 data-t="cap3_n">フィナンシャルキャピタル ─ 金融資産</h4>
+        <p data-t="cap3_d">価値を見る目で、じっくり選んで長く持つ。健やかさと信頼の上に、最後に積み上がるお金の資本です。</p>
+        <p class="via" data-t="cap3_v">バリュエーションマトリクスでたまります</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="pricing">
+    <h3 class="serif" data-t="pr_h">料金プラン</h3>
+    <p class="sub" data-t="pr_sub">まずは無料から。暮らしに根づいたら、道具と伴走を少しずつ足せます。</p>
+    <div class="price-scroll">
+    <table class="price">
+      <thead>
+        <tr>
+          <th></th>
+          <th data-t="pr_free">フリー<span class="yr">¥0</span></th>
+          <th class="std" data-t="pr_std">スタンダード<span class="yr">年間 ¥60,000</span></th>
+          <th data-t="pr_prm">プレミアム<span class="yr">年間 ¥120,000</span></th>
+          <th data-t="pr_exe">エグゼクティブ<span class="yr">年間 ¥1,200,000</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><th data-t="pr_r1">健康日記</th><td class="yes">◯</td><td class="std yes" data-t="pr_hd_plus">◯<span class="yr">録音メモ取り込み</span></td><td class="yes" data-t="pr_hd_plus2">◯<span class="yr">録音メモ取り込み</span></td><td class="yes" data-t="pr_hd_plus3">◯<span class="yr">録音メモ取り込み</span></td></tr>
+        <tr><th>bonds</th><td class="yes">◯</td><td class="std yes" data-t="pr_bd_plus">◯<span class="yr">タスク自動取り込み</span></td><td class="yes" data-t="pr_bd_plus2">◯<span class="yr">タスク自動取り込み</span></td><td class="yes" data-t="pr_bd_plus3">◯<span class="yr">タスク自動取り込み</span></td></tr>
+        <tr><th data-t="pr_r3">ジーニアスファインダー</th><td class="note-cell" data-t="pr_diag1">診断</td><td class="std note-cell" data-t="pr_diag2">診断</td><td class="note-cell" data-t="pr_diag3">診断</td><td class="note-cell" data-t="pr_diag4">診断</td></tr>
+        <tr><th data-t="pr_r4">バリュエーションマトリクス</th><td class="note-cell" data-t="pr_vm1">一部機能</td><td class="std note-cell" data-t="pr_vm2">一部機能</td><td class="note-cell" data-t="pr_vm3">全機能（利用上限あり）</td><td class="note-cell" data-t="pr_vm4">全機能</td></tr>
+        <tr><th data-t="pr_r5">禅トラック</th><td class="no">−</td><td class="std yes">◯</td><td class="yes">◯</td><td class="yes">◯</td></tr>
+        <tr><th data-t="pr_r8">Plaud 端末の貸与（使い放題）</th><td class="no">−</td><td class="std yes">◯</td><td class="yes">◯</td><td class="yes">◯</td></tr>
+        <tr><th data-t="pr_r9">サポート</th><td class="no">−</td><td class="std no">−</td><td class="yes" data-t="pr_sup3">◯<span class="yr">はじめの取り込みを伴走</span></td><td class="note-cell" data-t="pr_ded1">専任<span class="yr">取り込みはおまかせ</span></td></tr>
+        <tr><th data-t="pr_r10">コーチング</th><td class="no">−</td><td class="std no">−</td><td class="yes">◯</td><td class="note-cell" data-t="pr_ded2">専任</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="foot" data-t="pr_onboard">いちばん大変なのは、最初のデータ集めです。プレミアム以上では、名刺・年賀状・アドレス帳・SNS などからの関係者データの取り込みを、スタッフがあなたと一緒に行います。ためたデータが動き出すところまで、置いていきません。</p>
+    <p class="foot" data-t="pr_foot">価格は税別の年額です。お申し込み・ご相談は info@bluemarl.in へどうぞ。</p>
+  </section>
 
   <section class="connect">
     <p class="gmark">
@@ -181,6 +289,21 @@
     </p>
     <h3 class="serif" data-t="ch3">五つの道具、ひとつのあなた。</h3>
     <p data-t="cp">それぞれのサービスは、ふだんお使いの Google アカウントでログインできます。同じアカウントで使うほど、道具どうしの連携が深まり、あなたの「人生のカルテ」がひとつにそろっていきます（連携は順次ひろがります）。記録はあなたのものです。いつでも書き出せて、いつでも消せます。</p>
+  </section>
+
+  <section class="contact" id="contact">
+    <h3 class="serif" data-t="ct_h">お問い合わせ</h3>
+    <p class="sub" data-t="ct_sub">ご質問・ご相談・お申し込みは、こちらからどうぞ。</p>
+    <form id="contact-form">
+      <label for="ct-name" data-t="ct_name">お名前</label>
+      <input id="ct-name" name="name" type="text" autocomplete="name">
+      <label for="ct-mail" data-t="ct_email">ご連絡先メールアドレス</label>
+      <input id="ct-mail" name="email" type="email" autocomplete="email">
+      <label for="ct-msg" data-t="ct_msg">ご用件</label>
+      <textarea id="ct-msg" name="message" required></textarea>
+      <button type="submit" data-t="ct_send">メールを作成する</button>
+    </form>
+    <p class="note" data-t="ct_note">ボタンを押すと、お使いのメールアプリが宛先入りで開きます。直接お送りいただく場合は info@bluemarl.in へどうぞ。</p>
   </section>
 </main>
 
@@ -216,8 +339,55 @@
     c5:"See bonds",
     t6:"VI&nbsp;&nbsp;WEALTH — money", n6:"ValuationMatrix",
     m6:"See value, not price.",
-    d6:"A company-analysis platform built from the ground up on primary disclosures — annual securities reports and filings — normalized until they can truly be compared. Because line items that differ by company, by year and by accounting standard are mapped onto one common yardstick, every company stands on the same ground. Financial reality, business value and quality of management, in one continuous read. A tool for choosing carefully and holding long.",
+    d6:"At its center is DCF valuation with strategic options — pricing a company all the way through its next move. Layered on top are eight original qualitative analyses found nowhere else: accounting integrity, the caliber of management, the essential strength of the business. Together they give you a three-dimensional view. A tool for choosing carefully and holding long.",
     c6:"Open ValuationMatrix",
+    cap_h:"The more you use them, the more capital you build.",
+    cap_sub:"Your daily records and exchanges are not chores that vanish. They are capital that accrues to you.",
+    cap_src:"And the ground from which all of these grow is a settled mind. ZenTrack tends that soil.",
+    ct_h:"Contact",
+    ct_sub:"Questions, requests, sign-ups — we read every message.",
+    ct_name:"Your name",
+    ct_email:"Your email address",
+    ct_msg:"Message",
+    ct_send:"Compose email",
+    ct_note:"The button opens your usual mail app with the address filled in. You can also write to us directly at info@bluemarl.in.",
+    cap1_n:"Physical capital \u2014 the asset of health",
+    cap1_d:"An accumulating record of your condition protects and grows your body, the first asset you own and the ground of everything else.",
+    cap1_v:"Accrues through Health Diary",
+    cap4_n:"Talent capital \u2014 the asset of your gift",
+    cap4_d:"Your one-of-a-kind genius is an asset that grows in value as you find it, polish it and use it. Capital that is uniquely yours, accruing each time it serves someone.",
+    cap4_v:"Accrues through Genius Finder",
+    cap2_n:"Social capital \u2014 the asset of relationships",
+    cap2_d:"Trust and connection grow as you keep bonds alive and contributions flowing. The capital of people, there for you when it matters.",
+    cap2_v:"Accrues through bonds",
+    cap3_n:"Financial capital \u2014 the asset of money",
+    cap3_d:"An eye for value, choosing carefully and holding long. The capital of money, built last, on top of health and trust.",
+    cap3_v:"Accrues through ValuationMatrix",
+    pr_h:"Plans and pricing",
+    pr_sub:"Start free. As the tools take root in your life, add more, and add companionship.",
+    pr_free:'Free<span class="yr">\u00a50</span>',
+    pr_std:'Standard<span class="yr">\u00a560,000 / year</span>',
+    pr_prm:'Premium<span class="yr">\u00a5120,000 / year</span>',
+    pr_exe:'Executive<span class="yr">\u00a51,200,000 / year</span>',
+    pr_r1:"Health Diary",
+    pr_r3:"Genius Finder",
+    pr_r4:"ValuationMatrix",
+    pr_r5:"ZenTrack",
+    pr_r8:"Plaud recorder on loan, unlimited use",
+    pr_hd_plus:'◯<span class="yr">Voice-memo import</span>',
+    pr_hd_plus2:'◯<span class="yr">Voice-memo import</span>',
+    pr_hd_plus3:'◯<span class="yr">Voice-memo import</span>',
+    pr_bd_plus:'◯<span class="yr">Auto task import</span>',
+    pr_bd_plus2:'◯<span class="yr">Auto task import</span>',
+    pr_bd_plus3:'◯<span class="yr">Auto task import</span>',
+    pr_r9:"Support",
+    pr_r10:"Coaching",
+    pr_diag1:"Assessment", pr_diag2:"Assessment", pr_diag3:"Assessment", pr_diag4:"Assessment",
+    pr_vm1:"Core features", pr_vm2:"Core features", pr_vm3:"All features (usage limits)", pr_vm4:"All features",
+    pr_ded1:'Dedicated<span class="yr">We import for you</span>', pr_ded2:"Dedicated",
+    pr_sup3:'◯<span class="yr">Guided first import</span>',
+    pr_onboard:"The hardest part is gathering your data at the start. With Premium and above, our staff sit with you and bring your contacts in — from business cards, New Year's cards, address books and social exports — until your data is up and working. We don't leave you at the door.",
+    pr_foot:"Annual prices, tax excluded. To sign up or talk it over, write to info@bluemarl.in.",
     gmark:"Connects with your Google account",
     ch3:"Five tools. One you.",
     cp:"Each service signs in with the Google account you already use. The more you use them with the same account, the more they connect, and the chart of your life comes together as one. (Connections roll out step by step.) Your records belong to you: export them anytime, delete them anytime.",
@@ -247,6 +417,19 @@
   try { saved = localStorage.getItem('bmp-lang'); } catch(e){}
   var initial = saved || ((navigator.language || '').toLowerCase().indexOf('ja') === 0 ? 'ja' : 'en');
   if (initial === 'en') apply('en');
+
+  // 問い合わせフォーム: 静的ページのため、宛先入りのメール作成画面を開く方式
+  var form = document.getElementById('contact-form');
+  if (form) form.addEventListener('submit', function(e){
+    e.preventDefault();
+    var name = document.getElementById('ct-name').value.trim();
+    var mail = document.getElementById('ct-mail').value.trim();
+    var msg = document.getElementById('ct-msg').value.trim();
+    var body = msg + '\n\n' + (name ? name + '\n' : '') + (mail || '');
+    location.href = 'mailto:info@bluemarl.in'
+      + '?subject=' + encodeURIComponent('お問い合わせ / Inquiry')
+      + '&body=' + encodeURIComponent(body);
+  });
 })();
 </script>
 
