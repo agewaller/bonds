@@ -136,7 +136,7 @@ import {
   type ShareStatus,
   type CounterpartResponse,
 } from "./lib/sharing.js";
-import { normalizeProduct, normalizeEmail, matchByEmail } from "./lib/integration.js";
+import { normalizeProduct, normalizeEmail as normalizeFromAddress, matchByEmail } from "./lib/integration.js";
 import { parseIcsBusy, parseIcsEvents, looksLikeIcs, buildMeetingInviteIcs, type IsoEvent } from "./lib/ics.js";
 import {
   buildMailer,
@@ -7872,12 +7872,12 @@ export function createApp(deps: AppDeps) {
       };
     }
     // SendGrid: from は "名前 <addr>"、text は本文、envelope は {"from":"addr",...}。
-    let from = normalizeEmail(field("from"));
+    let from = normalizeFromAddress(field("from"));
     if (!from) {
       const env = field("envelope");
       if (env) {
         try {
-          from = normalizeEmail((JSON.parse(env) as { from?: string }).from);
+          from = normalizeFromAddress((JSON.parse(env) as { from?: string }).from);
         } catch {
           // envelope が壊れていても from 無しとして扱う
         }

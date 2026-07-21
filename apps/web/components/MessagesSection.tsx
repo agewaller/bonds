@@ -4,6 +4,7 @@
 // 送るときは常に本文を目で確かめてから (外に出る行動は承認前提)。
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../lib/client-api";
+import { t, currentLocale } from "../lib/i18n";
 
 type Message = {
   id: string;
@@ -27,7 +28,9 @@ const btn = (primary = true) =>
 
 function fmtDate(iso: string) {
   const d = new Date(iso);
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const hm = `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (currentLocale() === "en") return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
 }
 
 export function MessagesSection({ contactId, contactEmail }: { contactId: string; contactEmail: string | null }) {
@@ -62,15 +65,15 @@ export function MessagesSection({ contactId, contactEmail }: { contactId: string
       });
       const rb = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(rb.detail ?? "うまくいきませんでした。しばらくしてからお試しください");
+        setError(rb.detail ?? t("x_error_retry_later"));
         return;
       }
       if (reallySend && rb.message?.status === "sent") {
-        setNotice("お送りしました。やりとりの記録にも残しています");
+        setNotice(t("x_msg_sent_recorded"));
       } else if (reallySend && rb.message?.status === "failed") {
-        setError("送信できませんでした。下書きとして残しています");
+        setError(t("x_msg_send_failed_draft"));
       } else {
-        setNotice("下書きとして残しました");
+        setNotice(t("x_msg_saved_draft"));
       }
       setSubject("");
       setBody("");
@@ -84,13 +87,13 @@ export function MessagesSection({ contactId, contactEmail }: { contactId: string
 
   return (
     <section style={{ marginTop: 32 }}>
-      <h2 style={{ fontSize: 18 }}>やりとり (メッセージ)</h2>
+      <h2 style={{ fontSize: 18 }}>{t("x_msg_heading")}</h2>
       {notice && <p style={{ color: "#166534", background: "#f0fdf4", padding: 8, borderRadius: 8 }}>{notice}</p>}
       {error && (
         <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>{error}</p>
       )}
       {all.length === 0 ? (
-        <p style={{ color: "#64748b" }}>まだやりとりはありません。最初のひとことを送ってみませんか。</p>
+        <p style={{ color: "#64748b" }}>{t("x_msg_empty")}</p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
           {all.map((m) => (
@@ -107,39 +110,39 @@ export function MessagesSection({ contactId, contactEmail }: { contactId: string
             >
               <div style={{ whiteSpace: "pre-wrap" }}>{m.body}</div>
               <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
-                {m.direction === "outbound" ? "あなた" : "この方"} ・ {fmtDate(m.createdAt)}
-                {m.status === "draft" && " ・ 下書き"}
-                {m.status === "failed" && " ・ 送れませんでした"}
+                {m.direction === "outbound" ? t("x_msg_you") : t("x_msg_them")} ・ {fmtDate(m.createdAt)}
+                {m.status === "draft" && t("x_msg_status_draft")}
+                {m.status === "failed" && t("x_msg_status_failed")}
               </div>
             </div>
           ))}
         </div>
       )}
       <label style={{ display: "block", margin: "8px 0" }}>
-        題名 (任意)
+        {t("x_msg_subject_label")}
         <input style={input} value={subject} onChange={(e) => setSubject(e.target.value)} />
       </label>
       <label style={{ display: "block", margin: "8px 0" }}>
-        メッセージ
+        {t("x_msg_body_label")}
         <textarea
           style={input}
           rows={3}
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder="お元気ですか。ふと思い出してご連絡しました。"
+          placeholder={t("x_msg_placeholder")}
         />
       </label>
       <div style={{ display: "flex", gap: 8 }}>
         <button style={btn()} onClick={() => void send(true)} disabled={busy || !body.trim() || !contactEmail}>
-          送る
+          {t("x_msg_send")}
         </button>
         <button style={btn(false)} onClick={() => void send(false)} disabled={busy || !body.trim()}>
-          下書きとして残す
+          {t("x_msg_save_draft")}
         </button>
       </div>
       {!contactEmail && (
         <p style={{ color: "#64748b", fontSize: 13, marginTop: 6 }}>
-          メールアドレスを登録すると、ここからそのまま送れます。
+          {t("x_msg_need_email")}
         </p>
       )}
     </section>

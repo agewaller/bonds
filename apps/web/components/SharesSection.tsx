@@ -3,6 +3,7 @@
 // 送ると相手用のリンクが発行され、相手はログインなしで受け取り/辞退と一言を返せる。
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../lib/client-api";
+import { t } from "../lib/i18n";
 
 type Share = {
   id: string;

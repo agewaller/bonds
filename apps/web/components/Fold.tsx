@@ -3,6 +3,7 @@
 // 見出しをそのままボタンにして、どのパネルもワンタップでたためる。開閉の状態は
 // この端末に記憶する (中身のデータは何も保存しない = PII をブラウザに置かない原則のまま)。
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { t } from "../lib/i18n";
 
 // v2: ホームの各パネルを既定で閉じる方針に変更。旧 v1 の記憶をリセットして
 // 新しい既定 (ホームは閉じた状態) をすぐ反映する (中身のデータは何も保存していない)。
@@ -74,7 +75,7 @@ export default function Fold({
         >
           <span>{title}</span>
           <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 400, flexShrink: 0 }}>
-            {open ? "たたむ" : "ひらく"}
+            {open ? t("x_fold_close") : t("x_fold_open")}
           </span>
         </button>
       </h2>
