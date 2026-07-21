@@ -570,7 +570,8 @@ export function createApp(deps: AppDeps) {
     if (!conn) return c.json({ ...out, note: "google_not_connected" });
     if (!hasMailReadScope(conn.scopes)) return c.json({ ...out, note: "mailread_scope_missing" });
     try {
-      const accessToken = await google.refreshAccessToken(conn.refreshToken);
+      // 検索 (q) は metadata スコープ同居トークンだと 403 のため、readonly だけに絞って取る
+      const accessToken = await google.refreshAccessToken(conn.refreshToken, "https://www.googleapis.com/auth/gmail.readonly");
       const q = async (query: string) => {
         const r = (await google!.apiGet(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=25&q=${encodeURIComponent(query)}`,
@@ -7095,6 +7096,9 @@ export function createApp(deps: AppDeps) {
   // 読むのは from:plaud のメールに限る。1 回の同期で新規は少数ずつ (AI キャップにも従う)。
   const PLAUD_QUERY = "from:plaud has:attachment newer_than:90d";
   const PLAUD_MAX_NEW_PER_RUN = 5;
+  // Gmail はアクセストークンに gmail.metadata が同居していると検索 (q) を 403 で拒否する。
+  // 検索を使うこの経路だけ、readonly スコープに絞ったトークンを取り直す (再同意は不要)。
+  const GMAIL_SEARCH_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
   const runPlaudSync = async (
     ownerUid: string,
   ): Promise<
@@ -7112,7 +7116,7 @@ export function createApp(deps: AppDeps) {
         detail: "録音メモの読み取りには、メールを読む追加の許可が必要です。ボタンからもう一度 Google の同意を進めてください",
       };
     }
-    const accessToken = await google.refreshAccessToken(conn.refreshToken);
+    const accessToken = await google.refreshAccessToken(conn.refreshToken, GMAIL_SEARCH_SCOPE);
     const list = (await google
       .apiGet(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=25&q=${encodeURIComponent(PLAUD_QUERY)}`,

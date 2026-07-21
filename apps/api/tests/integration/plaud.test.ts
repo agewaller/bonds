@@ -16,10 +16,14 @@ let prisma: ExtendedPrismaClient;
 const TRANSCRIPT = "会議メモ。田中さんに金曜までに見積もりを送る。会場の予算は誰が決めるか未定のまま。";
 const transcriptB64 = Buffer.from(TRANSCRIPT, "utf-8").toString("base64url");
 
+const refreshScopes: Array<string | undefined> = [];
 const fakeGoogle: GoogleClient = {
   authUrl: () => "https://accounts.google.com/o/oauth2/v2/auth",
   exchangeCode: async () => ({ refreshToken: "rt", accessToken: "at", email: "me@example.com", name: "me", grantedScopes: "" }),
-  refreshAccessToken: async () => "at",
+  refreshAccessToken: async (_rt, scopes) => {
+    refreshScopes.push(scopes);
+    return "at";
+  },
   apiGet: async (url) => {
     if (url.includes("/messages?")) return { messages: [{ id: "pm1" }] };
     if (url.includes("/messages/pm1/attachments/att1")) return { data: transcriptB64 };
@@ -79,6 +83,9 @@ describe("録音メモの読み取りと整理", () => {
     const sync = await (await app.request("/api/relationship/sync-plaud", { method: "POST", headers: H, body: "{}" })).json();
     expect(sync.imported).toBe(1);
     expect(sync.digested).toBe(1);
+    // Gmail の検索 (q) は metadata スコープ同居トークンだと 403 のため、
+    // readonly だけに絞ったトークンを取り直していること (本番 403 の再発防止)
+    expect(refreshScopes.at(-1)).toBe("https://www.googleapis.com/auth/gmail.readonly");
 
     const list = await (await app.request("/api/relationship/voice-memos", { headers: H })).json();
     expect(list.memos).toHaveLength(1);

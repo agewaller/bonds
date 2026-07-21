@@ -331,7 +331,10 @@ export type GoogleClient = {
     name: string | null; // id_token の name (profile スコープを求めたときだけ入る)
     grantedScopes: string | null; // 実際に許可されたスコープ (space 区切り)
   }>;
-  refreshAccessToken: (refreshToken: string) => Promise<string>;
+  // scopes を渡すと、許可済みの範囲内でそのスコープだけに絞ったトークンを取る (RFC 6749 §6)。
+  // Gmail はトークンに gmail.metadata が同居していると検索 (q) を 403 で拒否するため、
+  // 検索が要る経路 (Plaud) は gmail.readonly だけに絞って取り直す。
+  refreshAccessToken: (refreshToken: string, scopes?: string) => Promise<string>;
   apiGet: (url: string, accessToken: string) => Promise<unknown>;
   apiPost: (url: string, accessToken: string, body: unknown) => Promise<unknown>;
 };
@@ -399,12 +402,13 @@ export function buildGoogleClient(): GoogleClient | null {
         grantedScopes: t.scope ?? null,
       };
     },
-    refreshAccessToken: async (refreshToken) => {
+    refreshAccessToken: async (refreshToken, scopes) => {
       const t = await tokenReq({
         refresh_token: refreshToken,
         client_id: clientId,
         client_secret: clientSecret,
         grant_type: "refresh_token",
+        ...(scopes ? { scope: scopes } : {}),
       });
       if (!t.access_token) throw new Error("google_token_error: no access_token");
       return t.access_token;
@@ -414,7 +418,10 @@ export function buildGoogleClient(): GoogleClient | null {
         headers: { Authorization: `Bearer ${accessToken}` },
         signal: AbortSignal.timeout(20000),
       });
-      if (!res.ok) throw new Error(`google_api_error: ${res.status} ${url.split("?")[0]}`);
+      if (!res.ok) {
+        const detail = (await res.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 200);
+        throw new Error(`google_api_error: ${res.status} ${url.split("?")[0]} ${detail}`);
+      }
       return res.json();
     },
     apiPost: async (url, accessToken, body) => {
