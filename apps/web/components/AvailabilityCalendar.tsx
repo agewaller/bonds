@@ -7,6 +7,7 @@ import FullCalendar from "@fullcalendar/react";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import jaLocale from "@fullcalendar/core/locales/ja";
+import { t, currentLocale } from "../lib/i18n";
 
 export type AvailabilitySlotRow = { id: string; start: string; end: string };
 export type BusyInterval = { start: string; end: string };
@@ -25,7 +26,10 @@ export default function AvailabilityCalendar({
   onCreate: (startIso: string, endIso: string) => void;
   onDelete: (id: string) => void;
 }) {
-  const WD = ["日", "月", "火", "水", "木", "金", "土"];
+  const en = currentLocale() === "en";
+  const WD = en
+    ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    : ["日", "月", "火", "水", "木", "金", "土"];
   return (
     // 7 列がモバイル幅で潰れて曜日ヘッダの文字が重なるため、横スクロール可 + 最小幅を確保する。
     <div className="bonds-fc" style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
@@ -33,7 +37,7 @@ export default function AvailabilityCalendar({
       <FullCalendar
         plugins={[timeGridPlugin, interactionPlugin]}
         initialView="timeGridWeek"
-        locale={jaLocale}
+        locale={en ? "en" : jaLocale}
         headerToolbar={{ left: "prev,next today", center: "title", right: "" }}
         height="auto"
         allDaySlot={false}
@@ -82,7 +86,7 @@ export default function AvailabilityCalendar({
             id: s.id,
             start: s.start,
             end: s.end,
-            title: "空き (タップで消す)",
+            title: t("x_cal_free_slot"),
             backgroundColor: "#16a34a",
             borderColor: "#15803d",
           })),

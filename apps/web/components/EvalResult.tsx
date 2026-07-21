@@ -1,6 +1,19 @@
 // 人物評価の結果表示 (共有可能な公開ページと、オーナーの詳細ページで共用)。
 // フックやブラウザ API を使わない純粋な表示部品なので、server/client どちらでも使える。
 // 長い散文は折りたたみ (details)、記号装飾は出さない (BR-09)。
+import { DICT_SUBJECTS } from "../lib/i18n-dict-subjects";
+
+// lib/i18n.ts は "use client" のため、server でも描画されるこの部品からは直接呼べない。
+// 同じ規則 (cookie bonds_locale / en 未訳は ja へフォールバック) をここで最小限に再現する。
+// server 描画 (公開ページ /p/[slug]) では従来どおり ja になる。
+function tt(key: string): string {
+  const entry = DICT_SUBJECTS[key];
+  if (!entry) return key;
+  const en =
+    typeof document !== "undefined" &&
+    document.cookie.match(/(?:^|; )bonds_locale=([^;]+)/)?.[1] === "en";
+  return (en ? entry.en : undefined) ?? entry.ja ?? key;
+}
 
 export type DimensionResult = {
   score: number;
@@ -47,24 +60,23 @@ export type RunSummary = {
   createdAt: string;
 };
 
-const DIM_LABEL: Record<string, string> = {
-  "1D": "一の次元", "2D": "二の次元", "3D": "三の次元", "4D": "四の次元",
-  "5D": "五の次元", "6D": "六の次元", "7D": "七の次元",
+// 次元 / 確からしさ → 辞書キー (表示時に tt() で引く)
+const DIM_LABEL_KEY: Record<string, string> = {
+  "1D": "s_dim_1d", "2D": "s_dim_2d", "3D": "s_dim_3d", "4D": "s_dim_4d",
+  "5D": "s_dim_5d", "6D": "s_dim_6d", "7D": "s_dim_7d",
 };
 // 各次元が何を見ているかの、やさしい一言 (専門用語を避ける。65歳ペルソナ)。
-const DIM_DESC: Record<string, string> = {
-  "1D": "数字や実績で示す力。成果・データ・目に見える結果。",
-  "2D": "構造や論理、人との関係で物事をとらえる力。",
-  "3D": "現場に立ち、体を使って実際に動く力。",
-  "4D": "時間や因果、制度や倫理をふまえて長く広く考える力。",
-  "5D": "自分ならではの使命や可能性に生きる力。",
-  "6D": "全体をつなぎ、愛や共創で社会に価値を生む力。",
-  "7D": "手放し、余白を持ち、所有にとらわれない力。",
+const DIM_DESC_KEY: Record<string, string> = {
+  "1D": "s_dimdesc_1d", "2D": "s_dimdesc_2d", "3D": "s_dimdesc_3d", "4D": "s_dimdesc_4d",
+  "5D": "s_dimdesc_5d", "6D": "s_dimdesc_6d", "7D": "s_dimdesc_7d",
 };
 const RANK_COLOR: Record<string, string> = {
   S: "#7c3aed", A: "#2563eb", B: "#0891b2", C: "#d97706", D: "#64748b",
 };
-const CONF_LABEL: Record<string, string> = { A: "確か", B: "概ね確か", C: "推計含む", D: "情報少" };
+const CONF_LABEL_KEY: Record<string, string> = {
+  A: "s_conf_a", B: "s_conf_b", C: "s_conf_c", D: "s_conf_d",
+};
+const confLabel = (c: string) => (CONF_LABEL_KEY[c] ? tt(CONF_LABEL_KEY[c]) : c);
 
 export function Collapsible({ title, text }: { title: string; text?: string }) {
   if (!text) return null;
@@ -121,7 +133,7 @@ export function Section7d({ run }: { run: RunSummary }) {
   const s = run.scores as Scores7d | null;
   if (!s) return null;
   if (!s.identified) {
-    return <p>この名前からは公人を特定できませんでした。{s.reason}</p>;
+    return <p>{tt("s_not_identified")}{s.reason}</p>;
   }
   return (
     <div>
@@ -129,31 +141,31 @@ export function Section7d({ run }: { run: RunSummary }) {
       <ScoreHero
         value={s.publicValueScore ?? 0}
         max={100}
-        chip={`ランク ${s.rank}`}
+        chip={tt("s_rank_chip").replace("{rank}", s.rank ?? "")}
         chipColor={RANK_COLOR[s.rank ?? "D"] ?? "#64748b"}
-        caption="公的社会価値創造スコア"
+        caption={tt("s_public_value_caption")}
       />
       <p style={{ color: "#64748b", fontSize: 13, margin: "4px 0 8px" }}>
-        七つの意識の次元それぞれを10点満点で見ています。各項目の下に、その次元が何を見ているかを添えました。
+        {tt("s_7d_lead")}
       </p>
       <div style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px" }}>
         {Object.entries(s.dimensions ?? {}).map(([k, d]) => (
           <Meter
             key={k}
-            label={DIM_LABEL[k] ?? k}
-            hint={CONF_LABEL[d.confidence] ?? d.confidence}
+            label={DIM_LABEL_KEY[k] ? tt(DIM_LABEL_KEY[k]) : k}
+            hint={confLabel(d.confidence)}
             score={d.score}
             max={10}
-            right={s.allocation?.[k] != null ? `意識 ${s.allocation[k]}%` : undefined}
-            note={DIM_DESC[k]}
+            right={s.allocation?.[k] != null ? tt("s_allocation").replace("{pct}", String(s.allocation[k])) : undefined}
+            note={DIM_DESC_KEY[k] ? tt(DIM_DESC_KEY[k]) : undefined}
           />
         ))}
       </div>
-      <Collapsible title="総括" text={s.summary} />
-      <Collapsible title="生み出した価値の見立て" text={s.createdValueEstimate} />
-      <Collapsible title="社会的なコストや課題" text={s.socialCosts} />
-      <Collapsible title="もしこの人がいなかったら" text={s.counterfactual} />
-      <Collapsible title="さらに伸びる条件" text={(s.evolutionConditions ?? []).join("\n")} />
+      <Collapsible title={tt("s_summary")} text={s.summary} />
+      <Collapsible title={tt("s_created_value_estimate")} text={s.createdValueEstimate} />
+      <Collapsible title={tt("s_social_costs")} text={s.socialCosts} />
+      <Collapsible title={tt("s_counterfactual")} text={s.counterfactual} />
+      <Collapsible title={tt("s_evolution_conditions")} text={(s.evolutionConditions ?? []).join("\n")} />
     </div>
   );
 }
@@ -162,7 +174,7 @@ export function SectionSvc({ run }: { run: RunSummary }) {
   const s = run.scores as ScoresSvc | null;
   if (!s) return null;
   if (!s.identified) {
-    return <p>この名前からは公人を特定できませんでした。{s.reason}</p>;
+    return <p>{tt("s_not_identified")}{s.reason}</p>;
   }
   return (
     <div>
@@ -170,30 +182,38 @@ export function SectionSvc({ run }: { run: RunSummary }) {
       <ScoreHero
         value={s.total100 ?? 0}
         max={100}
-        chip={`10段階で ${s.grade}`}
+        chip={tt("s_grade_chip").replace("{grade}", String(s.grade))}
         chipColor="#0891b2"
-        caption={s.counterfactualContributionPct != null ? `本人ならではの貢献 ${s.counterfactualContributionPct}%` : "社会価値創造"}
+        caption={
+          s.counterfactualContributionPct != null
+            ? tt("s_svc_contrib").replace("{pct}", String(s.counterfactualContributionPct))
+            : tt("s_ddtype_social_value_creation")
+        }
       />
       {s.createdValue && (
         <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 12, padding: "10px 16px", margin: "8px 0" }}>
-          <div style={{ color: "#0369a1", fontSize: 13 }}>生み出した価値の推計 (確からしさ {CONF_LABEL[s.createdValue.confidence] ?? s.createdValue.confidence})</div>
+          <div style={{ color: "#0369a1", fontSize: 13 }}>
+            {tt("s_created_value_box").replace("{conf}", confLabel(s.createdValue.confidence))}
+          </div>
           <div style={{ fontSize: 18, fontWeight: 700, color: "#0c4a6e" }}>
-            年間 {s.createdValue.annualJpy || "推計困難"} ・ 累積 {s.createdValue.cumulativeJpy || "推計困難"}
+            {tt("s_value_amounts")
+              .replace("{annual}", s.createdValue.annualJpy || tt("s_estimate_hard"))
+              .replace("{cumulative}", s.createdValue.cumulativeJpy || tt("s_estimate_hard"))}
           </div>
         </div>
       )}
       <p style={{ color: "#64748b", fontSize: 13, margin: "4px 0 8px" }}>
-        社会にどんな価値を生んだかを、いくつかの観点それぞれ10点満点で見ています。各項目の下に、その見立ての理由を添えました。
+        {tt("s_svc_lead")}
       </p>
       <div style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px" }}>
         {(s.items ?? []).map((it) => (
           <Meter key={it.key} label={it.key} score={it.score} max={10} note={it.reason} />
         ))}
       </div>
-      <Collapsible title="総括" text={s.summary} />
-      <Collapsible title="総合判断" text={s.verdict} />
-      <Collapsible title="新しい視点" text={s.somethingNew} />
-      <Collapsible title="この評価の限界" text={(s.limitations ?? []).join("\n")} />
+      <Collapsible title={tt("s_summary")} text={s.summary} />
+      <Collapsible title={tt("s_verdict")} text={s.verdict} />
+      <Collapsible title={tt("s_something_new")} text={s.somethingNew} />
+      <Collapsible title={tt("s_limitations")} text={(s.limitations ?? []).join("\n")} />
     </div>
   );
 }
@@ -203,9 +223,14 @@ export function evalHeadline(name: string, r7?: RunSummary, rSvc?: RunSummary): 
   const parts: string[] = [];
   const s7 = r7?.status === "completed" ? (r7.scores as Scores7d | null) : null;
   if (s7 && typeof s7.publicValueScore === "number") {
-    parts.push(`公的社会価値創造 ${s7.publicValueScore}/100${s7.rank ? `(ランク${s7.rank})` : ""}`);
+    parts.push(
+      tt("s_headline_7d").replace("{score}", String(s7.publicValueScore)) +
+        (s7.rank ? tt("s_headline_rank").replace("{rank}", s7.rank) : ""),
+    );
   }
   const sS = rSvc?.status === "completed" ? (rSvc.scores as ScoresSvc | null) : null;
-  if (sS && typeof sS.total100 === "number") parts.push(`社会価値創造 ${sS.total100}/100`);
-  return parts.length ? `${name}: ${parts.join(" ・ ")}` : `${name} の人物評価`;
+  if (sS && typeof sS.total100 === "number") {
+    parts.push(tt("s_headline_svc").replace("{score}", String(sS.total100)));
+  }
+  return parts.length ? `${name}: ${parts.join(" ・ ")}` : tt("s_share_title").replace("{name}", name);
 }

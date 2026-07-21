@@ -4,6 +4,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../../lib/client-api";
 import Link from "next/link";
+import { t } from "../../lib/i18n";
+import { LanguageSelector } from "../../components/LanguageSelector";
 
 type Resource = {
   id: string;
@@ -25,7 +27,12 @@ const btn = (primary = true) =>
     cursor: "pointer",
   }) as const;
 
-const KIND_LABEL: Record<string, string> = { time: "時間", wisdom: "知恵", thing: "モノ" };
+// 表示ラベルは辞書キーへの対応表にして、描画のたびに t() で引く (言語切替に追従)
+const KIND_KEY: Record<string, string> = {
+  time: "x_share_kind_time",
+  wisdom: "x_share_kind_wisdom",
+  thing: "x_share_kind_thing",
+};
 
 export default function ResourcesPage() {
   const [resources, setResources] = useState<Resource[]>([]);
@@ -61,7 +68,7 @@ export default function ResourcesPage() {
       });
       if (!res.ok) {
         const rb = await res.json().catch(() => ({}));
-        setError(rb.detail ?? "うまくいきませんでした");
+        setError(rb.detail ?? t("x_error_generic"));
         return;
       }
       setTitle("");
@@ -85,61 +92,60 @@ export default function ResourcesPage() {
 
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
-      <p>
-        <Link href="/contacts" style={{ color: "#2563eb" }}>連絡帳へ戻る</Link>
-      </p>
-      <h1 style={{ fontSize: 24 }}>差し出せるもの</h1>
-      <p style={{ color: "#64748b" }}>
-        あなたがシェアできる時間・知恵・モノをここに置いておくと、どなたかの力になりたいとき、すぐに差し出せます。
-      </p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <Link href="/contacts" style={{ color: "#2563eb" }}>{t("x_back_contacts")}</Link>
+        <LanguageSelector />
+      </div>
+      <h1 style={{ fontSize: 24 }}>{t("x_res_title")}</h1>
+      <p style={{ color: "#64748b" }}>{t("x_res_desc")}</p>
       {error && (
         <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>{error}</p>
       )}
 
       <section style={{ marginTop: 16, border: "1px solid #e2e8f0", borderRadius: 12, padding: 16 }}>
-        <h2 style={{ fontSize: 16, marginTop: 0 }}>新しく登録する</h2>
+        <h2 style={{ fontSize: 16, marginTop: 0 }}>{t("x_res_new")}</h2>
         <div style={{ display: "flex", gap: 8, margin: "8px 0" }}>
-          <select style={{ ...input, width: "auto" }} value={kind} onChange={(e) => setKind(e.target.value)} aria-label="種類">
-            <option value="time">時間 (手伝う・付き添う)</option>
-            <option value="wisdom">知恵 (教える・相談に乗る)</option>
-            <option value="thing">モノ (譲る・貸す)</option>
+          <select style={{ ...input, width: "auto" }} value={kind} onChange={(e) => setKind(e.target.value)} aria-label={t("x_res_aria_kind")}>
+            <option value="time">{t("x_share_opt_time")}</option>
+            <option value="wisdom">{t("x_share_opt_wisdom")}</option>
+            <option value="thing">{t("x_share_opt_thing")}</option>
           </select>
           <input
             style={{ ...input, flex: 1, width: "auto" }}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="例: 事業計画の壁打ちに乗れます"
-            aria-label="内容"
+            placeholder={t("x_res_title_ph")}
+            aria-label={t("x_share_title_label")}
           />
         </div>
         <label style={{ display: "block", margin: "8px 0" }}>
-          くわしく (任意)
+          {t("x_res_desc_label")}
           <textarea style={input} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
         </label>
         <label style={{ display: "block", margin: "8px 0" }}>
-          いつなら・どのくらい (任意)
-          <input style={input} value={availability} onChange={(e) => setAvailability(e.target.value)} placeholder="例: 平日夜 / 月2回まで" />
+          {t("x_res_avail_label")}
+          <input style={input} value={availability} onChange={(e) => setAvailability(e.target.value)} placeholder={t("x_res_avail_ph")} />
         </label>
         <button style={btn()} onClick={() => void create()} disabled={busy || !title.trim()}>
-          登録する
+          {t("x_res_register")}
         </button>
       </section>
 
       <section style={{ marginTop: 24 }}>
         {resources.length === 0 ? (
-          <p style={{ color: "#64748b" }}>まだ登録がありません。小さなことで構いません。</p>
+          <p style={{ color: "#64748b" }}>{t("x_res_empty")}</p>
         ) : (
           <ul style={{ paddingLeft: 0, listStyle: "none" }}>
             {resources.map((r) => (
               <li key={r.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", marginBottom: 8 }}>
                 <div>
                   <strong>{r.title}</strong>
-                  <span style={{ color: "#64748b", marginLeft: 8, fontSize: 13 }}>{KIND_LABEL[r.kind] ?? r.kind}</span>
+                  <span style={{ color: "#64748b", marginLeft: 8, fontSize: 13 }}>{KIND_KEY[r.kind] ? t(KIND_KEY[r.kind]) : r.kind}</span>
                 </div>
                 {r.description && <div style={{ color: "#334155", fontSize: 14 }}>{r.description}</div>}
                 {r.availability && <div style={{ color: "#64748b", fontSize: 13 }}>{r.availability}</div>}
                 <button style={{ ...btn(false), marginTop: 6, fontSize: 13 }} onClick={() => void archive(r.id)} disabled={busy}>
-                  しまう
+                  {t("x_res_archive")}
                 </button>
               </li>
             ))}

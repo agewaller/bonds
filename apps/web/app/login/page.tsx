@@ -12,6 +12,7 @@ import {
   authErrorMessage,
 } from "../../lib/firebase";
 import { t } from "../../lib/i18n";
+import { LanguageSelector } from "../../components/LanguageSelector";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -46,13 +47,16 @@ export default function LoginPage() {
       if (done) router.replace("/contacts");
     } catch (e) {
       const code = e && typeof e === "object" && "code" in e ? String((e as { code: unknown }).code) : "";
-      setError(code ? authErrorMessage(code) : "サインインできませんでした。もう一度お試しください");
+      setError(code ? authErrorMessage(code) : t("x_login_failed"));
       setBusy(false);
     }
   };
 
   return (
     <main style={{ maxWidth: 480, margin: "0 auto", padding: "64px 16px", textAlign: "center" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <LanguageSelector />
+      </div>
       <h1>bonds</h1>
       <p>{t("login_tagline")}</p>
       {configured ? (
@@ -70,13 +74,13 @@ export default function LoginPage() {
             opacity: busy ? 0.7 : 1,
           }}
         >
-          {busy ? "サインインしています…" : t("login_google")}
+          {busy ? t("x_login_busy") : t("login_google")}
         </button>
       ) : (
         <p style={{ color: "#64748b" }}>
-          サインインの準備がまだ済んでいません (開発中はそのまま
-          <Link href="/contacts" style={{ color: "#2563eb" }}> 連絡帳 </Link>
-          を使えます)。
+          {t("x_login_unconfigured_before")}
+          <Link href="/contacts" style={{ color: "#2563eb" }}>{t("x_login_unconfigured_link")}</Link>
+          {t("x_login_unconfigured_after")}
         </p>
       )}
       {error && (

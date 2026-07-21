@@ -7,6 +7,7 @@ import FullCalendar from "@fullcalendar/react";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import jaLocale from "@fullcalendar/core/locales/ja";
+import { currentLocale } from "../lib/i18n";
 
 export type IsoSlot = { start: string; end: string };
 
@@ -69,7 +70,10 @@ export default function ShareSlotCalendar({
 
   if (options.length === 0) return null;
 
-  const WD = ["日", "月", "火", "水", "木", "金", "土"];
+  const en = currentLocale() === "en";
+  const WD = en
+    ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    : ["日", "月", "火", "水", "木", "金", "土"];
   return (
     // モバイル幅で 7 列が潰れるため、横スクロール可 + 最小幅を確保する。
     <div className="bonds-fc" style={{ marginTop: 12, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
@@ -78,7 +82,7 @@ export default function ShareSlotCalendar({
         plugins={[timeGridPlugin, interactionPlugin]}
         initialView="timeGridWeek"
         initialDate={initialDate}
-        locale={jaLocale}
+        locale={en ? "en" : jaLocale}
         headerToolbar={{ left: "prev,next", center: "title", right: "" }}
         height="auto"
         allDaySlot={false}

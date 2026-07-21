@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { AuthBar } from "../../components/AuthBar";
 import { apiFetch } from "../../lib/client-api";
+import { t, currentLocale } from "../../lib/i18n";
 
 type SubjectRow = {
   id: string;
@@ -18,10 +19,11 @@ type SubjectRow = {
 
 type Candidate = { name: string; description: string };
 
-const TYPE_LABEL: Record<string, string> = {
-  politician: "政治家",
-  executive: "経営者",
-  other: "その他",
+// subjectType → 辞書キー (表示時に t() で引く)
+const TYPE_LABEL_KEY: Record<string, string> = {
+  politician: "s_type_politician",
+  executive: "s_type_executive",
+  other: "s_type_other",
 };
 
 export default function SubjectsPage() {
@@ -56,7 +58,7 @@ export default function SubjectsPage() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        setError(body.detail ?? "追加できませんでした");
+        setError(body.detail ?? t("s_add_failed"));
         return;
       }
       setName("");
@@ -73,7 +75,7 @@ export default function SubjectsPage() {
     const res = await apiFetch(`dd/subjects/${slug}`, { method: "DELETE" });
     setConfirmingDelete("");
     if (res.ok) await load();
-    else setError("削除できませんでした。もう一度お試しください");
+    else setError(t("s_delete_failed"));
   };
 
   const add = async () => {
@@ -87,7 +89,7 @@ export default function SubjectsPage() {
       const res = await apiFetch("dd/identify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
+        body: JSON.stringify({ name: trimmed, locale: currentLocale() }),
       });
       if (res.ok) {
         const body = await res.json().catch(() => ({ candidates: [] }));
@@ -113,12 +115,12 @@ export default function SubjectsPage() {
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 16, alignItems: "center" }}>
-        <Link href="/settings" style={{ color: "#64748b", fontSize: 14 }}>設定</Link>
+        <Link href="/settings" style={{ color: "#64748b", fontSize: 14 }}>{t("s_settings")}</Link>
         <AuthBar />
       </div>
-      <h1 style={{ fontSize: 24 }}>評価対象の人物</h1>
+      <h1 style={{ fontSize: 24 }}>{t("s_subjects_title")}</h1>
       <p style={{ color: "#64748b" }}>
-        政治家・経営者などの公人を登録すると、意識の七次元と社会価値創造の二つの視点から評価できます。
+        {t("s_subjects_intro")}
       </p>
 
       <div style={{ display: "flex", gap: 8, margin: "16px 0" }}>
@@ -126,19 +128,19 @@ export default function SubjectsPage() {
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && void add()}
-          placeholder="例: 渋沢栄一"
-          aria-label="人物名"
+          placeholder={t("s_name_placeholder")}
+          aria-label={t("s_name_aria")}
           style={{ flex: 1, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8 }}
         />
         <select
           value={subjectType}
           onChange={(e) => setSubjectType(e.target.value)}
-          aria-label="区分"
+          aria-label={t("s_type_aria")}
           style={{ padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8 }}
         >
-          <option value="politician">政治家</option>
-          <option value="executive">経営者</option>
-          <option value="other">その他</option>
+          <option value="politician">{t("s_type_politician")}</option>
+          <option value="executive">{t("s_type_executive")}</option>
+          <option value="other">{t("s_type_other")}</option>
         </select>
         <button
           onClick={() => void add()}
@@ -152,11 +154,11 @@ export default function SubjectsPage() {
             cursor: "pointer",
           }}
         >
-          追加
+          {t("s_add")}
         </button>
       </div>
       {busy && !candidates && (
-        <p style={{ color: "#64748b" }}>どなたのことか確認しています…</p>
+        <p style={{ color: "#64748b" }}>{t("s_identifying")}</p>
       )}
       {error && (
         <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>
@@ -166,7 +168,7 @@ export default function SubjectsPage() {
 
       {candidates && (
         <section
-          aria-label="人物の候補"
+          aria-label={t("s_candidates_aria")}
           style={{
             border: "1px solid #bfdbfe",
             background: "#eff6ff",
@@ -176,7 +178,7 @@ export default function SubjectsPage() {
           }}
         >
           <p style={{ margin: "0 0 10px", fontWeight: 600 }}>
-            「{pendingName}」というお名前の方は複数いるようです。どの方のことか選んでください。
+            {t("s_candidates_lead").replace("{name}", pendingName)}
           </p>
           <div style={{ display: "grid", gap: 8 }}>
             {candidates.map((cd, i) => (
@@ -210,7 +212,7 @@ export default function SubjectsPage() {
                 cursor: "pointer",
               }}
             >
-              この中にはいない (名前のみで登録)
+              {t("s_not_in_list")}
             </button>
             <button
               onClick={() => {
@@ -220,7 +222,7 @@ export default function SubjectsPage() {
               disabled={busy}
               style={{ padding: "8px 14px", background: "none", border: "none", color: "#64748b", cursor: "pointer" }}
             >
-              やめる
+              {t("s_cancel")}
             </button>
           </div>
         </section>
@@ -244,15 +246,18 @@ export default function SubjectsPage() {
             >
               <span>
                 {s.name}
-                <small style={{ color: "#64748b", marginLeft: 8 }}>{TYPE_LABEL[s.subjectType] ?? s.subjectType}</small>
+                <small style={{ color: "#64748b", marginLeft: 8 }}>
+                  {TYPE_LABEL_KEY[s.subjectType] ? t(TYPE_LABEL_KEY[s.subjectType]) : s.subjectType}
+                </small>
                 {s.profileHint && (
                   <small style={{ display: "block", color: "#94a3b8" }}>{s.profileHint}</small>
                 )}
               </span>
               <span style={{ color: "#64748b", whiteSpace: "nowrap" }}>
-                {s.latestScores.consciousness_7d != null && `意識 ${s.latestScores.consciousness_7d}`}
+                {s.latestScores.consciousness_7d != null &&
+                  t("s_score_consciousness").replace("{score}", String(s.latestScores.consciousness_7d))}
                 {s.latestScores.social_value_creation != null &&
-                  ` ・ 価値 ${s.latestScores.social_value_creation}`}
+                  t("s_score_value").replace("{score}", String(s.latestScores.social_value_creation))}
               </span>
             </Link>
             {confirmingDelete === s.slug ? (
@@ -261,27 +266,27 @@ export default function SubjectsPage() {
                   onClick={() => void deleteSubject(s.slug)}
                   style={{ padding: "4px 10px", background: "#b91c1c", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
                 >
-                  削除する
+                  {t("s_delete_confirm")}
                 </button>
                 <button
                   onClick={() => setConfirmingDelete("")}
                   style={{ marginLeft: 6, padding: "4px 10px", background: "none", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
                 >
-                  やめる
+                  {t("s_cancel")}
                 </button>
               </span>
             ) : (
               <button
                 onClick={() => setConfirmingDelete(s.slug)}
-                aria-label={`${s.name} を削除`}
+                aria-label={t("s_delete_person_aria").replace("{name}", s.name)}
                 style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", fontSize: 13, whiteSpace: "nowrap" }}
               >
-                削除
+                {t("s_delete")}
               </button>
             )}
           </li>
         ))}
-        {subjects.length === 0 && <li style={{ color: "#64748b" }}>まだ登録がありません。</li>}
+        {subjects.length === 0 && <li style={{ color: "#64748b" }}>{t("s_subjects_empty")}</li>}
       </ul>
     </main>
   );

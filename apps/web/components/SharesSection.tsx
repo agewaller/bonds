@@ -25,20 +25,26 @@ const btn = (primary = true) =>
     cursor: "pointer",
   }) as const;
 
-const KIND_LABEL: Record<string, string> = { time: "時間", wisdom: "知恵", thing: "モノ" };
-const DIRECTION_LABEL: Record<string, string> = {
-  offer: "差し出す",
-  request: "お願い",
-  inbound: "いただいた",
+// 表示ラベルは辞書キーへの対応表にして、描画のたびに t() で引く (言語切替に追従)
+const KIND_KEY: Record<string, string> = {
+  time: "x_share_kind_time",
+  wisdom: "x_share_kind_wisdom",
+  thing: "x_share_kind_thing",
 };
-const STATUS_LABEL: Record<string, string> = {
-  proposed: "準備中",
-  sent: "お知らせ済み",
-  accepted: "受けてもらえました",
-  declined: "今回は見送り",
-  fulfilled: "実現しました",
-  cancelled: "取りやめ",
+const DIRECTION_KEY: Record<string, string> = {
+  offer: "x_share_dir_offer",
+  request: "x_share_dir_request",
+  inbound: "x_share_dir_inbound",
 };
+const STATUS_KEY: Record<string, string> = {
+  proposed: "x_share_status_proposed",
+  sent: "x_share_status_sent",
+  accepted: "x_share_status_accepted",
+  declined: "x_share_status_declined",
+  fulfilled: "x_share_status_fulfilled",
+  cancelled: "x_share_status_cancelled",
+};
+const label = (map: Record<string, string>, value: string) => (map[value] ? t(map[value]) : value);
 
 export function SharesSection({ contactId }: { contactId: string }) {
   const [shares, setShares] = useState<Share[]>([]);
@@ -73,10 +79,10 @@ export function SharesSection({ contactId }: { contactId: string }) {
       });
       const rb = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(rb.detail ?? "うまくいきませんでした");
+        setError(rb.detail ?? t("x_error_generic"));
         return;
       }
-      setNotice(direction === "inbound" ? "いただいた記録を残しました" : "準備しました。お知らせすると相手用のリンクが発行されます");
+      setNotice(direction === "inbound" ? t("x_share_recorded_inbound") : t("x_share_prepared"));
       setTitle("");
       setMessage("");
       await load();
@@ -95,16 +101,12 @@ export function SharesSection({ contactId }: { contactId: string }) {
       });
       const rb = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(rb.detail ?? "うまくいきませんでした");
+        setError(rb.detail ?? t("x_error_generic"));
         return;
       }
       if (rb.shareUrl) {
         setShareUrl(rb.shareUrl);
-        setNotice(
-          rb.delivered
-            ? "メールでお知らせしました。下のリンクを別の方法で伝えても構いません"
-            : "相手用のリンクができました。メールや口頭でお伝えください",
-        );
+        setNotice(rb.delivered ? t("x_share_notified_mail") : t("x_share_link_ready"));
       }
       await load();
     } finally {
@@ -114,47 +116,45 @@ export function SharesSection({ contactId }: { contactId: string }) {
 
   return (
     <section style={{ marginTop: 32 }}>
-      <h2 style={{ fontSize: 18 }}>時間・知恵・モノのシェア</h2>
-      <p style={{ color: "#64748b", fontSize: 14 }}>
-        お金を介さないやりとりが、つながりを深くします。手伝えること、教えられること、お譲りできるものを気軽に。
-      </p>
+      <h2 style={{ fontSize: 18 }}>{t("x_share_heading")}</h2>
+      <p style={{ color: "#64748b", fontSize: 14 }}>{t("x_share_desc")}</p>
       {notice && <p style={{ color: "#166534", background: "#f0fdf4", padding: 8, borderRadius: 8 }}>{notice}</p>}
       {error && (
         <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>{error}</p>
       )}
       {shareUrl && (
         <p style={{ background: "#eff6ff", padding: 8, borderRadius: 8, wordBreak: "break-all" }}>
-          相手用リンク: <a href={shareUrl} style={{ color: "#2563eb" }}>{shareUrl}</a>
+          {t("x_share_link_label")} <a href={shareUrl} style={{ color: "#2563eb" }}>{shareUrl}</a>
         </p>
       )}
 
       <div style={{ display: "flex", gap: 8, margin: "8px 0" }}>
-        <select style={{ ...input, width: "auto" }} value={direction} onChange={(e) => setDirection(e.target.value)} aria-label="やりとりの向き">
-          <option value="offer">差し出す</option>
-          <option value="request">お願いする</option>
-          <option value="inbound">いただいた記録</option>
+        <select style={{ ...input, width: "auto" }} value={direction} onChange={(e) => setDirection(e.target.value)} aria-label={t("x_share_aria_direction")}>
+          <option value="offer">{t("x_share_opt_offer")}</option>
+          <option value="request">{t("x_share_opt_request")}</option>
+          <option value="inbound">{t("x_share_opt_inbound")}</option>
         </select>
-        <select style={{ ...input, width: "auto" }} value={kind} onChange={(e) => setKind(e.target.value)} aria-label="何を">
-          <option value="time">時間 (手伝う・付き添う)</option>
-          <option value="wisdom">知恵 (教える・相談に乗る)</option>
-          <option value="thing">モノ (譲る・貸す)</option>
+        <select style={{ ...input, width: "auto" }} value={kind} onChange={(e) => setKind(e.target.value)} aria-label={t("x_share_aria_kind")}>
+          <option value="time">{t("x_share_opt_time")}</option>
+          <option value="wisdom">{t("x_share_opt_wisdom")}</option>
+          <option value="thing">{t("x_share_opt_thing")}</option>
         </select>
       </div>
       <label style={{ display: "block", margin: "8px 0" }}>
-        内容
+        {t("x_share_title_label")}
         <input
           style={input}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="例: 引っ越しを手伝えます / 確定申告の相談に乗れます / 本をお貸しします"
+          placeholder={t("x_share_title_ph")}
         />
       </label>
       <label style={{ display: "block", margin: "8px 0" }}>
-        ひとこと (任意)
+        {t("x_share_message_label")}
         <textarea style={input} rows={2} value={message} onChange={(e) => setMessage(e.target.value)} />
       </label>
       <button style={btn()} onClick={() => void create()} disabled={busy || !title.trim()}>
-        {direction === "inbound" ? "記録する" : "準備する"}
+        {direction === "inbound" ? t("x_share_btn_record") : t("x_share_btn_prepare")}
       </button>
 
       {shares.length > 0 && (
@@ -164,23 +164,23 @@ export function SharesSection({ contactId }: { contactId: string }) {
               <div>
                 <strong>{s.title}</strong>
                 <span style={{ color: "#64748b", marginLeft: 8, fontSize: 13 }}>
-                  {KIND_LABEL[s.kind] ?? s.kind} ・ {DIRECTION_LABEL[s.direction] ?? s.direction} ・ {STATUS_LABEL[s.status] ?? s.status}
+                  {label(KIND_KEY, s.kind)} ・ {label(DIRECTION_KEY, s.direction)} ・ {label(STATUS_KEY, s.status)}
                 </span>
               </div>
               <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
                 {s.status === "proposed" && (
                   <button style={btn(false)} onClick={() => void act(s.id, "send")} disabled={busy}>
-                    お知らせする (リンク発行)
+                    {t("x_share_btn_send")}
                   </button>
                 )}
                 {s.status === "accepted" && (
                   <button style={btn(false)} onClick={() => void act(s.id, "status", { status: "fulfilled" })} disabled={busy}>
-                    実現した
+                    {t("x_share_btn_fulfilled")}
                   </button>
                 )}
                 {(s.status === "proposed" || s.status === "sent" || s.status === "accepted") && (
                   <button style={btn(false)} onClick={() => void act(s.id, "status", { status: "cancelled" })} disabled={busy}>
-                    取りやめる
+                    {t("x_share_btn_cancel")}
                   </button>
                 )}
               </div>

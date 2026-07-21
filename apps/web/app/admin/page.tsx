@@ -5,13 +5,17 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "../../lib/client-api";
+import { t, currentLocale } from "../../lib/i18n";
 
 type PromptRow = { key: string; version: number; body: string; active: boolean; versions: number };
 type UsageRow = { ownerUid: string; costJpy: number };
 type Usage = { monthStart: string; totalJpy: number; perUser: UsageRow[] };
 
 const input = { width: "100%", padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8 } as const;
-const yen = (n: number) => `${Math.round(n).toLocaleString("ja-JP")}円`;
+const yen = (n: number) =>
+  currentLocale() === "en"
+    ? `¥${Math.round(n).toLocaleString("en-US")}`
+    : `${Math.round(n).toLocaleString("ja-JP")}円`;
 
 export default function AdminPage() {
   const [prompts, setPrompts] = useState<PromptRow[]>([]);
@@ -53,10 +57,14 @@ export default function AdminPage() {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError(body.detail ?? "保存できませんでした");
+      setError(body.detail ?? t("s_save_failed"));
       return;
     }
-    setNotice(`${editingKey} を 版${body.prompt.version} として保存しました (旧版は残ります)`);
+    setNotice(
+      t("s_prompt_saved")
+        .replace("{key}", editingKey)
+        .replace("{version}", String(body.prompt.version)),
+    );
     setEditingKey("");
     await load();
   };
@@ -68,10 +76,10 @@ export default function AdminPage() {
       body: JSON.stringify({ model }),
     });
     if (!res.ok) {
-      setError((await res.json().catch(() => ({}))).detail ?? "保存できませんでした");
+      setError((await res.json().catch(() => ({}))).detail ?? t("s_save_failed"));
       return;
     }
-    setNotice("使用する種類を保存しました");
+    setNotice(t("s_model_saved"));
   };
 
   const saveUserCap = async () => {
@@ -82,55 +90,59 @@ export default function AdminPage() {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError(body.detail ?? "保存できませんでした");
+      setError(body.detail ?? t("s_save_failed"));
       return;
     }
-    setNotice(body.unlimited ? "あなた以外の利用者を無制限にしました" : `あなた以外の利用者の上限を ${yen(Number(userCap))}/月 にしました`);
+    setNotice(
+      body.unlimited
+        ? t("s_cap_unlimited")
+        : t("s_cap_set").replace("{amount}", yen(Number(userCap))),
+    );
     await load();
   };
 
   if (denied) {
     return (
       <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
-        <p>このページは管理者だけが使えます。</p>
-        <p><Link href="/" style={{ color: "#2563eb" }}>ホームへ戻る</Link></p>
+        <p>{t("s_admin_denied")}</p>
+        <p><Link href="/" style={{ color: "#2563eb" }}>{t("back_home")}</Link></p>
       </main>
     );
   }
 
   return (
     <main style={{ maxWidth: 860, margin: "0 auto", padding: "40px 16px" }}>
-      <p><Link href="/" style={{ color: "#2563eb" }}>ホームへ戻る</Link></p>
-      <h1 style={{ fontSize: 24 }}>管理</h1>
+      <p><Link href="/" style={{ color: "#2563eb" }}>{t("back_home")}</Link></p>
+      <h1 style={{ fontSize: 24 }}>{t("s_admin_title")}</h1>
       <p>
         <Link href="/admin/partners" style={{ color: "#2563eb" }}>
-          提携先への連絡 (発見・下書き・送信・掲載)
+          {t("s_admin_partners_link")}
         </Link>
       </p>
       {notice && <p style={{ color: "#166534", background: "#f0fdf4", padding: 8, borderRadius: 8 }}>{notice}</p>}
       {error && <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>{error}</p>}
 
       <section style={{ margin: "24px 0" }}>
-        <h2 style={{ fontSize: 18 }}>使用する種類</h2>
+        <h2 style={{ fontSize: 18 }}>{t("s_model_heading")}</h2>
         <div style={{ display: "flex", gap: 8 }}>
-          <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="種類" style={{ ...input, width: "auto" }}>
-            <option value="claude-haiku-4-5">はやい</option>
-            <option value="claude-sonnet-4-6">バランス (既定)</option>
-            <option value="claude-opus-4-7">じっくり</option>
+          <select value={model} onChange={(e) => setModel(e.target.value)} aria-label={t("s_model_aria")} style={{ ...input, width: "auto" }}>
+            <option value="claude-haiku-4-5">{t("s_model_fast")}</option>
+            <option value="claude-sonnet-4-6">{t("s_model_balanced")}</option>
+            <option value="claude-opus-4-7">{t("s_model_deep")}</option>
           </select>
           <button
             onClick={() => void saveModel()}
             style={{ padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
           >
-            保存
+            {t("s_save")}
           </button>
         </div>
       </section>
 
       <section style={{ margin: "24px 0" }}>
-        <h2 style={{ fontSize: 18 }}>利用の上限 (あなた以外の利用者)</h2>
+        <h2 style={{ fontSize: 18 }}>{t("s_cap_heading")}</h2>
         <p style={{ color: "#475569", fontSize: 14, margin: "4px 0 10px" }}>
-          あなた自身は上限なくお使いいただけます。ほかの利用者には、月ごとの上限額を設けられます。0 を入れると、ほかの利用者も上限なしになります。
+          {t("s_cap_desc")}
         </p>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input
@@ -139,30 +151,30 @@ export default function AdminPage() {
             step={100}
             value={userCap}
             onChange={(e) => setUserCap(e.target.value)}
-            aria-label="ほかの利用者の月ごとの上限 (円)"
+            aria-label={t("s_cap_aria")}
             style={{ ...input, width: 140 }}
           />
-          <span style={{ color: "#475569" }}>円 / 月</span>
+          <span style={{ color: "#475569" }}>{t("s_yen_per_month")}</span>
           <button
             onClick={() => void saveUserCap()}
             style={{ padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
           >
-            保存
+            {t("s_save")}
           </button>
         </div>
         {usage && (
           <div style={{ marginTop: 14, border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 14px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-              <strong>今月の利用 ({usage.monthStart} 以降)</strong>
-              <span style={{ color: "#0f172a" }}>合計 {yen(usage.totalJpy)}</span>
+              <strong>{t("s_usage_heading").replace("{month}", usage.monthStart)}</strong>
+              <span style={{ color: "#0f172a" }}>{t("s_usage_total").replace("{amount}", yen(usage.totalJpy))}</span>
             </div>
             {usage.perUser.length === 0 ? (
-              <p style={{ color: "#64748b", margin: "8px 0 0" }}>今月の利用はまだありません。</p>
+              <p style={{ color: "#64748b", margin: "8px 0 0" }}>{t("s_usage_none")}</p>
             ) : (
               <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0", display: "grid", gap: 4 }}>
                 {usage.perUser.map((u) => (
                   <li key={u.ownerUid} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
-                    <span style={{ color: "#475569" }}>{u.ownerUid === "owner" ? "あなた" : u.ownerUid}</span>
+                    <span style={{ color: "#475569" }}>{u.ownerUid === "owner" ? t("s_usage_you") : u.ownerUid}</span>
                     <span>{yen(u.costJpy)}</span>
                   </li>
                 ))}
@@ -173,13 +185,17 @@ export default function AdminPage() {
       </section>
 
       <section>
-        <h2 style={{ fontSize: 18 }}>文章のもとになる指示 (版管理)</h2>
+        <h2 style={{ fontSize: 18 }}>{t("s_prompts_heading")}</h2>
         <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 8 }}>
           {prompts.map((p) => (
             <li key={p.key} style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "10px 14px" }}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <strong>{p.key}</strong>
-                <span style={{ color: "#64748b" }}>版{p.version} (履歴 {p.versions})</span>
+                <span style={{ color: "#64748b" }}>
+                  {t("s_prompt_version")
+                    .replace("{version}", String(p.version))
+                    .replace("{count}", String(p.versions))}
+                </span>
               </div>
               {editingKey === p.key ? (
                 <div>
@@ -188,20 +204,20 @@ export default function AdminPage() {
                     rows={14}
                     value={editBody}
                     onChange={(e) => setEditBody(e.target.value)}
-                    aria-label={`${p.key} の本文`}
+                    aria-label={t("s_prompt_body_aria").replace("{key}", p.key)}
                   />
                   <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                     <button
                       onClick={() => void savePrompt()}
                       style={{ padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
                     >
-                      新しい版として保存
+                      {t("s_prompt_save_new")}
                     </button>
                     <button
                       onClick={() => setEditingKey("")}
                       style={{ padding: "8px 16px", background: "#fff", color: "#2563eb", border: "1px solid #2563eb", borderRadius: 8, cursor: "pointer" }}
                     >
-                      やめる
+                      {t("s_cancel")}
                     </button>
                   </div>
                 </div>
@@ -213,7 +229,7 @@ export default function AdminPage() {
                   }}
                   style={{ marginTop: 8, background: "none", border: "none", color: "#2563eb", cursor: "pointer", padding: 0 }}
                 >
-                  ひらいて直す
+                  {t("s_prompt_edit")}
                 </button>
               )}
             </li>

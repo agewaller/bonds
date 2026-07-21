@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { apiFetch } from "../../../lib/client-api";
+import { t, currentLocale } from "../../../lib/i18n";
 import {
   Section7d,
   SectionSvc,
@@ -27,29 +28,25 @@ type Detail = {
   recentRuns: HistoryRun[];
 };
 
-const DDTYPE_LABEL: Record<string, string> = {
-  consciousness_7d: "意識の七次元",
-  social_value_creation: "社会価値創造",
+// ddType / status → 辞書キー (表示時に t() で引く)
+const DDTYPE_LABEL_KEY: Record<string, string> = {
+  consciousness_7d: "s_ddtype_consciousness_7d",
+  social_value_creation: "s_ddtype_social_value_creation",
 };
-const STATUS_LABEL: Record<string, string> = {
-  completed: "完了",
-  invalid_output: "うまくまとまらず",
-  failed: "できませんでした",
+const STATUS_LABEL_KEY: Record<string, string> = {
+  completed: "s_status_completed",
+  invalid_output: "s_status_invalid_output",
+  failed: "s_status_failed",
 };
 
-const WAIT_MESSAGES = [
-  "公開情報を思い出しながら整理しています",
-  "七つの次元ごとに根拠を確かめています",
-  "生み出した価値と社会的なコストを見比べています",
-  "もう少しで評価がまとまります",
-];
+const WAIT_MESSAGE_KEYS = ["s_wait_1", "s_wait_2", "s_wait_3", "s_wait_4"];
 
 export default function SubjectDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [running, setRunning] = useState(false);
-  const [waitMsg, setWaitMsg] = useState(WAIT_MESSAGES[0]);
+  const [waitMsg, setWaitMsg] = useState("");
   const [error, setError] = useState("");
   const [shareMsg, setShareMsg] = useState("");
   const [confirmDeletePerson, setConfirmDeletePerson] = useState(false);
@@ -73,24 +70,25 @@ export default function SubjectDetailPage() {
     setRunning(true);
     setError("");
     let i = 0;
+    setWaitMsg(t(WAIT_MESSAGE_KEYS[0]));
     timerRef.current = setInterval(() => {
-      i = (i + 1) % WAIT_MESSAGES.length;
-      setWaitMsg(WAIT_MESSAGES[i]);
+      i = (i + 1) % WAIT_MESSAGE_KEYS.length;
+      setWaitMsg(t(WAIT_MESSAGE_KEYS[i]));
     }, 8000);
     try {
       const res = await apiFetch(`dd/subjects/${slug}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locale: "ja" }),
+        body: JSON.stringify({ locale: currentLocale() }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        setError(body.detail ?? "評価を実行できませんでした。しばらくしてからお試しください");
+        setError(body.detail ?? t("s_run_failed"));
         return;
       }
       await load();
     } catch {
-      setError("評価を実行できませんでした。通信環境を確かめてお試しください");
+      setError(t("s_run_failed_network"));
     } finally {
       if (timerRef.current) clearInterval(timerRef.current);
       setRunning(false);
@@ -104,7 +102,7 @@ export default function SubjectDetailPage() {
     const r7 = detail.latestByType.consciousness_7d;
     const rS = detail.latestByType.social_value_creation;
     if (r7?.status !== "completed" && rS?.status !== "completed") {
-      setShareMsg("共有できる評価がまだありません。まず評価してください");
+      setShareMsg(t("s_share_none"));
       return;
     }
     setShareMsg("");
@@ -115,7 +113,7 @@ export default function SubjectDetailPage() {
     };
     if (typeof nav.share === "function") {
       try {
-        await nav.share({ title: `${detail.subject.name} の人物評価`, text: headline, url });
+        await nav.share({ title: t("s_share_title").replace("{name}", detail.subject.name), text: headline, url });
         return;
       } catch {
         // 共有をキャンセル/失敗したらコピーにフォールバック
@@ -123,9 +121,9 @@ export default function SubjectDetailPage() {
     }
     try {
       await navigator.clipboard.writeText(url);
-      setShareMsg("結果ページのリンクをコピーしました。貼り付けて共有できます");
+      setShareMsg(t("s_share_copied"));
     } catch {
-      setShareMsg(`リンクをコピーできませんでした: ${url}`);
+      setShareMsg(t("s_share_copy_failed").replace("{url}", url));
     }
   };
 
@@ -134,7 +132,7 @@ export default function SubjectDetailPage() {
     setError("");
     const res = await apiFetch(`dd/subjects/${slug}/runs/${runId}`, { method: "DELETE" });
     if (res.ok) await load();
-    else setError("履歴を削除できませんでした。もう一度お試しください");
+    else setError(t("s_history_delete_failed"));
   };
 
   // この人物ごと (評価履歴すべて) を削除する。
@@ -142,21 +140,21 @@ export default function SubjectDetailPage() {
     setError("");
     const res = await apiFetch(`dd/subjects/${slug}`, { method: "DELETE" });
     if (res.ok) location.href = "/subjects";
-    else setError("削除できませんでした。もう一度お試しください");
+    else setError(t("s_delete_failed"));
   };
 
   if (notFound) {
     return (
       <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
-        <p>この人物のページが見つかりませんでした。</p>
-        <p><Link href="/subjects" style={{ color: "#2563eb" }}>一覧へ戻る</Link></p>
+        <p>{t("s_subject_not_found")}</p>
+        <p><Link href="/subjects" style={{ color: "#2563eb" }}>{t("s_back_to_list")}</Link></p>
       </main>
     );
   }
   if (!detail) {
     return (
       <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
-        <p>読み込んでいます…</p>
+        <p>{t("s_loading")}</p>
       </main>
     );
   }
@@ -169,7 +167,7 @@ export default function SubjectDetailPage() {
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
       <p>
         <Link href="/subjects" style={{ color: "#2563eb" }}>
-          一覧へ戻る
+          {t("s_back_to_list")}
         </Link>
       </p>
       <h1 style={{ fontSize: 26, marginBottom: detail.subject.profileHint ? 4 : undefined }}>
@@ -192,7 +190,7 @@ export default function SubjectDetailPage() {
           fontSize: 16,
         }}
       >
-        {running ? "評価しています…" : "二つの視点で評価する"}
+        {running ? t("s_run_running") : t("s_run_button")}
       </button>
       {hasResult && (
         <button
@@ -208,17 +206,17 @@ export default function SubjectDetailPage() {
             fontSize: 16,
           }}
         >
-          この評価を共有する
+          {t("s_share_button")}
         </button>
       )}
       {hasResult && (
         <p style={{ marginTop: 8 }}>
           <Link href={`/p/${detail.subject.slug}`} style={{ color: "#2563eb", fontSize: 14 }} target="_blank">
-            共有ページを開く
+            {t("s_open_share_page")}
           </Link>
         </p>
       )}
-      {running && <p style={{ color: "#64748b" }}>{waitMsg} (1〜2 分ほどかかります)</p>}
+      {running && <p style={{ color: "#64748b" }}>{waitMsg} {t("s_wait_takes")}</p>}
       {shareMsg && <p style={{ color: "#166534", background: "#f0fdf4", padding: 8, borderRadius: 8 }}>{shareMsg}</p>}
       {error && (
         <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>
@@ -227,30 +225,30 @@ export default function SubjectDetailPage() {
       )}
 
       <section style={{ marginTop: 32 }}>
-        <h2 style={{ fontSize: 20, borderBottom: "2px solid #2563eb", paddingBottom: 4 }}>意識の七次元</h2>
+        <h2 style={{ fontSize: 20, borderBottom: "2px solid #2563eb", paddingBottom: 4 }}>{t("s_ddtype_consciousness_7d")}</h2>
         {r7d?.status === "completed" ? (
           <Section7d run={r7d} />
         ) : (
           <p style={{ color: "#64748b" }}>
-            {r7d ? "前回の評価は完了しませんでした。もう一度お試しください。" : "まだ評価がありません。"}
+            {r7d ? t("s_prev_not_completed") : t("s_no_eval_yet")}
           </p>
         )}
       </section>
 
       <section style={{ marginTop: 32 }}>
-        <h2 style={{ fontSize: 20, borderBottom: "2px solid #2563eb", paddingBottom: 4 }}>社会価値創造</h2>
+        <h2 style={{ fontSize: 20, borderBottom: "2px solid #2563eb", paddingBottom: 4 }}>{t("s_ddtype_social_value_creation")}</h2>
         {rSvc?.status === "completed" ? (
           <SectionSvc run={rSvc} />
         ) : (
           <p style={{ color: "#64748b" }}>
-            {rSvc ? "前回の評価は完了しませんでした。もう一度お試しください。" : "まだ評価がありません。"}
+            {rSvc ? t("s_prev_not_completed") : t("s_no_eval_yet")}
           </p>
         )}
       </section>
 
       {detail.recentRuns.length > 0 && (
         <section style={{ marginTop: 32 }}>
-          <h2 style={{ fontSize: 18 }}>評価の履歴</h2>
+          <h2 style={{ fontSize: 18 }}>{t("s_history_heading")}</h2>
           <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 6 }}>
             {detail.recentRuns.map((r) => (
               <li
@@ -261,11 +259,13 @@ export default function SubjectDetailPage() {
                 }}
               >
                 <span style={{ color: "#334155" }}>
-                  {DDTYPE_LABEL[r.ddType] ?? r.ddType}
+                  {DDTYPE_LABEL_KEY[r.ddType] ? t(DDTYPE_LABEL_KEY[r.ddType]) : r.ddType}
                   <span style={{ color: "#94a3b8", marginLeft: 8 }}>
-                    {new Date(r.createdAt).toLocaleString("ja-JP")}
+                    {new Date(r.createdAt).toLocaleString(currentLocale() === "en" ? "en-US" : "ja-JP")}
                   </span>
-                  <span style={{ color: "#64748b", marginLeft: 8 }}>{STATUS_LABEL[r.status] ?? r.status}</span>
+                  <span style={{ color: "#64748b", marginLeft: 8 }}>
+                    {STATUS_LABEL_KEY[r.status] ? t(STATUS_LABEL_KEY[r.status]) : r.status}
+                  </span>
                   {typeof r.moduleScore === "number" && (
                     <span style={{ color: "#334155", marginLeft: 8 }}>{r.moduleScore}/100</span>
                   )}
@@ -274,7 +274,7 @@ export default function SubjectDetailPage() {
                   onClick={() => void deleteRun(r.id)}
                   style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", padding: "2px 6px" }}
                 >
-                  削除
+                  {t("s_delete")}
                 </button>
               </li>
             ))}
@@ -286,19 +286,19 @@ export default function SubjectDetailPage() {
         {confirmDeletePerson ? (
           <div style={{ border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 8, padding: "12px 14px" }}>
             <p style={{ margin: "0 0 10px", color: "#7f1d1d" }}>
-              {detail.subject.name} と、その評価の履歴をすべて削除します。元に戻せません。よろしいですか。
+              {t("s_delete_person_lead").replace("{name}", detail.subject.name)}
             </p>
             <button
               onClick={() => void deletePerson()}
               style={{ padding: "8px 16px", background: "#b91c1c", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
             >
-              削除する
+              {t("s_delete_confirm")}
             </button>
             <button
               onClick={() => setConfirmDeletePerson(false)}
               style={{ marginLeft: 8, padding: "8px 16px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer" }}
             >
-              やめる
+              {t("s_cancel")}
             </button>
           </div>
         ) : (
@@ -306,13 +306,13 @@ export default function SubjectDetailPage() {
             onClick={() => setConfirmDeletePerson(true)}
             style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", padding: 0, fontSize: 14 }}
           >
-            この人物と評価の履歴を削除する
+            {t("s_delete_person_button")}
           </button>
         )}
       </section>
 
       <footer style={{ marginTop: 40, color: "#94a3b8", fontSize: 13 }}>
-        この評価は公開情報にもとづく参考情報で、断定ではありません。最新の出来事が反映されていない場合があります。
+        {t("s_disclaimer")}
       </footer>
     </main>
   );
