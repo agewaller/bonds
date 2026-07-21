@@ -6,7 +6,7 @@ import Fold from "../../components/Fold";
 import { apiFetch } from "../../lib/client-api";
 import { AuthBar } from "../../components/AuthBar";
 import { LanguageSelector } from "../../components/LanguageSelector";
-import { t } from "../../lib/i18n";
+import { t, currentLocale } from "../../lib/i18n";
 import Link from "next/link";
 
 type Contact = {
@@ -42,59 +42,59 @@ type Duplicate = {
 // SNS・サービスとの「連携」ボタン。友だち一覧を直接くれる SNS は無いのが実情なので、
 // 各社が公式に用意する「自分のデータのダウンロード」を開き、届いたファイルを取り込む導線にする
 // (Google だけは連絡先/カレンダー/メールの読み取り連携が本当にできる = 別枠)。
-const SNS_CONNECTORS: { key: string; label: string; url: string; hint: string }[] = [
+const SNS_CONNECTORS: { key: string; label: string; url: string; hintKey: string }[] = [
   {
     key: "line",
     label: "LINE",
     url: "https://guide.line.me/ja/services/chat-history.html",
-    hint: "LINE のトーク画面 → 右上メニュー → 設定 → トーク履歴を送信、で作られるテキストファイルを、下の取り込みに置いてください。お相手とやりとりの記録が一度に入ります。",
+    hintKey: "c_sns_hint_line",
   },
   {
     key: "x",
-    label: "X (旧Twitter)",
+    label: "c_sns_label_x",
     url: "https://x.com/settings/download_your_data",
-    hint: "X の「データのアーカイブをダウンロード」で受け取った ZIP を、下の取り込みにそのまま置いてください。",
+    hintKey: "c_sns_hint_x",
   },
   {
     key: "instagram",
     label: "Instagram",
     url: "https://accountscenter.facebook.com/info_and_permissions/dyi",
-    hint: "アカウントセンターの「情報をダウンロード」で、対象をフォロー中の人・形式は JSON にすると軽くなります。届いた ZIP を下の取り込みに置いてください。",
+    hintKey: "c_sns_hint_instagram",
   },
   {
     key: "facebook",
     label: "Facebook",
     url: "https://accountscenter.facebook.com/info_and_permissions/dyi",
-    hint: "アカウントセンターの「情報をダウンロード」で友達を選び、届いた ZIP を下の取り込みに置いてください。",
+    hintKey: "c_sns_hint_facebook",
   },
   {
     key: "linkedin",
     label: "LinkedIn",
     url: "https://www.linkedin.com/mypreferences/d/download-my-data",
-    hint: "LinkedIn の「データのダウンロード」で Connections を選び、届いた ZIP か CSV を下の取り込みに置いてください。",
+    hintKey: "c_sns_hint_linkedin",
   },
   {
     key: "outlook",
     label: "Outlook",
     url: "https://support.microsoft.com/ja-jp/office/outlook-から連絡先をエクスポートする-10f09abd-643c-4495-bb80-543714eca73f",
-    hint: "Outlook の連絡先を CSV で書き出して (People 画面 → 管理 → 連絡先のエクスポート)、届いた CSV を下の取り込みに置いてください。お名前・メール・電話・会社・役職ごと入ります。予定表は下の「ご自身の予定表とつなぐ」に Outlook の公開 ICS アドレスを貼ると面談候補にも使えます。",
+    hintKey: "c_sns_hint_outlook",
   },
 ];
 
 const LEVEL_LABEL: Record<string, { label: string; color: string; message: string }> = {
-  good: { label: "良好", color: "#27ae60", message: "大切な方とのつながりがしっかり保たれています。" },
-  fair: { label: "まずまず", color: "#f1c40f", message: "概ね良いですが、少し間が空いている方がいます。" },
-  caution: { label: "少し注意", color: "#e67e22", message: "しばらくご連絡していない方がいらっしゃいます。" },
-  warning: { label: "要注意", color: "#e74c3c", message: "大切な方との連絡が途絶えがちです。ぜひお声がけを。" },
-  unknown: { label: "これから", color: "#8896a6", message: "連絡先を登録すると、つながりの状態を確認できます。" },
+  good: { label: "c_level_good", color: "#27ae60", message: "c_level_good_msg" },
+  fair: { label: "c_level_fair", color: "#f1c40f", message: "c_level_fair_msg" },
+  caution: { label: "c_level_caution", color: "#e67e22", message: "c_level_caution_msg" },
+  warning: { label: "c_level_warning", color: "#e74c3c", message: "c_level_warning_msg" },
+  unknown: { label: "c_level_unknown", color: "#8896a6", message: "c_level_unknown_msg" },
 };
 
 const DISTANCE_LABEL: Record<number, string> = {
-  1: "毎日会いたい",
-  2: "週に一度は",
-  3: "月に一度は",
-  4: "折々に",
-  5: "年に一度は",
+  1: "c_dist1",
+  2: "c_dist2",
+  3: "c_dist3",
+  4: "c_dist4",
+  5: "c_dist5",
 };
 
 export default function ContactsPage() {
@@ -391,10 +391,10 @@ export default function ContactsPage() {
       body: JSON.stringify(a),
     });
     if (res.ok) {
-      setNotice("実行待ちに入れました。上の「実行待ちのこと」から進められます");
+      setNotice(t("c_added_to_pending_notice"));
       await refreshActions();
     } else {
-      setError("いまは実行待ちに入れられませんでした。時間をおいてお試しください");
+      setError(t("c_add_pending_failed"));
     }
   };
   const settleAction = async (id: string, status: "done" | "dismissed") => {
@@ -436,10 +436,10 @@ export default function ContactsPage() {
       setOfferDesc("");
       setOfferMaxDist("");
       setShowOfferForm(false);
-      setNotice("申し出を登録しました。力になれそうな方をお探しします");
+      setNotice(t("c_offering_registered"));
       await load();
     } else {
-      setError("いまは登録できませんでした。時間をおいてお試しください");
+      setError(t("c_register_failed_retry"));
     }
   };
   const removeOffering = async (id: string) => {
@@ -470,10 +470,10 @@ export default function ContactsPage() {
     });
     if (res.ok) {
       setEditOfferId(null);
-      setNotice("申し出を更新しました");
+      setNotice(t("c_offering_updated"));
       await load();
     } else {
-      setError("いまは保存できませんでした");
+      setError(t("c_save_failed_now"));
     }
   };
   // 軸検索: 押した軸で連絡先を探す (もう一度押すと閉じる)
@@ -500,8 +500,8 @@ export default function ContactsPage() {
       method: "POST",
       body: JSON.stringify(typeof candidateIndex === "number" ? { candidateIndex } : {}),
     });
-    if (res.ok) setNotice("評価対象に登録しました。評価は順に自動で実施されます");
-    else setError("いまは登録できませんでした");
+    if (res.ok) setNotice(t("c_dd_registered"));
+    else setError(t("c_register_failed_now"));
   };
   const dismissDdSuggestion = async (id: string) => {
     setDdSuggestions((cur) => cur.filter((s) => s.id !== id));
@@ -512,18 +512,18 @@ export default function ContactsPage() {
     setPlaudBusy(true);
     setError("");
     try {
-      const res = await apiFetch("relationship/sync-plaud", { method: "POST", body: "{}" });
+      const res = await apiFetch("relationship/sync-plaud", { method: "POST", body: JSON.stringify({ locale: currentLocale() }) });
       const b = await res.json().catch(() => ({}));
       if (res.ok) {
         setNotice(
           b.imported > 0
-            ? `録音メモを ${b.imported} 件読み込み、タスクと課題を整理しました`
-            : "新しい録音メモはありませんでした",
+            ? `${t("c_plaud_loaded_a")}${b.imported}${t("c_plaud_loaded_b")}`
+            : t("c_plaud_none"),
         );
         const vmRes = await apiFetch("relationship/voice-memos");
         if (vmRes.ok) setVoiceMemos((await vmRes.json()).memos ?? []);
       } else {
-        setError(b.detail ?? "いまは読み込めませんでした");
+        setError(b.detail ?? t("c_load_failed_now"));
       }
     } finally {
       setPlaudBusy(false);
@@ -540,21 +540,21 @@ export default function ContactsPage() {
     await apiFetch(`relationship/voice-memos/${memoId}`, { method: "PUT", body: JSON.stringify({ status: "dismissed" }) }).catch(() => null);
   };
   const digestMemo = async (memoId: string) => {
-    const res = await apiFetch(`relationship/voice-memos/${memoId}/digest`, { method: "POST", body: "{}" });
+    const res = await apiFetch(`relationship/voice-memos/${memoId}/digest`, { method: "POST", body: JSON.stringify({ locale: currentLocale() }) });
     if (res.ok) {
-      setNotice("タスクと課題を整理しました");
+      setNotice(t("c_tasks_digested"));
       const vmRes = await apiFetch("relationship/voice-memos");
       if (vmRes.ok) setVoiceMemos((await vmRes.json()).memos ?? []);
     } else {
       const b = await res.json().catch(() => ({}));
-      setError(b.detail ?? "いまは整理できませんでした");
+      setError(b.detail ?? t("c_digest_failed_now"));
     }
   };
   const connectMailRead = async () => {
     const res = await apiFetch("google/auth-url?scope=mailread");
     const b = await res.json().catch(() => ({}));
     if (res.ok && b.url) window.location.href = b.url;
-    else setError(b.detail ?? "いまはつなげませんでした");
+    else setError(b.detail ?? t("c_connect_failed_now"));
   };
   const importOfferings = async () => {
     if (!offerImportText.trim()) return;
@@ -569,25 +569,25 @@ export default function ContactsPage() {
       setShowOfferImport(false);
       setNotice(
         body.added > 0
-          ? `${body.added}件を取り込み、種類ごとに整えました（${parts.join("・")}）。力になれそうな方をお探しします`
-          : "新しく取り込めるものはありませんでした（同じものは重ねません）",
+          ? `${body.added}${t("c_offer_import_done_a")}${parts.join(t("c_sep"))}${t("c_offer_import_done_b")}`
+          : t("c_offer_import_none"),
       );
       await load();
     } else {
-      setError(body.detail ?? "いまは取り込めませんでした");
+      setError(body.detail ?? t("c_import_failed_now"));
     }
   };
   const toggleOfferingPublished = async (id: string, published: boolean) => {
     const res = await apiFetch(`offerings/${id}`, { method: "PUT", body: JSON.stringify({ published }) });
     if (res.ok) {
-      setNotice(published ? "掲示板に載せました。困っている方の目に留まります" : "掲示板から下ろしました");
+      setNotice(published ? t("c_published_notice") : t("c_unpublished_notice"));
       await load();
     }
   };
   const approveInterest = async (id: string) => {
     const res = await apiFetch(`relationship/offering-interests/${id}/approve`, { method: "POST", body: "{}" });
     if (res.ok) {
-      setNotice("連絡先に迎えました。ここから関係を育てていけます");
+      setNotice(t("c_interest_approved"));
       await load();
     }
   };
@@ -602,7 +602,7 @@ export default function ContactsPage() {
     });
     if (res.ok) {
       setOfferedTo((s) => ({ ...s, [`${offeringId}:${contactId}`]: true }));
-      setNotice("台帳に「申し出」として控えました。実際の連絡は連絡先の画面からどうぞ");
+      setNotice(t("c_offer_recorded"));
       // 受け入れた申し出は実行待ちにも入れて、連絡の実行を忘れないようにする
       await acceptAction({
         kind: "offer",
@@ -612,7 +612,7 @@ export default function ContactsPage() {
         sourceKey: `${offeringId}:${contactId}`,
       });
     } else {
-      setError("いまは控えられませんでした。時間をおいてお試しください");
+      setError(t("c_record_failed_retry"));
     }
   };
 
@@ -625,7 +625,7 @@ export default function ContactsPage() {
       body: JSON.stringify({ distance }),
     });
     if (res.ok) {
-      setNotice("距離感を直しました");
+      setNotice(t("c_distance_saved"));
       await load();
     }
   };
@@ -638,7 +638,7 @@ export default function ContactsPage() {
         })
       : await apiFetch(`contacts/${contactId}/goal`, { method: "DELETE" });
     if (res.ok) {
-      setNotice(purpose ? "関係の目標を決めました" : "目標を外しました");
+      setNotice(purpose ? t("c_goal_set") : t("c_goal_removed"));
       await load();
     }
   };
@@ -651,10 +651,10 @@ export default function ContactsPage() {
     if (res.ok) {
       setNotice(
         preference === "excluded"
-          ? "このリストから外しました。記録はそのまま残り、いつでも戻せます"
+          ? t("c_excluded_notice")
           : preference === "pinned"
-            ? "大切な方として印を付けました"
-            : "自動判定に戻しました",
+            ? t("c_pinned_notice")
+            : t("c_auto_notice"),
       );
       await load();
     }
@@ -727,14 +727,14 @@ export default function ContactsPage() {
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setDupeGroups((prev) => [g, ...prev]);
-        setError(body.detail ?? "まとめられませんでした");
+        setError(body.detail ?? t("c_merge_failed"));
         return;
       }
-      setNotice(`${g.members.length}件を1件にまとめました`);
+      setNotice(`${g.members.length}${t("c_merged_notice")}`);
       setTotalContacts((n) => (typeof n === "number" ? Math.max(0, n - (g.members.length - 1)) : n));
     } catch {
       setDupeGroups((prev) => [g, ...prev]);
-      setError("まとめられませんでした");
+      setError(t("c_merge_failed"));
     }
   };
 
@@ -750,13 +750,13 @@ export default function ContactsPage() {
       });
       if (!res.ok) {
         setDupeGroups((prev) => [g, ...prev]);
-        setError("いまは保存できませんでした");
+        setError(t("c_save_failed_now"));
         return;
       }
-      setNotice("別の方として、そのままにしました");
+      setNotice(t("c_marked_different"));
     } catch {
       setDupeGroups((prev) => [g, ...prev]);
-      setError("いまは保存できませんでした");
+      setError(t("c_save_failed_now"));
     }
   };
 
@@ -765,20 +765,20 @@ export default function ContactsPage() {
     if (pumpingRef.current) return;
     pumpingRef.current = true;
     setError("");
-    setNotice("お相手を取り込んでいます… (少し時間がかかります)");
+    setNotice(t("c_google_syncing"));
     try {
       const res = await apiFetch("google/sync", { method: "POST", body: "{}" });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         setNotice("");
-        setError(body.detail ?? "いまは取り込めませんでした");
+        setError(body.detail ?? t("c_import_failed_now"));
         return;
       }
       const dup =
         Array.isArray(body.sameName) && body.sameName.length > 0
-          ? `。同じお名前で見送った方: ${body.sameName.slice(0, 5).join("、")}`
+          ? `${t("c_same_name_skipped")}${body.sameName.slice(0, 5).join(t("c_comma"))}`
           : "";
-      setNotice(`Google から連絡先${body.imported ?? 0}件、やりとりの記録${body.interactionsAdded ?? 0}件を取り込みました${dup}`);
+      setNotice(`${t("c_google_synced_a")}${body.imported ?? 0}${t("c_google_synced_b")}${body.interactionsAdded ?? 0}${t("c_google_synced_c")}${dup}`);
       await load();
       const s = await apiFetch("google/status");
       if (s.ok) setGoogleStatus(await s.json());
@@ -802,7 +802,7 @@ export default function ContactsPage() {
     const params = new URLSearchParams(window.location.search);
     const g = params.get("google");
     if (g) {
-      if (g === "error") setError("Google との接続がうまくいきませんでした。もう一度お試しください");
+      if (g === "error") setError(t("c_google_error"));
       params.delete("google");
       const qs = params.toString();
       window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
@@ -814,13 +814,13 @@ export default function ContactsPage() {
     if (shared !== null) {
       const n = parseInt(shared, 10) || 0;
       if (n > 0) {
-        setNotice(`${n}件を受け付けました。このあとサーバで読み取りが進みます。ページを離れても大丈夫です`);
+        setNotice(`${n}${t("c_shared_accepted")}`);
         void (async () => {
           await loadJobs();
           void pumpJobs();
         })();
       } else {
-        setError("共有されたファイルを取り込めませんでした。ファイルを選んで取り込む方法もお試しください");
+        setError(t("c_shared_failed"));
       }
       params.delete("shared");
       const qs2 = params.toString();
@@ -850,7 +850,7 @@ export default function ContactsPage() {
         return;
       }
       if (!res.ok) {
-        setError((await res.json().catch(() => ({}))).detail ?? "追加できませんでした");
+        setError((await res.json().catch(() => ({}))).detail ?? t("c_add_failed"));
         return;
       }
       setName("");
@@ -883,16 +883,16 @@ export default function ContactsPage() {
       }
       if (!res.ok) {
         const detail = (body.detail as string) || (body.error as string) || raw.slice(0, 200);
-        setError(`取り込めませんでした (エラー ${res.status})${detail ? `: ${detail}` : ""}`);
+        setError(`${t("c_import_error_a")}${res.status})${detail ? `: ${detail}` : ""}`);
         return;
       }
       setImportText("");
       setShowImport(false);
-      setNotice("取り込みを受け付けました。このあとサーバで読み取りが進みます。ページを離れても大丈夫です");
+      setNotice(t("c_import_accepted"));
       await loadJobs();
       void pumpJobs();
     } catch (e) {
-      setError(`取り込み中にエラーが起きました: ${e instanceof Error ? e.message : String(e)}`);
+      setError(`${t("c_import_exception")}${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -921,19 +921,19 @@ export default function ContactsPage() {
       });
       const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
-        setError(`迎えられませんでした (エラー ${res.status})${body.detail ? `: ${body.detail}` : ""}`);
+        setError(`${t("c_newcomer_error_a")}${res.status})${body.detail ? `: ${body.detail}` : ""}`);
         return;
       }
       const parts = [
-        `${(body.imported as number) ?? 0}名を新しくお迎えしました`,
-        (body.enriched as number) > 0 ? `${body.enriched}名の情報を書き足しました` : "",
-        (body.skipped as number) > 0 ? `${body.skipped}名はすでにいらっしゃいました` : "",
+        `${(body.imported as number) ?? 0}${t("c_newcomer_imported")}`,
+        (body.enriched as number) > 0 ? `${body.enriched}${t("c_newcomer_enriched")}` : "",
+        (body.skipped as number) > 0 ? `${body.skipped}${t("c_newcomer_skipped")}` : "",
       ].filter(Boolean);
-      setNewcomerResult(`${parts.join("。")}。出会いの記録も残しました`);
+      setNewcomerResult(`${parts.join(t("c_period"))}${t("c_newcomer_result_suffix")}`);
       setNewcomerText("");
       await load();
     } catch (e) {
-      setError(`取り込み中にエラーが起きました: ${e instanceof Error ? e.message : String(e)}`);
+      setError(`${t("c_import_exception")}${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -992,7 +992,7 @@ export default function ContactsPage() {
       .filter((f) => f.size > 0 && !MEDIA_SKIP.test(f.name))
       .slice(0, MAX_UPLOAD_FILES);
     if (list.length === 0) {
-      setError("読み取れるファイルが見つかりませんでした (写真や動画はまだ取り込めません)");
+      setError(t("c_no_readable_files"));
       return;
     }
     setBusy(true);
@@ -1006,7 +1006,7 @@ export default function ContactsPage() {
       for (let i = 0; i < list.length; i++) {
         const file = list[i]!;
         const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-        setImportMsg(`受け付けています (${i + 1}/${list.length}件目): ${path}`);
+        setImportMsg(`${t("c_uploading_a")}${i + 1}/${list.length}${t("c_uploading_b")}${path}`);
         try {
           const res = await apiFetch(`contacts/import-jobs?filename=${encodeURIComponent(path)}${extraQuery}`, {
             method: "POST",
@@ -1016,7 +1016,7 @@ export default function ContactsPage() {
           if (res.ok) queued++;
           else {
             const b = await res.json().catch(() => ({}) as Record<string, unknown>);
-            problems.push(`${path}: エラー ${res.status}${b.detail ? ` ${b.detail}` : ""}`);
+            problems.push(`${path}: ${t("c_error_label")} ${res.status}${b.detail ? ` ${b.detail}` : ""}`);
           }
         } catch (e) {
           problems.push(`${path}: ${e instanceof Error ? e.message : String(e)}`);
@@ -1024,13 +1024,13 @@ export default function ContactsPage() {
       }
       if (queued > 0) {
         setNotice(
-          `${queued}件を受け付けました。このあとサーバで読み取りが進みます。ページを離れたり、ほかのことをしていても大丈夫です`,
+          `${queued}${t("c_files_accepted")}`,
         );
       }
       if (problems.length > 0) {
-        setError(problems.slice(0, 5).join(" / ") + (problems.length > 5 ? ` ほか${problems.length - 5}件` : ""));
+        setError(problems.slice(0, 5).join(" / ") + (problems.length > 5 ? ` ${t("c_and_more_a")}${problems.length - 5}${t("c_and_more_b")}` : ""));
       } else if (queued === 0) {
-        setError("取り込めませんでした。もう一度お試しください");
+        setError(t("c_import_failed_retry"));
       }
       await loadJobs();
       void pumpJobs();
@@ -1053,12 +1053,12 @@ export default function ContactsPage() {
     setError("");
     setNotice("");
     setProposals([]);
-    setImportMsg("会話の内容からお相手をさがしています…");
+    setImportMsg(t("c_conv_searching"));
     try {
       const res = await apiFetch("contacts/extract-from-conversation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: convText }),
+        body: JSON.stringify({ text: convText, locale: currentLocale() }),
       });
       const raw = await res.text();
       let body: Record<string, unknown> = {};
@@ -1069,17 +1069,17 @@ export default function ContactsPage() {
       }
       if (!res.ok) {
         const detail = (body.detail as string) || (body.error as string) || raw.slice(0, 200);
-        setError(`いまは読み取れませんでした (エラー ${res.status})${detail ? `: ${detail}` : ""}`);
+        setError(`${t("c_conv_error_a")}${res.status})${detail ? `: ${detail}` : ""}`);
         return;
       }
       const list = (body.proposals ?? []) as { name: string; note: string; date: string | null; contactId: string | null }[];
       if (list.length === 0) {
-        setNotice("この内容からはお相手を見つけられませんでした");
+        setNotice(t("c_conv_none"));
         return;
       }
       setProposals(list.map((p) => ({ ...p, selected: true })));
     } catch (e) {
-      setError(`読み取り中にエラーが起きました: ${e instanceof Error ? e.message : String(e)}`);
+      setError(`${t("c_conv_exception")}${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
       setImportMsg("");
@@ -1125,7 +1125,7 @@ export default function ContactsPage() {
         }
         applied++;
       }
-      setNotice(`${applied}名ぶんを記録に反映しました`);
+      setNotice(`${applied}${t("c_applied_notice")}`);
       setProposals([]);
       setConvText("");
       setShowConv(false);
@@ -1141,7 +1141,7 @@ export default function ContactsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "message" }),
     });
-    setNotice("連絡の記録をつけました");
+    setNotice(t("c_contact_logged"));
     await load();
   };
 
@@ -1179,15 +1179,15 @@ export default function ContactsPage() {
       <div style={{ display: "flex", justifyContent: "space-between" }}>
         <LanguageSelector />
         <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-          <Link href="/settings" style={{ color: "#64748b", fontSize: 14 }}>設定</Link>
+          <Link href="/settings" style={{ color: "#64748b", fontSize: 14 }}>{t("c_settings")}</Link>
           <AuthBar />
         </div>
       </div>
       <p style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
         <Link href="/" style={{ color: "#2563eb" }}>{t("back_home")}</Link>
-        <Link href="/schedule" style={{ color: "#2563eb" }}>日程調整と時間の受け付け</Link>
-        <Link href="/campaigns" style={{ color: "#2563eb" }}>一斉配信（お便り）</Link>
-        <Link href="/resources" style={{ color: "#2563eb" }}>差し出せるもの</Link>
+        <Link href="/schedule" style={{ color: "#2563eb" }}>{t("c_nav_schedule")}</Link>
+        <Link href="/campaigns" style={{ color: "#2563eb" }}>{t("c_nav_campaigns")}</Link>
+        <Link href="/resources" style={{ color: "#2563eb" }}>{t("c_nav_resources")}</Link>
       </p>
       <h1 style={{ fontSize: 24 }}>{t("contacts_title")}</h1>
 
@@ -1205,25 +1205,25 @@ export default function ContactsPage() {
               <small style={{ fontSize: 14, color: "#64748b" }}>/100</small>
             </div>
           </div>
-          <p style={{ margin: "4px 0", color: level.color }}>{level.label}</p>
-          <p style={{ margin: 0, color: "#334155" }}>{level.message}</p>
+          <p style={{ margin: "4px 0", color: level.color }}>{t(level.label)}</p>
+          <p style={{ margin: 0, color: "#334155" }}>{t(level.message)}</p>
         </Fold>
       )}
 
       {progress && progress.totalInteractions > 0 && (
-        <Fold k="cl1" defaultOpen={false} title={<>これまでの歩み</>} style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px", margin: "16px 0" }}>
+        <Fold k="cl1" defaultOpen={false} title={<>{t("c_progress_title")}</>} style={{ background: "#f8fafc", borderRadius: 12, padding: "12px 16px", margin: "16px 0" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
             <span style={{ color: "#334155" }}>
-              {progress.streakDays > 0 ? `${progress.streakDays}日続いています` : ""}
+              {progress.streakDays > 0 ? `${progress.streakDays}${t("c_streak_suffix")}` : ""}
             </span>
           </div>
           <p style={{ margin: "6px 0", color: "#64748b" }}>
-            {progress.badges.filter((b) => b.achieved).map((b) => b.label).join(" / ") || "最初のひとつを目指しましょう"}
+            {progress.badges.filter((b) => b.achieved).map((b) => b.label).join(" / ") || t("c_first_badge")}
           </p>
           {progress.nextMilestone && (
             <div>
               <p style={{ margin: "4px 0", color: "#334155", fontSize: 14 }}>
-                次の節目: {progress.nextMilestone.label} まであと {progress.nextMilestone.target - progress.nextMilestone.current}
+                {t("c_next_milestone_a")}{progress.nextMilestone.label}{t("c_next_milestone_b")}{progress.nextMilestone.target - progress.nextMilestone.current}{t("c_next_milestone_c")}
               </p>
               <div style={{ background: "#e2e8f0", borderRadius: 6, height: 8 }}>
                 <div
@@ -1259,7 +1259,7 @@ export default function ContactsPage() {
                   <Link href={`/contacts/${sug.contactId}`} style={{ color: "#1d4ed8", fontWeight: 700, textDecoration: "none" }}>
                     {sug.name}
                   </Link>
-                  さん
+                  {t("c_san")}
                   <span style={{ color: "#64748b", marginLeft: 8 }}>{sug.reason}</span>
                 </span>
                 <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -1276,7 +1276,7 @@ export default function ContactsPage() {
                     }
                     style={{ padding: "6px 12px", border: "1px solid #d97706", color: "#92400e", background: "#fffbeb", borderRadius: 8, cursor: "pointer" }}
                   >
-                    実行待ちに入れる
+                    {t("c_add_to_pending")}
                   </button>
                   <button
                     onClick={() => void logContact(sug.contactId)}
@@ -1298,17 +1298,16 @@ export default function ContactsPage() {
         </Fold>
       )}
       {summary && summary.today.length === 0 && contacts.length > 0 && (
-        <p style={{ color: "#27ae60" }}>すべての方と適切な頻度でつながれています。素晴らしいですね。</p>
+        <p style={{ color: "#27ae60" }}>{t("c_all_connected")}</p>
       )}
 
-      <Fold k="cl28" defaultOpen={false} title={<>実行待ちのこと{actionItems.length > 0 ? ` (${actionItems.length})` : ""}</>} style={{ margin: "16px 0", border: "2px solid #f59e0b", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
+      <Fold k="cl28" defaultOpen={false} title={<>{t("c_pending_title")}{actionItems.length > 0 ? ` (${actionItems.length})` : ""}</>} style={{ margin: "16px 0", border: "2px solid #f59e0b", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
         <p style={{ fontSize: 13, color: "#92400e", margin: "4px 0 10px", lineHeight: 1.7 }}>
-          受け入れた提案 (連絡・会う約束・贈り物・力になれることの申し出) をここに貯めています。
-          上から順に、それぞれの近道ボタンで進められます。
+          {t("c_pending_desc")}
         </p>
         {actionItems.length === 0 && (
           <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 8px" }}>
-            いまは空です。各提案の「実行待ちに入れる」を押すと、ここに貯まります。
+            {t("c_pending_empty")}
           </p>
         )}
         <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
@@ -1328,24 +1327,24 @@ export default function ContactsPage() {
               </span>
               {a.kind === "email" && a.email ? (
                 <a href={`mailto:${a.email}`} style={{ padding: "5px 12px", border: "1px solid #f59e0b", background: "#fef3c7", color: "#92400e", borderRadius: 8, textDecoration: "none", fontSize: 13 }}>
-                  ✉ メールを送る
+                  ✉ {t("c_send_email")}
                 </a>
               ) : a.contactId ? (
                 <Link href={`/contacts/${a.contactId}`} style={{ padding: "5px 12px", border: "1px solid #f59e0b", background: "#fef3c7", color: "#92400e", borderRadius: 8, textDecoration: "none", fontSize: 13 }}>
-                  {a.kind === "meet" ? "日程を決める" : a.kind === "gift" ? "贈り物を選ぶ" : a.kind === "email" ? "文面を作る" : "この方のページへ"}
+                  {a.kind === "meet" ? t("c_decide_schedule") : a.kind === "gift" ? t("c_choose_gift") : a.kind === "email" ? t("c_compose_message") : t("c_go_contact_page")}
                 </Link>
               ) : a.kind === "meet" ? (
                 <Link href="/schedule" style={{ padding: "5px 12px", border: "1px solid #f59e0b", background: "#fef3c7", color: "#92400e", borderRadius: 8, textDecoration: "none", fontSize: 13 }}>
-                  日程調整を開く
+                  {t("c_open_schedule")}
                 </Link>
               ) : null}
               <button
                 onClick={() => void settleAction(a.id, "done")}
                 style={{ padding: "5px 12px", background: "#d97706", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
               >
-                済みました
+                {t("c_done_btn")}
               </button>
-              {dismissX(`${a.title} を見送る`, () => settleAction(a.id, "dismissed"))}
+              {dismissX(`${a.title}${t("c_dismiss_suffix")}`, () => settleAction(a.id, "dismissed"))}
             </li>
           ))}
         </ul>
@@ -1353,7 +1352,7 @@ export default function ContactsPage() {
           <input
             value={manualAction}
             onChange={(e) => setManualAction(e.target.value)}
-            placeholder="自分で書き足す (例: 中村さんに電話)"
+            placeholder={t("c_manual_action_ph")}
             style={{ flex: "1 1 220px", padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 8 }}
           />
           <button
@@ -1361,13 +1360,13 @@ export default function ContactsPage() {
             disabled={!manualAction.trim()}
             style={{ padding: "8px 14px", border: "1px solid #d97706", color: "#92400e", background: "#fff", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
           >
-            書き足す
+            {t("c_add_note_btn")}
           </button>
         </div>
       </Fold>
 
       {shownOccasions.length > 0 && (
-        <Fold k="cl3" defaultOpen={false} title={<>いま贈るとよい方・行事</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl3" defaultOpen={false} title={<>{t("c_gift_occasions_title")}</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
             {shownOccasions.slice(0, 8).map((o, i) => (
               <li key={i} style={{ fontSize: 14, display: "flex", alignItems: "baseline", gap: 4 }}>
@@ -1392,12 +1391,12 @@ export default function ContactsPage() {
                       sourceKey: giftKey(o),
                     })
                   }
-                  aria-label={`${o.label} を実行待ちに入れる`}
+                  aria-label={`${o.label}${t("c_add_pending_suffix")}`}
                   style={{ padding: "4px 10px", border: "1px solid #d97706", color: "#92400e", background: "#fffbeb", borderRadius: 8, cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" }}
                 >
-                  実行待ちに入れる
+                  {t("c_add_to_pending")}
                 </button>
-                {dismissX(`${o.label} を見送る`, () => dismissSuggestion("gift_occasion", giftKey(o)))}
+                {dismissX(`${o.label}${t("c_dismiss_suffix")}`, () => dismissSuggestion("gift_occasion", giftKey(o)))}
               </li>
             ))}
           </ul>
@@ -1405,17 +1404,17 @@ export default function ContactsPage() {
       )}
 
       {shownExReminders.length > 0 && (
-        <Fold k="cl4" defaultOpen={false} title={<>そろそろ区切りをつけたいこと</>} style={{ margin: "16px 0", border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl4" defaultOpen={false} title={<>{t("c_ex_reminders_title")}</>} style={{ margin: "16px 0", border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 12, padding: "12px 16px" }}>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
             {shownExReminders.slice(0, 8).map((r) => (
               <li key={r.id} style={{ fontSize: 14, display: "flex", alignItems: "baseline", gap: 4 }}>
                 <span style={{ flex: 1 }}>
                   <Link href={`/contacts/${r.contactId}`} style={{ color: r.overdue ? "#b91c1c" : "#b45309", fontWeight: 600 }}>
-                    {r.contactName ?? "この方"}: {r.title}
+                    {r.contactName ?? t("c_this_person")}: {r.title}
                   </Link>
                   <span style={{ color: "#78716c" }}> — {r.note}</span>
                 </span>
-                {dismissX(`${r.title} の知らせを見送る`, () => dismissSuggestion("exchange_reminder", r.id))}
+                {dismissX(`${r.title}${t("c_dismiss_notice_suffix")}`, () => dismissSuggestion("exchange_reminder", r.id))}
               </li>
             ))}
           </ul>
@@ -1423,7 +1422,7 @@ export default function ContactsPage() {
       )}
 
       {shownDistanceSug.length > 0 && (
-        <Fold k="cl5" defaultOpen={false} title={<>距離感の見直し</>} style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl5" defaultOpen={false} title={<>{t("c_distance_review_title")}</>} style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
             <button
               style={{ padding: "6px 14px", background: "#0284c7", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
@@ -1435,18 +1434,18 @@ export default function ContactsPage() {
                 try {
                   const res = await apiFetch("relationship/apply-distances", { method: "POST", body: "{}" });
                   const body = await res.json().catch(() => ({}));
-                  if (res.ok) setNotice(`${body.applied ?? 0}人の距離感を見直しました`);
+                  if (res.ok) setNotice(`${body.applied ?? 0}${t("c_distances_applied")}`);
                   await load();
                 } finally {
                   setBusy(false);
                 }
               }}
             >
-              すべて反映
+              {t("c_apply_all")}
             </button>
           </div>
           <p style={{ fontSize: 13, color: "#475569", margin: "6px 0" }}>
-            やりとりの多さや新しさから、いまの距離感（1が最も近く、5がたまに）を見直せます。反映するかはあなたが選べます。
+            {t("c_distance_review_desc")}
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
             {shownDistanceSug.slice(0, 12).map((s) => (
@@ -1455,7 +1454,7 @@ export default function ContactsPage() {
                   {s.name}
                 </Link>
                 <span style={{ color: "#334155" }}>
-                  {s.current} から {s.suggested} へ
+                  {s.current}{t("c_from")}{s.suggested}{t("c_to_dist")}
                 </span>
                 <span style={{ color: "#64748b" }}>— {s.reason}</span>
                 <button
@@ -1467,14 +1466,14 @@ export default function ContactsPage() {
                       body: JSON.stringify({ ids: [s.contactId] }),
                     });
                     if (res.ok) {
-                      setNotice(`${s.name}さんの距離感を ${s.suggested} にしました`);
+                      setNotice(`${s.name}${t("c_distance_set_a")}${s.suggested}${t("c_distance_set_b")}`);
                       await load();
                     }
                   }}
                 >
-                  この通りにする
+                  {t("c_apply_one")}
                 </button>
-                {dismissX(`${s.name}さんの距離感の提案を見送る`, () => dismissSuggestion("distance", `${s.contactId}:${s.suggested}`))}
+                {dismissX(`${s.name}${t("c_dismiss_distance_suffix")}`, () => dismissSuggestion("distance", `${s.contactId}:${s.suggested}`))}
               </li>
             ))}
           </ul>
@@ -1482,9 +1481,9 @@ export default function ContactsPage() {
       )}
 
       {shownDrift.length > 0 && (
-        <Fold k="cl6" defaultOpen={false} title={<>そっと気にかけたい関係</>} style={{ margin: "16px 0", border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl6" defaultOpen={false} title={<>{t("c_drift_title")}</>} style={{ margin: "16px 0", border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#9a3412", margin: "4px 0 8px" }}>
-            近しかった方や、いつもやりとりされていた方との間が、少し空いてきています。よろしければ、久しぶりのひとことから。
+            {t("c_drift_desc")}
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
             {shownDrift.map((d) => (
@@ -1495,7 +1494,7 @@ export default function ContactsPage() {
                   </Link>
                   <span style={{ color: "#7c2d12" }}> — {d.reason}</span>
                 </span>
-                {dismissX(`${d.name}さんの気にかけを見送る`, () => dismissSuggestion("drift", d.contactId))}
+                {dismissX(`${d.name}${t("c_dismiss_drift_suffix")}`, () => dismissSuggestion("drift", d.contactId))}
               </li>
             ))}
           </ul>
@@ -1503,10 +1502,9 @@ export default function ContactsPage() {
       )}
 
       {focusItems.length > 0 && (
-        <Fold k="cl7" defaultOpen={false} title={<>大切にしたい方々 (優先リスト)</>} style={{ margin: "16px 0", border: "2px solid #fbbf24", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl7" defaultOpen={false} title={<>{t("c_focus_title")}</>} style={{ margin: "16px 0", border: "2px solid #fbbf24", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#92400e", margin: "4px 0 8px" }}>
-            くり返しの登場・記録の厚み・直近のやりとりから、いま関係を高める価値がありそうな方です。
-            距離感や目標をここで直すと、以降のご提案はこの優先度と目標に沿って動きます。
+            {t("c_focus_desc")}
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 10 }}>
             {focusItems.map((f) => (
@@ -1516,47 +1514,47 @@ export default function ContactsPage() {
                     {f.name}
                   </Link>
                   {f.company && <small style={{ color: "#92400e", marginLeft: 6 }}>{f.company}</small>}
-                  {f.reasons.length > 0 && <span style={{ color: "#78350f", fontSize: 12, marginLeft: 8 }}>{f.reasons.join("・")}</span>}
+                  {f.reasons.length > 0 && <span style={{ color: "#78350f", fontSize: 12, marginLeft: 8 }}>{f.reasons.join(t("c_sep"))}</span>}
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 6 }}>
                   <label style={{ fontSize: 12, color: "#92400e" }}>
-                    距離感{" "}
+                    {t("c_distance_label")}{" "}
                     <select
                       value={f.distance}
-                      aria-label={`${f.name}さんの距離感`}
+                      aria-label={`${f.name}${t("c_aria_distance_suffix")}`}
                       onChange={(e) => void saveFocusDistance(f.contactId, Number(e.target.value))}
                       style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #fcd34d", fontSize: 13 }}
                     >
-                      <option value={1}>1 とても近い</option>
-                      <option value={2}>2 近い</option>
-                      <option value={3}>3 ふつう</option>
-                      <option value={4}>4 遠め</option>
-                      <option value={5}>5 年に一度</option>
+                      <option value={1}>{t("c_dist_opt1")}</option>
+                      <option value={2}>{t("c_dist_opt2")}</option>
+                      <option value={3}>{t("c_dist_opt3")}</option>
+                      <option value={4}>{t("c_dist_opt4")}</option>
+                      <option value={5}>{t("c_dist_opt5")}</option>
                     </select>
                   </label>
                   <label style={{ fontSize: 12, color: "#92400e" }}>
-                    目標{" "}
+                    {t("c_goal_label")}{" "}
                     <select
                       value={f.goal?.purpose ?? ""}
-                      aria-label={`${f.name}さんとの関係の目標`}
+                      aria-label={`${f.name}${t("c_aria_goal_suffix")}`}
                       onChange={(e) => void saveFocusGoal(f.contactId, e.target.value, f.goal?.targetDistance ?? Math.max(1, f.distance - 1))}
                       style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #fcd34d", fontSize: 13 }}
                     >
-                      <option value="">決めていない</option>
-                      <option value="business">仕事の間柄</option>
-                      <option value="friend">友人</option>
-                      <option value="romance">恋人・パートナー</option>
-                      <option value="family">家族</option>
-                      <option value="community">地域・コミュニティ</option>
-                      <option value="other">その他</option>
+                      <option value="">{t("c_goal_none")}</option>
+                      <option value="business">{t("c_goal_business")}</option>
+                      <option value="friend">{t("c_goal_friend")}</option>
+                      <option value="romance">{t("c_goal_romance")}</option>
+                      <option value="family">{t("c_goal_family")}</option>
+                      <option value="community">{t("c_goal_community")}</option>
+                      <option value="other">{t("c_other")}</option>
                     </select>
                   </label>
                   {f.goal && (
                     <label style={{ fontSize: 12, color: "#92400e" }}>
-                      目指す距離感{" "}
+                      {t("c_target_distance_label")}{" "}
                       <select
                         value={f.goal.targetDistance}
-                        aria-label={`${f.name}さんと目指す距離感`}
+                        aria-label={`${f.name}${t("c_aria_target_suffix")}`}
                         onChange={(e) => void saveFocusGoal(f.contactId, f.goal!.purpose, Number(e.target.value))}
                         style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #fcd34d", fontSize: 13 }}
                       >
@@ -1571,13 +1569,13 @@ export default function ContactsPage() {
                     onClick={() => void saveFocusPreference(f.contactId, f.focusPreference === "pinned" ? null : "pinned")}
                     style={{ background: "none", border: "1px solid #fcd34d", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontSize: 12, color: "#92400e" }}
                   >
-                    {f.focusPreference === "pinned" ? "印を外す" : "大切と印を付ける"}
+                    {f.focusPreference === "pinned" ? t("c_unpin") : t("c_pin")}
                   </button>
                   <button
                     onClick={() => void saveFocusPreference(f.contactId, "excluded")}
                     style={{ background: "none", border: "none", color: "#a16207", cursor: "pointer", fontSize: 12, textDecoration: "underline" }}
                   >
-                    このリストから外す
+                    {t("c_exclude_btn")}
                   </button>
                 </div>
               </li>
@@ -1587,9 +1585,9 @@ export default function ContactsPage() {
       )}
 
       {careItems.length > 0 && (
-        <Fold k="cl21" defaultOpen={false} title={<>あなたへの提案 ({careItems.length}件)</>} style={{ margin: "16px 0", border: "1px solid #a5b4fc", background: "#eef2ff", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl21" defaultOpen={false} title={<>{t("c_care_title")} ({careItems.length}{t("c_count_items")})</>} style={{ margin: "16px 0", border: "1px solid #a5b4fc", background: "#eef2ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#3730a3", margin: "4px 0 8px" }}>
-            優先リストの方々について、次の一手をご用意しました。やるかどうかはあなたが選んでください。
+            {t("c_care_desc")}
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
             {careItems.map((s) => (
@@ -1600,22 +1598,22 @@ export default function ContactsPage() {
                     <button
                       onClick={() => {
                         setShowImport(true);
-                        setNotice("下の「追加する」の取り込み欄に、トーク履歴のファイルを置いてください");
+                        setNotice(t("c_import_talk_hint"));
                       }}
                       style={{ background: "none", border: "none", color: "#4338ca", cursor: "pointer", fontSize: 13, textDecoration: "underline", padding: 0 }}
                     >
-                      取り込みへ進む
+                      {t("c_go_import")}
                     </button>
                   ) : (
                     <Link href={`/contacts/${s.contactId}`} style={{ color: "#4338ca", fontSize: 13 }}>
-                      {s.kind === "reach_out" ? "お便りを考える" : s.kind === "meet" ? "日程のページを作る" : s.kind === "set_goal" ? "目標を決める" : "この方のページへ"}
+                      {s.kind === "reach_out" ? t("c_care_reach_out") : s.kind === "meet" ? t("c_care_meet") : s.kind === "set_goal" ? t("c_set_goal") : t("c_go_contact_page")}
                     </Link>
                   )}
                   <button onClick={() => void resolveCare(s.id, "done")} style={{ background: "none", border: "none", color: "#166534", cursor: "pointer", fontSize: 12, padding: 0 }}>
-                    やりました
+                    {t("c_did_it")}
                   </button>
                   <button onClick={() => void resolveCare(s.id, "dismissed")} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 12, padding: 0 }}>
-                    今回は見送る
+                    {t("c_skip_this_time")}
                   </button>
                 </div>
               </li>
@@ -1625,10 +1623,9 @@ export default function ContactsPage() {
       )}
 
       {shownGrowth.length > 0 && (
-        <Fold k="cl23" defaultOpen={false} title={<>関係を育てるとよい方々</>} style={{ margin: "16px 0", border: "2px solid #34d399", background: "#ecfdf5", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl23" defaultOpen={false} title={<>{t("c_growth_title")}</>} style={{ margin: "16px 0", border: "2px solid #34d399", background: "#ecfdf5", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#065f46", margin: "4px 0 10px" }}>
-            これから関係を作る・近づける価値がありそうな方です。それぞれに、距離の縮め方をいくつか添えました。
-            気が向いた一手からで大丈夫です。今回はそっとしておきたい方は ✕ で外せます。
+            {t("c_growth_desc")}
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 12 }}>
             {shownGrowth.map((g) => (
@@ -1638,8 +1635,8 @@ export default function ContactsPage() {
                     {g.name}
                   </Link>
                   {g.company && <span style={{ color: "#94a3b8", fontSize: 12 }}>{g.company}</span>}
-                  <span style={{ color: "#059669", fontSize: 12 }}>距離 {g.distance}</span>
-                  {dismissX(`${g.name}さんを今回は外す`, () => dismissSuggestion("growth", g.contactId))}
+                  <span style={{ color: "#059669", fontSize: 12 }}>{t("c_distance_prefix")}{g.distance}</span>
+                  {dismissX(`${g.name}${t("c_dismiss_growth_suffix")}`, () => dismissSuggestion("growth", g.contactId))}
                 </div>
                 {g.reason && <p style={{ margin: "4px 0 8px", color: "#065f46", fontSize: 13 }}>{g.reason}</p>}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1670,8 +1667,8 @@ export default function ContactsPage() {
                             sourceKey: `${g.contactId}:${mv.kind}`,
                           })
                         }
-                        aria-label={`${g.name}さんの「${mv.label}」を実行待ちに入れる`}
-                        title="実行待ちに入れる"
+                        aria-label={`${g.name}${t("c_aria_move_a")}${mv.label}${t("c_aria_move_b")}`}
+                        title={t("c_add_to_pending")}
                         style={{ padding: "4px 8px", border: "1px solid #d97706", color: "#92400e", background: "#fffbeb", borderRadius: 8, cursor: "pointer", fontSize: 12 }}
                       >
                         ＋
@@ -1686,20 +1683,20 @@ export default function ContactsPage() {
       )}
 
       {googleStatus?.available && (googleStatus.connected || voiceMemos.length > 0) && (
-        <Fold k="cl24" defaultOpen={false} title={<>録音メモからのタスクと課題{voiceMemos.length > 0 ? ` (${voiceMemos.length})` : ""}</>} style={{ margin: "16px 0", border: "1px solid #c7d2fe", background: "#eef2ff", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl24" defaultOpen={false} title={<>{t("c_voice_title")}{voiceMemos.length > 0 ? ` (${voiceMemos.length})` : ""}</>} style={{ margin: "16px 0", border: "1px solid #c7d2fe", background: "#eef2ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#3730a3", margin: "4px 0 10px" }}>
-            録音サービス (Plaud) からメールで届く文字起こしの添付テキストを開いて読み、タスク (やること) と課題を整理してここに並べます。
+            {t("c_voice_desc")}
           </p>
           {!googleStatus.mailRead ? (
             <div>
               <p style={{ fontSize: 13, color: "#475569", margin: "0 0 8px", lineHeight: 1.8 }}>
-                読み取りには、Google の「メールを読む」追加の許可が必要です (読むのは録音サービスからのメールだけ。ほかのメールの中身は使いません)。
+                {t("c_voice_need_permission")}
               </p>
               <button
                 onClick={() => void connectMailRead()}
                 style={{ padding: "8px 16px", background: "#4f46e5", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14 }}
               >
-                録音メモを読めるようにする (Google の許可)
+                {t("c_voice_permit_btn")}
               </button>
             </div>
           ) : (
@@ -1709,11 +1706,11 @@ export default function ContactsPage() {
                 disabled={plaudBusy}
                 style={{ padding: "6px 14px", background: "#4f46e5", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, marginBottom: 10 }}
               >
-                {plaudBusy ? "読み込んでいます…" : "いま読み込む"}
+                {plaudBusy ? t("c_loading_progress") : t("c_load_now")}
               </button>
               {voiceMemos.length === 0 && (
                 <p style={{ fontSize: 13, color: "#64748b", margin: 0 }}>
-                  まだ録音メモがありません。届くと自動でここに整理されます (1 時間ごとに確認します)。
+                  {t("c_voice_empty")}
                 </p>
               )}
               <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 12 }}>
@@ -1721,14 +1718,14 @@ export default function ContactsPage() {
                   <li key={m.id} style={{ border: "1px solid #ddd6fe", borderRadius: 10, padding: "10px 12px", background: "#fff" }}>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
                       <span style={{ fontWeight: 600, fontSize: 14, flex: 1 }}>
-                        {m.subject ?? "録音メモ"}
+                        {m.subject ?? t("c_voice_memo")}
                         {m.receivedAt && (
                           <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 400, marginLeft: 8 }}>
                             {new Date(m.receivedAt).toLocaleDateString("ja-JP")}
                           </span>
                         )}
                       </span>
-                      {dismissX(`${m.subject ?? "この録音メモ"} を片付ける`, () => void dismissMemo(m.id))}
+                      {dismissX(`${m.subject ?? t("c_this_voice_memo")}${t("c_dismiss_memo_suffix")}`, () => void dismissMemo(m.id))}
                     </div>
                     {m.summary && <p style={{ margin: "6px 0", color: "#334155", fontSize: 13, lineHeight: 1.7 }}>{m.summary}</p>}
                     {m.tasks.length > 0 ? (
@@ -1739,12 +1736,12 @@ export default function ContactsPage() {
                               type="checkbox"
                               checked={t2.done}
                               onChange={(e) => void toggleMemoTask(m.id, i, e.target.checked)}
-                              aria-label={`${t2.text} を済みにする`}
+                              aria-label={`${t2.text}${t("c_aria_mark_done")}`}
                             />
                             <span style={{ textDecoration: t2.done ? "line-through" : "none", color: t2.done ? "#94a3b8" : "#0f172a" }}>
                               {t2.kind === "issue" && (
                                 <span style={{ color: "#b45309", fontSize: 12, border: "1px solid #fcd34d", background: "#fffbeb", borderRadius: 6, padding: "1px 6px", marginRight: 6 }}>
-                                  課題
+                                  {t("c_issue_badge")}
                                 </span>
                               )}
                               {t2.text}
@@ -1759,7 +1756,7 @@ export default function ContactsPage() {
                           onClick={() => void digestMemo(m.id)}
                           style={{ padding: "5px 12px", background: "#fff", color: "#4f46e5", border: "1px solid #c7d2fe", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
                         >
-                          タスクと課題を整理する
+                          {t("c_digest_btn")}
                         </button>
                       </div>
                     )}
@@ -1772,10 +1769,9 @@ export default function ContactsPage() {
       )}
 
       {ddSuggestions.length > 0 && (
-        <Fold k="cl26" defaultOpen={false} title={<>公人評価の確認待ち ({ddSuggestions.length})</>} style={{ margin: "16px 0", border: "1px solid #f5d0fe", background: "#fdf4ff", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl26" defaultOpen={false} title={<>{t("c_dd_title")} ({ddSuggestions.length})</>} style={{ margin: "16px 0", border: "1px solid #f5d0fe", background: "#fdf4ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#86198f", margin: "4px 0 10px" }}>
-            公人として評価できそうな方です。同じ名前の別人がいる、または特定しきれないため、どなたか選んでいただいてから評価します。
-            選ぶと評価対象に登録され、評価は順に自動で実施されます。
+            {t("c_dd_desc")}
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 12 }}>
             {ddSuggestions.map((s) => (
@@ -1787,11 +1783,11 @@ export default function ContactsPage() {
                   {(s.company || s.title) && (
                     <span style={{ color: "#94a3b8", fontSize: 12 }}>{[s.company, s.title].filter(Boolean).join(" ")}</span>
                   )}
-                  {dismissX(`${s.name}さんの公人評価を見送る`, () => void dismissDdSuggestion(s.id))}
+                  {dismissX(`${s.name}${t("c_dismiss_dd_suffix")}`, () => void dismissDdSuggestion(s.id))}
                 </div>
                 {s.candidates.length > 0 ? (
                   <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
-                    <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>どの方でしょうか:</p>
+                    <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>{t("c_dd_which")}</p>
                     {s.candidates.map((cand, i) => (
                       <button
                         key={i}
@@ -1805,7 +1801,7 @@ export default function ContactsPage() {
                   </div>
                 ) : (
                   <p style={{ margin: "8px 0 0", fontSize: 13, color: "#64748b" }}>
-                    公人として特定できませんでした。お名前のまま評価することもできます。
+                    {t("c_dd_not_identified")}
                   </p>
                 )}
                 <div style={{ marginTop: 8 }}>
@@ -1813,7 +1809,7 @@ export default function ContactsPage() {
                     onClick={() => void resolveDdSuggestion(s.id)}
                     style={{ padding: "6px 12px", border: "1px solid #d8b4fe", background: "#fff", color: "#7e22ce", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
                   >
-                    お名前のまま評価する
+                    {t("c_dd_eval_as_is")}
                   </button>
                 </div>
               </li>
@@ -1823,9 +1819,9 @@ export default function ContactsPage() {
       )}
 
       {shownGoalItems.length > 0 && (
-        <Fold k="cl8" defaultOpen={false} title={<>目標に向かっている関係</>} style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl8" defaultOpen={false} title={<>{t("c_goal_panel_title")}</>} style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#6b21a8", margin: "4px 0 8px" }}>
-            目標を決めた方との、いまの間合いと次の一手です。間が空いてきた方から並べています。
+            {t("c_goal_panel_desc")}
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
             {shownGoalItems.map((g) => (
@@ -1836,12 +1832,12 @@ export default function ContactsPage() {
                       {g.name}
                     </Link>
                     <span style={{ color: "#6b21a8", fontSize: 12, marginLeft: 6 }}>
-                      {g.purposeLabel}・いま {g.current} → 目標 {g.target}
-                      {g.plan.progress > 0 ? `・${g.plan.progress} 段階前進` : ""}
-                      {g.plan.overdue ? "・間が空いています" : ""}
+                      {g.purposeLabel}{t("c_goal_now_a")}{g.current}{t("c_goal_now_b")}{g.target}
+                      {g.plan.progress > 0 ? `${t("c_goal_progress_a")}${g.plan.progress}${t("c_goal_progress_b")}` : ""}
+                      {g.plan.overdue ? t("c_goal_overdue") : ""}
                     </span>
                   </span>
-                  {dismissX(`${g.name}さんの目標の知らせを見送る`, () => dismissSuggestion("goal_nudge", g.contactId))}
+                  {dismissX(`${g.name}${t("c_dismiss_goal_suffix")}`, () => dismissSuggestion("goal_nudge", g.contactId))}
                 </div>
                 <div style={{ color: "#4c1d95", marginTop: 2 }}>{g.plan.nextMove}</div>
               </li>
@@ -1851,9 +1847,9 @@ export default function ContactsPage() {
       )}
 
       {shownRecentMet.length > 0 && (
-        <Fold k="cl9" defaultOpen={false} title={<>最近お会いした方</>} style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl9" defaultOpen={false} title={<>{t("c_recent_met_title")}</>} style={{ margin: "16px 0", border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#075985", margin: "4px 0 8px" }}>
-            お変わりありませんでしたか。覚えているうちにひとことだけ残しておくと、この先の一手がぐっと的確になります。
+            {t("c_recent_met_desc")}
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
             {shownRecentMet.map((m) => (
@@ -1861,16 +1857,16 @@ export default function ContactsPage() {
                 <Link href={`/contacts/${m.contactId}`} style={{ color: "#0369a1", fontWeight: 600 }}>
                   {m.name}
                 </Link>
-                <span style={{ color: "#0c4a6e", fontSize: 12 }}>{m.metAt} にお会いした記録</span>
-                {dismissX(`${m.name}さんへのひとこと伺いを見送る`, () => dismissSuggestion("recent_meeting", `${m.contactId}:${m.metAt}`))}
+                <span style={{ color: "#0c4a6e", fontSize: 12 }}>{m.metAt}{t("c_met_on_suffix")}</span>
+                {dismissX(`${m.name}${t("c_dismiss_recent_suffix")}`, () => dismissSuggestion("recent_meeting", `${m.contactId}:${m.metAt}`))}
                 {metSaved[m.contactId] ? (
-                  <span style={{ color: "#047857", fontSize: 13 }}>残しました。ありがとうございます</span>
+                  <span style={{ color: "#047857", fontSize: 13 }}>{t("c_note_saved_thanks")}</span>
                 ) : (
                   <span style={{ display: "flex", gap: 6, flex: 1, minWidth: 220 }}>
                     <input
                       value={metNotes[m.contactId] ?? ""}
                       onChange={(e) => setMetNotes((s) => ({ ...s, [m.contactId]: e.target.value }))}
-                      placeholder="ご様子をひとことだけ (例: お元気そう。秋に異動があるかもとのこと)"
+                      placeholder={t("c_met_note_ph")}
                       style={{ flex: 1, padding: "6px 8px", border: "1px solid #bae6fd", borderRadius: 8, fontSize: 13 }}
                     />
                     <button
@@ -1881,7 +1877,7 @@ export default function ContactsPage() {
                         }
                       }}
                     >
-                      残す
+                      {t("c_save_note_btn")}
                     </button>
                   </span>
                 )}
@@ -1892,13 +1888,13 @@ export default function ContactsPage() {
       )}
 
       {dailyQ && !dailySaved && !dailyQDismissed && (
-        <Fold k="cl10" defaultOpen={false} title={<>今日のひとこと</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl10" defaultOpen={false} title={<>{t("c_daily_title")}</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 14, color: "#78350f", margin: "4px 0 8px" }}>{dailyQ.question}</p>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <input
               value={dailyAnswer}
               onChange={(e) => setDailyAnswer(e.target.value)}
-              placeholder="ひとことだけで大丈夫です (分からなければ空のままで)"
+              placeholder={t("c_daily_ph")}
               style={{ flex: 1, minWidth: 220, padding: "6px 8px", border: "1px solid #fde68a", borderRadius: 8, fontSize: 13 }}
             />
             <button
@@ -1906,11 +1902,11 @@ export default function ContactsPage() {
               onClick={async () => {
                 if (await saveQuickNote(dailyQ.contactId, dailyAnswer)) {
                   setDailySaved(true);
-                  setNotice(`${dailyQ.name}さんのことをひとつ覚えました。明日もひとつだけお聞きします`);
+                  setNotice(`${dailyQ.name}${t("c_daily_saved_suffix")}`);
                 }
               }}
             >
-              残す
+              {t("c_save_note_btn")}
             </button>
             <button
               style={{ padding: "6px 10px", background: "transparent", color: "#92400e", border: "1px solid #fcd34d", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
@@ -1920,19 +1916,19 @@ export default function ContactsPage() {
                 dismissSuggestion("daily_question", `${dailyQ.contactId}:${todayKey}`);
               }}
             >
-              今日はやめておく
+              {t("c_daily_skip")}
             </button>
           </div>
           <p style={{ fontSize: 12, color: "#92400e", margin: "8px 0 0" }}>
-            毎日ひとりについて、まだ書き留めていないことをひとつだけお聞きします。積み重なるほど、提案が的確になります。
+            {t("c_daily_footer")}
           </p>
         </Fold>
       )}
 
       {shownFirstMoves.length > 0 && (
-        <Fold k="cl11" defaultOpen={false} title={<>新しく迎えた方へ、はじめの一手</>} style={{ margin: "16px 0", border: "1px solid #a7f3d0", background: "#ecfdf5", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl11" defaultOpen={false} title={<>{t("c_first_moves_title")}</>} style={{ margin: "16px 0", border: "1px solid #a7f3d0", background: "#ecfdf5", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#065f46", margin: "4px 0 8px" }}>
-            最近お迎えした方のうち、いま動くとよさそうな方です。詳しい進め方は、お名前を開いて「この方への対応を考える」からどうぞ。
+            {t("c_first_moves_desc")}
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
             {shownFirstMoves.slice(0, 8).map((m) => (
@@ -1943,20 +1939,19 @@ export default function ContactsPage() {
                   </Link>
                   <span style={{ color: "#064e3b" }}> — {m.reason}</span>
                 </span>
-                {dismissX(`${m.name}さんへのはじめの一手を見送る`, () => dismissSuggestion("first_move", m.contactId))}
+                {dismissX(`${m.name}${t("c_dismiss_first_move_suffix")}`, () => dismissSuggestion("first_move", m.contactId))}
               </li>
             ))}
           </ul>
           <p style={{ fontSize: 12, color: "#047857", margin: "8px 0 0" }}>
-            お相手の論点整理は、材料のある方から順に自動で進みます。整うほど、この一手も具体的になります。
+            {t("c_first_moves_footer")}
           </p>
         </Fold>
       )}
 
-      <Fold k="cl22" defaultOpen={false} title={<>あなたが力になれること</>} style={{ margin: "16px 0", border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 12, padding: "12px 16px" }}>
+      <Fold k="cl22" defaultOpen={false} title={<>{t("c_offerings_title")}</>} style={{ margin: "16px 0", border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 12, padding: "12px 16px" }}>
         <p style={{ fontSize: 13, color: "#166534", margin: "4px 0 8px" }}>
-          あなたが提供できること（譲れるもの・貸せるもの・教えられること・手伝えること・相談にのれること）を書いておくと、
-          それを必要としていそうな方を、これまでの記録からそっとお探しします。押しつけずに、最後はあなたが選べます。
+          {t("c_offerings_desc")}
         </p>
         {offerings.length > 0 && (
           <ul style={{ listStyle: "none", padding: 0, margin: "0 0 10px", display: "grid", gap: 8 }}>
@@ -1966,12 +1961,12 @@ export default function ContactsPage() {
                   <input
                     value={editOffer.title}
                     onChange={(e) => setEditOffer({ ...editOffer, title: e.target.value })}
-                    aria-label="申し出のタイトル"
+                    aria-label={t("c_aria_offer_title")}
                     style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
                   />
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <select
-                      aria-label="申し出の種類"
+                      aria-label={t("c_aria_offer_kind")}
                       value={editOffer.kind}
                       onChange={(e) => setEditOffer({ ...editOffer, kind: e.target.value })}
                       style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
@@ -1981,30 +1976,30 @@ export default function ContactsPage() {
                       ))}
                     </select>
                     <select
-                      aria-label="お声がけする範囲 (距離感)"
+                      aria-label={t("c_aria_offer_range")}
                       value={editOffer.maxDistance}
                       onChange={(e) => setEditOffer({ ...editOffer, maxDistance: e.target.value })}
                       style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
                     >
-                      <option value="">どなたでも</option>
-                      <option value="2">とても近い方だけ (2 まで)</option>
-                      <option value="3">近い方まで (3 まで)</option>
-                      <option value="4">ふだん付き合いのある方まで (4 まで)</option>
+                      <option value="">{t("c_range_anyone")}</option>
+                      <option value="2">{t("c_range_2")}</option>
+                      <option value="3">{t("c_range_3")}</option>
+                      <option value="4">{t("c_range_4")}</option>
                     </select>
                   </div>
                   <input
                     value={editOffer.description}
                     onChange={(e) => setEditOffer({ ...editOffer, description: e.target.value })}
-                    placeholder="補足があれば"
-                    aria-label="申し出の補足"
+                    placeholder={t("c_offer_desc_ph")}
+                    aria-label={t("c_aria_offer_desc")}
                     style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
                   />
                   <div style={{ display: "flex", gap: 8 }}>
                     <button onClick={() => void saveEditOffering()} style={{ padding: "6px 14px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>
-                      保存する
+                      {t("c_save_btn")}
                     </button>
                     <button onClick={() => setEditOfferId(null)} style={{ padding: "6px 14px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 13 }}>
-                      やめる
+                      {t("c_cancel_btn")}
                     </button>
                   </div>
                 </li>
@@ -2014,21 +2009,21 @@ export default function ContactsPage() {
                     <button
                       onClick={() => startEditOffering(o)}
                       style={{ background: "none", border: "none", padding: 0, color: "#15803d", fontWeight: 600, cursor: "pointer", textAlign: "left", font: "inherit" }}
-                      title="押すと編集できます"
+                      title={t("c_click_to_edit")}
                     >
                       {o.title}
                     </button>
                     <span style={{ color: "#166534", fontSize: 12, marginLeft: 6 }}>
                       {o.kindLabel}
-                      {o.maxDistance ? `・近い方 (距離 ${o.maxDistance} まで)` : ""}
-                      {o.published ? "・掲示板に公開中" : ""}
+                      {o.maxDistance ? `${t("c_offer_dist_a")}${o.maxDistance}${t("c_offer_dist_b")}` : ""}
+                      {o.published ? t("c_offer_published_tag") : ""}
                     </span>
                   </span>
                   <button
                     onClick={() => startEditOffering(o)}
                     style={{ background: "none", border: "1px solid #86efac", color: "#166534", borderRadius: 8, cursor: "pointer", fontSize: 12, padding: "3px 10px" }}
                   >
-                    編集
+                    {t("c_edit_btn")}
                   </button>
                   <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "#166534", cursor: "pointer" }}>
                     <input
@@ -2036,10 +2031,10 @@ export default function ContactsPage() {
                       checked={o.published}
                       onChange={(e) => void toggleOfferingPublished(o.id, e.target.checked)}
                     />
-                    掲示板に載せる
+                    {t("c_publish_toggle")}
                   </label>
                   <button
-                    aria-label={`${o.title} を消す`}
+                    aria-label={`${o.title}${t("c_delete_suffix")}`}
                     onClick={() => void removeOffering(o.id)}
                     style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 14, padding: 2 }}
                   >
@@ -2052,17 +2047,17 @@ export default function ContactsPage() {
         )}
         {marketUrl && offerings.some((o) => o.published) && (
           <p style={{ fontSize: 12, color: "#166534", margin: "0 0 10px" }}>
-            公開ページ:{" "}
+            {t("c_public_page_label")}{" "}
             <a href="/market" target="_blank" rel="noopener noreferrer" style={{ color: "#15803d" }}>
-              できること・お時間のご案内
+              {t("c_market_link")}
             </a>
-            （この URL を、届けたい方に共有できます）
+            {t("c_market_share_hint")}
           </p>
         )}
         {offerInterests.length > 0 && (
           <div style={{ margin: "10px 0", border: "1px solid #86efac", background: "#dcfce7", borderRadius: 10, padding: "10px 12px" }}>
             <p style={{ fontSize: 13, color: "#166534", margin: "0 0 6px", fontWeight: 600 }}>
-              掲示板へのお問い合わせが {offerInterests.length} 件あります
+              {t("c_interests_a")}{offerInterests.length}{t("c_interests_b")}
             </p>
             <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
               {offerInterests.map((it) => (
@@ -2070,7 +2065,7 @@ export default function ContactsPage() {
                   <div>
                     <span style={{ fontWeight: 600 }}>{it.guestName}</span>
                     <span style={{ color: "#166534", fontSize: 12, marginLeft: 6 }}>
-                      「{it.offeringTitle}」{it.guestContact ? `・${it.guestContact}` : ""}
+                      {t("c_qo")}{it.offeringTitle}{t("c_qc")}{it.guestContact ? `${t("c_sep")}${it.guestContact}` : ""}
                     </span>
                   </div>
                   {it.message && <div style={{ color: "#334155", marginTop: 2 }}>{it.message}</div>}
@@ -2079,13 +2074,13 @@ export default function ContactsPage() {
                       onClick={() => void approveInterest(it.id)}
                       style={{ padding: "5px 12px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
                     >
-                      連絡先に迎える
+                      {t("c_welcome_contact")}
                     </button>
                     <button
                       onClick={() => void dismissInterest(it.id)}
                       style={{ padding: "5px 12px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
                     >
-                      今回は見送る
+                      {t("c_skip_this_time")}
                     </button>
                   </div>
                 </li>
@@ -2098,12 +2093,12 @@ export default function ContactsPage() {
             <input
               value={offerTitle}
               onChange={(e) => setOfferTitle(e.target.value)}
-              placeholder="何ができますか (例: 英語を教えられます・使わない子ども服を譲れます)"
+              placeholder={t("c_offer_title_ph")}
               style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
             />
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <select
-                aria-label="申し出の種類"
+                aria-label={t("c_aria_offer_kind")}
                 value={offerKind}
                 onChange={(e) => setOfferKind(e.target.value)}
                 style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
@@ -2113,21 +2108,21 @@ export default function ContactsPage() {
                 ))}
               </select>
               <select
-                aria-label="お声がけする範囲 (距離感)"
+                aria-label={t("c_aria_offer_range")}
                 value={offerMaxDist}
                 onChange={(e) => setOfferMaxDist(e.target.value)}
                 style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
               >
-                <option value="">どなたでも</option>
-                <option value="2">とても近い方だけ (2 まで)</option>
-                <option value="3">近い方まで (3 まで)</option>
-                <option value="4">ふだん付き合いのある方まで (4 まで)</option>
+                <option value="">{t("c_range_anyone")}</option>
+                <option value="2">{t("c_range_2")}</option>
+                <option value="3">{t("c_range_3")}</option>
+                <option value="4">{t("c_range_4")}</option>
               </select>
             </div>
             <input
               value={offerDesc}
               onChange={(e) => setOfferDesc(e.target.value)}
-              placeholder="補足があれば (例: 平日夜のオンラインなら・ビジネス英語も可)"
+              placeholder={t("c_offer_desc_ph2")}
               style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}
             />
             <div style={{ display: "flex", gap: 8 }}>
@@ -2135,13 +2130,13 @@ export default function ContactsPage() {
                 onClick={() => void addOffering()}
                 style={{ padding: "8px 16px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14 }}
               >
-                登録する
+                {t("c_register_btn")}
               </button>
               <button
                 onClick={() => setShowOfferForm(false)}
                 style={{ padding: "8px 16px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 14 }}
               >
-                やめる
+                {t("c_cancel_btn")}
               </button>
             </div>
           </div>
@@ -2151,27 +2146,26 @@ export default function ContactsPage() {
               onClick={() => setShowOfferForm(true)}
               style={{ padding: "6px 14px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
             >
-              力になれることを書く
+              {t("c_write_offering")}
             </button>
             <button
               onClick={() => setShowOfferImport((v) => !v)}
               style={{ padding: "6px 14px", background: "#fff", color: "#166534", border: "1px solid #86efac", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
             >
-              一覧からまとめて取り込む
+              {t("c_bulk_import_offerings")}
             </button>
           </div>
         )}
         {showOfferImport && (
           <div style={{ display: "grid", gap: 8, margin: "0 0 10px", border: "1px solid #bbf7d0", borderRadius: 10, padding: "10px 12px", background: "#fff" }}>
             <p style={{ fontSize: 13, color: "#166534", margin: 0 }}>
-              提供できるものの一覧を、1 行に 1 つずつ貼り付けてください（表計算のセルをそのままコピーしても大丈夫です）。
-              内容から「譲る・貸す・教える・手伝う・相談にのる」に自動で振り分けます。あとから 1 件ずつ直せます。
+              {t("c_offer_import_desc")}
             </p>
             <textarea
               value={offerImportText}
               onChange={(e) => setOfferImportText(e.target.value)}
-              aria-label="提供できるものの一覧"
-              placeholder={"英語のレッスン\n使わない子ども用品を譲ります\n引っ越しの手伝い\n起業の相談にのれます"}
+              aria-label={t("c_aria_offer_list")}
+              placeholder={t("c_offer_import_ph")}
               rows={6}
               style={{ padding: "8px 10px", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14, fontFamily: "inherit", resize: "vertical" }}
             />
@@ -2180,13 +2174,13 @@ export default function ContactsPage() {
                 onClick={() => void importOfferings()}
                 style={{ padding: "8px 16px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14 }}
               >
-                取り込んで分類する
+                {t("c_import_classify_btn")}
               </button>
               <button
                 onClick={() => setShowOfferImport(false)}
                 style={{ padding: "8px 16px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 14 }}
               >
-                やめる
+                {t("c_cancel_btn")}
               </button>
             </div>
           </div>
@@ -2194,7 +2188,7 @@ export default function ContactsPage() {
         {offerMatches.length > 0 && (
           <div style={{ marginTop: 6 }}>
             <p style={{ fontSize: 13, color: "#166534", margin: "8px 0 6px", fontWeight: 600 }}>
-              力になれそうな方が見つかりました
+              {t("c_matches_found")}
             </p>
             <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 10 }}>
               {offerMatches.map((m) => (
@@ -2211,13 +2205,13 @@ export default function ContactsPage() {
                         </Link>
                         <span style={{ color: "#166534", fontSize: 12, flex: 1, minWidth: 180 }}>{ct.reason}</span>
                         {offeredTo[`${m.offeringId}:${ct.contactId}`] ? (
-                          <span style={{ color: "#047857", fontSize: 13 }}>控えました</span>
+                          <span style={{ color: "#047857", fontSize: 13 }}>{t("c_offer_noted")}</span>
                         ) : (
                           <button
                             onClick={() => void offerToContact(m.offeringId, ct.contactId, m.title, m.kindLabel)}
                             style={{ padding: "5px 12px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
                           >
-                            この方に申し出る
+                            {t("c_offer_to_this")}
                           </button>
                         )}
                       </li>
@@ -2230,7 +2224,7 @@ export default function ContactsPage() {
         )}
       </Fold>
 
-      <Fold k="cl12" defaultOpen={false} title={<>引き合わせるとよいお二人</>} style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
+      <Fold k="cl12" defaultOpen={false} title={<>{t("c_intro_title")}</>} style={{ margin: "16px 0", border: "1px solid #ddd6fe", background: "#faf5ff", borderRadius: 12, padding: "12px 16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
           <button
             style={{ padding: "6px 14px", background: "#7c3aed", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
@@ -2246,26 +2240,26 @@ export default function ContactsPage() {
                   setIntros(body.introductions ?? []);
                   setIntroNote(body.note ?? "");
                 } else {
-                  setError(body.detail ?? "いまは提案を作れませんでした");
+                  setError(body.detail ?? t("c_intro_failed"));
                 }
               } finally {
                 setBusy(false);
               }
             }}
           >
-            {busy ? "考えています…" : "見つけてもらう"}
+            {busy ? t("c_thinking") : t("c_find_intros")}
           </button>
         </div>
         <p style={{ fontSize: 13, color: "#6b21a8", margin: "6px 0 0" }}>
-          連絡帳の中から、一方の困りごとや目標に、もう一方の強みや力になれることが噛み合いそうなお二人を、そっとお知らせします。
+          {t("c_intro_desc")}
         </p>
         {intros && intros.length > 0 && (
           <ul style={{ listStyle: "none", padding: 0, margin: "10px 0 0", display: "grid", gap: 10 }}>
             {intros.map((it, i) => (
               <li key={i} style={{ background: "#fff", border: "1px solid #e9d5ff", borderRadius: 10, padding: "10px 12px" }}>
-                <div style={{ fontWeight: 700, color: "#5b21b6" }}>{it.personA} と {it.personB}</div>
+                <div style={{ fontWeight: 700, color: "#5b21b6" }}>{it.personA}{t("c_and_sep")}{it.personB}</div>
                 {it.reason && <div style={{ fontSize: 14, marginTop: 3, lineHeight: 1.8 }}>{it.reason}</div>}
-                {it.how && <div style={{ fontSize: 13, color: "#475569", marginTop: 3 }}>引き合わせ方: {it.how}</div>}
+                {it.how && <div style={{ fontSize: 13, color: "#475569", marginTop: 3 }}>{t("c_intro_how_label")}{it.how}</div>}
                 {it.caution && <div style={{ fontSize: 13, color: "#92400e", marginTop: 3 }}>{it.caution}</div>}
               </li>
             ))}
@@ -2273,7 +2267,7 @@ export default function ContactsPage() {
         )}
         {intros && intros.length === 0 && (
           <p style={{ fontSize: 13, color: "#6b7280", margin: "8px 0 0" }}>
-            {introNote || "いまのところ、はっきり噛み合うお二人は見当たりませんでした。"}
+            {introNote || t("c_intro_none")}
           </p>
         )}
       </Fold>
@@ -2294,11 +2288,11 @@ export default function ContactsPage() {
         (() => {
           const active = jobs.filter((j) => j.status === "queued" || j.status === "processing").length;
           const label = (s: string) =>
-            s === "queued" ? "待機中" : s === "processing" ? "読み取り中" : s === "done" ? "完了" : "読み取れませんでした";
+            s === "queued" ? t("c_job_queued") : s === "processing" ? t("c_job_processing") : s === "done" ? t("c_job_done") : t("c_job_error");
           const color = (s: string) =>
             s === "done" ? "#166534" : s === "error" ? "#b91c1c" : "#1e40af";
           return (
-            <Fold k="cl13" defaultOpen={false} title={<>取り込みの状況</>}
+            <Fold k="cl13" defaultOpen={false} title={<>{t("c_jobs_title")}</>}
               style={{ margin: "16px 0", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: "12px 16px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                 {active === 0 && (
@@ -2306,27 +2300,27 @@ export default function ContactsPage() {
                     onClick={() => void clearJobs()}
                     style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontSize: 13 }}
                   >
-                    表示を片付ける
+                    {t("c_clear_jobs")}
                   </button>
                 )}
               </div>
               <p style={{ color: "#475569", fontSize: 13, margin: "4px 0 10px" }}>
                 {active > 0
-                  ? "サーバで読み取りが進んでいます。ページを離れたり、ほかのことをしていても大丈夫です。"
-                  : "取り込みが終わりました。"}
+                  ? t("c_jobs_active_desc")
+                  : t("c_jobs_done_desc")}
               </p>
               <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 6 }}>
                 {jobs.slice(0, 30).map((j) => (
                   <li key={j.id} style={{ fontSize: 14, display: "flex", justifyContent: "space-between", gap: 10 }}>
                     <span style={{ color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {j.filename || (j.kind === "text" ? "貼り付けた内容" : "ファイル")}
+                      {j.filename || (j.kind === "text" ? t("c_pasted_content") : t("c_file_word"))}
                     </span>
                     <span style={{ color: color(j.status), whiteSpace: "nowrap" }}>
                       {label(j.status)}
                       {j.status === "done" &&
                         (j.imported > 0 || j.enriched > 0
-                          ? `（${j.imported > 0 ? `${j.imported}名を追加` : ""}${j.imported > 0 && j.enriched > 0 ? "・" : ""}${j.enriched > 0 ? `${j.enriched}名に追記` : ""}）`
-                          : "（新しい方はいませんでした）")}
+                          ? `${t("c_po")}${j.imported > 0 ? `${j.imported}${t("c_added_suffix")}` : ""}${j.imported > 0 && j.enriched > 0 ? t("c_sep") : ""}${j.enriched > 0 ? `${j.enriched}${t("c_enriched_suffix")}` : ""}${t("c_pc")}`
+                          : t("c_no_new_people"))}
                     </span>
                   </li>
                 ))}
@@ -2336,16 +2330,16 @@ export default function ContactsPage() {
         })()}
 
       {dupeGroups.length > 0 && (
-        <Fold k="cl14" defaultOpen={false} title={<>同じ方が二重に登録されているかもしれません</>} style={{ margin: "16px 0", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: "12px 16px" }}>
+        <Fold k="cl14" defaultOpen={false} title={<>{t("c_dupes_title")}</>} style={{ margin: "16px 0", border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ color: "#475569", fontSize: 13, margin: "0 0 10px" }}>
-            まとめると、やりとりや贈り物の記録も1件に集まります。別の方なら、そのままにしておいて大丈夫です。
+            {t("c_dupes_desc")}
           </p>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 10 }}>
             {dupeGroups.slice(0, 20).map((g) => (
               <li key={g.key} style={{ border: "1px solid #dbeafe", borderRadius: 10, padding: "10px 12px", background: "#fff" }}>
                 <div style={{ fontSize: 13, color: "#64748b", marginBottom: 4 }}>
                   {g.reason}
-                  {!g.strong && "（念のためご確認ください）"}
+                  {!g.strong && t("c_dupe_weak_note")}
                 </div>
                 <div style={{ fontSize: 14 }}>
                   {g.members.map((m) => (
@@ -2362,13 +2356,13 @@ export default function ContactsPage() {
                     onClick={() => void mergeGroup(g)}
                     style={{ padding: "6px 14px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
                   >
-                    1件にまとめる
+                    {t("c_merge_btn")}
                   </button>
                   <button
                     onClick={() => void markDifferentPeople(g)}
                     style={{ padding: "6px 14px", background: "#fff", color: "#475569", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
                   >
-                    別の方として扱う
+                    {t("c_mark_different_btn")}
                   </button>
                 </div>
               </li>
@@ -2384,17 +2378,17 @@ export default function ContactsPage() {
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && void add()}
             placeholder={t("name_placeholder")}
-            aria-label="お名前"
+            aria-label={t("c_name_label")}
             style={{ flex: 1, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8 }}
           />
           <select
             value={distance}
             onChange={(e) => setDistance(e.target.value)}
-            aria-label="距離感"
+            aria-label={t("c_distance_label")}
             style={{ padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8 }}
           >
             {[1, 2, 3, 4, 5].map((d) => (
-              <option key={d} value={d}>{DISTANCE_LABEL[d]}</option>
+              <option key={d} value={d}>{t(DISTANCE_LABEL[d] ?? "")}</option>
             ))}
           </select>
           <button
@@ -2407,7 +2401,7 @@ export default function ContactsPage() {
         </div>
         {duplicates && (
           <section
-            aria-label="同じお名前の確認"
+            aria-label={t("c_aria_same_name")}
             style={{
               border: "1px solid #bfdbfe",
               background: "#eff6ff",
@@ -2417,7 +2411,7 @@ export default function ContactsPage() {
             }}
           >
             <p style={{ margin: "0 0 10px", fontWeight: 600 }}>
-              「{pendingName}」というお名前の方がすでに連絡帳にいます。同じ方でしょうか。
+              {t("c_qo")}{pendingName}{t("c_qc")}{t("c_dup_exists")}
             </p>
             <div style={{ display: "grid", gap: 8 }}>
               {duplicates.map((d) => (
@@ -2436,10 +2430,10 @@ export default function ContactsPage() {
                 >
                   <span style={{ fontWeight: 600 }}>{d.name}</span>
                   <span style={{ display: "block", color: "#64748b", fontSize: 14 }}>
-                    {[d.company, d.title].filter(Boolean).join(" ") || "所属の記録なし"}
-                    {" ・ "}
-                    {DISTANCE_LABEL[d.distance] ?? ""}
-                    {" ・ 同じ方ならこちらを開いて追記してください"}
+                    {[d.company, d.title].filter(Boolean).join(" ") || t("c_no_affiliation")}
+                    {t("c_sep_spaced")}
+                    {t(DISTANCE_LABEL[d.distance] ?? "")}
+                    {t("c_dup_open_hint")}
                   </span>
                 </Link>
               ))}
@@ -2457,7 +2451,7 @@ export default function ContactsPage() {
                   cursor: "pointer",
                 }}
               >
-                別の人として追加する
+                {t("c_add_as_new")}
               </button>
               <button
                 onClick={() => {
@@ -2467,7 +2461,7 @@ export default function ContactsPage() {
                 disabled={busy}
                 style={{ padding: "8px 14px", background: "none", border: "none", color: "#64748b", cursor: "pointer" }}
               >
-                やめる
+                {t("c_cancel_btn")}
               </button>
             </div>
           </section>
@@ -2477,7 +2471,7 @@ export default function ContactsPage() {
             onClick={() => setShowImport(!showImport)}
             style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", padding: 0 }}
           >
-            {showImport ? "取り込みを閉じる" : "ファイルや写真からまとめて取り込む (名刺・名簿の写真・SNSのダウンロードデータ・連絡先・トーク履歴)"}
+            {showImport ? t("c_close_import") : t("c_open_import")}
           </button>
         </p>
         {showImport && (
@@ -2507,15 +2501,15 @@ export default function ContactsPage() {
                 marginBottom: 8,
               }}
             >
-              ここにファイルや写真、フォルダを置くか、押して選んでください
+              {t("c_dropzone_main")}
               <br />
               <small style={{ color: "#64748b" }}>
-                名刺や名簿の写真、ZIP・Word・Excel・PDF・メール・メモまで、どんな形でも大丈夫です。お相手の情報を読み取って整理します
+                {t("c_dropzone_sub")}
               </small>
               <input
                 type="file"
                 multiple
-                aria-label="取り込みファイル"
+                aria-label={t("c_aria_import_file")}
                 onChange={(e) => {
                   if (e.target.files && e.target.files.length > 0) void uploadFiles(e.target.files);
                   e.target.value = "";
@@ -2525,12 +2519,12 @@ export default function ContactsPage() {
             </label>
             <p style={{ margin: "0 0 8px", textAlign: "center", display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
               <label style={{ color: "#2563eb", cursor: "pointer", fontSize: 14 }}>
-                名刺や名簿を撮って取り込む
+                {t("c_capture_import")}
                 <input
                   type="file"
                   accept="image/*"
                   multiple
-                  aria-label="写真をとって取り込む"
+                  aria-label={t("c_aria_capture")}
                   {...({ capture: "environment" } as Record<string, string>)}
                   onChange={(e) => {
                     if (e.target.files && e.target.files.length > 0) void uploadFiles(e.target.files);
@@ -2540,11 +2534,11 @@ export default function ContactsPage() {
                 />
               </label>
               <label style={{ color: "#2563eb", cursor: "pointer", fontSize: 14 }}>
-                フォルダごと選んで取り込む
+                {t("c_folder_import")}
                 <input
                   type="file"
                   multiple
-                  aria-label="取り込みフォルダ"
+                  aria-label={t("c_aria_import_folder")}
                   {...({ webkitdirectory: "" } as Record<string, string>)}
                   onChange={(e) => {
                     if (e.target.files && e.target.files.length > 0) void uploadFiles(e.target.files);
@@ -2555,64 +2549,55 @@ export default function ContactsPage() {
               </label>
             </p>
             <details style={{ margin: "8px 0", color: "#334155" }}>
-              <summary style={{ cursor: "pointer", color: "#2563eb" }}>各サービスからの取り出し方 (かんたん手順)</summary>
+              <summary style={{ cursor: "pointer", color: "#2563eb" }}>{t("c_howto_title")}</summary>
               <div style={{ padding: "8px 4px", display: "grid", gap: 10, fontSize: 14 }}>
                 <div>
-                  <strong>名刺・名簿・年賀状の写真</strong> — スマホなら「名刺や名簿を撮って取り込む」から、その場で
-                  撮って取り込めます。手元の写真やスクリーンショット (連絡先アプリ・LINE の友だち一覧など) も、
-                  ここに置けば写っているお名前・連絡先・ご所属を読み取って整理します。何枚かまとめてでも大丈夫です。
+                  <strong>{t("c_howto_photos_t")}</strong>{t("c_howto_photos_b")}
                 </div>
                 <div>
-                  <strong>LINE</strong> — トーク画面の右上メニュー → 設定 → トーク履歴を送信、で作られる
-                  テキストファイルをここに置いてください。お相手の登録と、やりとりの記録が一度に入ります。
-                  トークの中身からお相手の近況 (引っ越し・お仕事・体調など) も短いメモに自動で整理して添えます。
+                  <strong>LINE</strong>{t("c_howto_line_b")}
                 </div>
                 <div>
                   <strong>LinkedIn</strong> —{" "}
                   <a href="https://www.linkedin.com/mypreferences/d/download-my-data" target="_blank" rel="noreferrer" style={{ color: "#2563eb" }}>
-                    データのダウンロード
+                    {t("c_howto_dl_link")}
                   </a>
-                  で「Connections」を選んで受け取った ZIP か CSV をそのまま。
+                  {t("c_howto_linkedin_b")}
                 </div>
                 <div>
                   <strong>Facebook / Instagram</strong> —{" "}
                   <a href="https://accountscenter.facebook.com/info_and_permissions/dyi" target="_blank" rel="noreferrer" style={{ color: "#2563eb" }}>
-                    アカウントセンターの「情報をダウンロード」
+                    {t("c_howto_fb_link")}
                   </a>
-                  で、対象を友達 (フォロー) だけ・形式は JSON にすると小さくなります。届いた ZIP をそのまま。
+                  {t("c_howto_fb_b")}
                 </div>
                 <div>
                   <strong>X</strong> —{" "}
                   <a href="https://x.com/settings/download_your_data" target="_blank" rel="noreferrer" style={{ color: "#2563eb" }}>
-                    設定の「データのアーカイブをダウンロード」
+                    {t("c_howto_x_link")}
                   </a>
-                  で受け取った ZIP をそのまま。
+                  {t("c_howto_x_b")}
                 </div>
                 <div>
-                  <strong>Google 連絡先</strong> —{" "}
+                  <strong>{t("c_howto_google_t")}</strong> —{" "}
                   <a href="https://contacts.google.com" target="_blank" rel="noreferrer" style={{ color: "#2563eb" }}>
                     contacts.google.com
                   </a>
-                  の「エクスポート」で受け取った CSV か vCard を。スマホの連絡先アプリの書き出し (vCard) も使えます。
+                  {t("c_howto_google_b")}
                 </div>
                 <div>
-                  <strong>名刺 (Eight)・年賀状リスト・ほかの管理表</strong> — CSV のままで大丈夫です。lms
-                  の「データを書き出す」で作ったファイルもそのまま取り込めます。
+                  <strong>{t("c_howto_eight_t")}</strong>{t("c_howto_eight_b")}
                 </div>
                 <div>
-                  <strong>そのほかの書類・フォルダ</strong> — 名簿の Excel、案内状の
-                  Word、議事録の PDF、いただいたメール (.eml)、自由なメモまで、文字の入った書類なら
-                  たいてい読み取れます。フォルダごと置けば、中の書類をまとめて確かめ、お名前・連絡先・
-                  所属・近況・お会いした日を整理して連絡帳に足します。すでにいる方は、空いている項目の
-                  補完とメモの書き足しだけ行い、あなたが書いた内容は上書きしません。
+                  <strong>{t("c_howto_other_t")}</strong>{t("c_howto_other_b")}
                 </div>
               </div>
             </details>
             <textarea
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
-              placeholder="貼り付けでも取り込めます (CSV・vCard・LINE のトーク履歴など)"
-              aria-label="取り込み内容"
+              placeholder={t("c_paste_import_ph")}
+              aria-label={t("c_aria_import_content")}
               rows={6}
               style={{ width: "100%", padding: 10, border: "1px solid #e2e8f0", borderRadius: 8 }}
             />
@@ -2621,7 +2606,7 @@ export default function ContactsPage() {
               disabled={busy || !importText.trim()}
               style={{ padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
             >
-              取り込む
+              {t("c_import_btn")}
             </button>
           </div>
         )}
@@ -2630,20 +2615,19 @@ export default function ContactsPage() {
             onClick={() => setShowConv(!showConv)}
             style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", padding: 0 }}
           >
-            {showConv ? "会話からの取り込みを閉じる" : "会話やメモから取り込む (音声の文字起こしにも対応)"}
+            {showConv ? t("c_close_conv") : t("c_open_conv")}
           </button>
         </p>
         {showConv && (
           <div>
             <p style={{ margin: "4px 0", color: "#64748b", fontSize: 14 }}>
-              打ち合わせのメモ、日記、ボイスレコーダーの文字起こしなどを貼り付けると、
-              登場したお相手と近況を読み取ってご提案します。反映するかどうかはあなたが選べます。
+              {t("c_conv_desc")}
             </p>
             <textarea
               value={convText}
               onChange={(e) => setConvText(e.target.value)}
-              placeholder="例: 昨日は田中さんとお茶。お孫さんが生まれたばかりで嬉しそうだった。"
-              aria-label="会話の内容"
+              placeholder={t("c_conv_ph")}
+              aria-label={t("c_aria_conv")}
               rows={5}
               style={{ width: "100%", padding: 10, border: "1px solid #e2e8f0", borderRadius: 8 }}
             />
@@ -2652,18 +2636,18 @@ export default function ContactsPage() {
               disabled={busy || !convText.trim()}
               style={{ padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
             >
-              お相手と近況をさがす
+              {t("c_conv_search_btn")}
             </button>
             {proposals.length > 0 && (
               <div style={{ marginTop: 10, border: "1px solid #e2e8f0", borderRadius: 12, padding: "10px 14px" }}>
-                <p style={{ margin: "0 0 8px", color: "#334155" }}>見つかったお相手 (反映するものを選んでください)</p>
+                <p style={{ margin: "0 0 8px", color: "#334155" }}>{t("c_conv_found")}</p>
                 <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 8 }}>
                   {proposals.map((p, i) => (
                     <li key={`${p.name}-${i}`} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                       <input
                         type="checkbox"
                         checked={p.selected}
-                        aria-label={`${p.name}を反映`}
+                        aria-label={`${p.name}${t("c_aria_apply_suffix")}`}
                         onChange={(e) =>
                           setProposals((prev) => prev.map((x, j) => (j === i ? { ...x, selected: e.target.checked } : x)))
                         }
@@ -2672,11 +2656,11 @@ export default function ContactsPage() {
                       <span>
                         <strong>{p.name}</strong>
                         {p.contactId ? (
-                          <small style={{ color: "#64748b", marginLeft: 6 }}>登録済みの方 (近況を書き足します)</small>
+                          <small style={{ color: "#64748b", marginLeft: 6 }}>{t("c_conv_existing")}</small>
                         ) : (
-                          <small style={{ color: "#0891b2", marginLeft: 6 }}>新しく登録します</small>
+                          <small style={{ color: "#0891b2", marginLeft: 6 }}>{t("c_conv_new")}</small>
                         )}
-                        {p.date && <small style={{ color: "#64748b", marginLeft: 6 }}>{p.date} に会った記録も</small>}
+                        {p.date && <small style={{ color: "#64748b", marginLeft: 6 }}>{p.date}{t("c_conv_met_suffix")}</small>}
                         {p.note && <span style={{ display: "block", color: "#334155", fontSize: 14 }}>{p.note}</span>}
                       </span>
                     </li>
@@ -2687,7 +2671,7 @@ export default function ContactsPage() {
                   disabled={busy || proposals.every((p) => !p.selected)}
                   style={{ marginTop: 8, padding: "8px 16px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
                 >
-                  選んだ方を記録に反映する
+                  {t("c_apply_selected")}
                 </button>
               </div>
             )}
@@ -2701,7 +2685,7 @@ export default function ContactsPage() {
             onClick={() => setShowCalendar(!showCalendar)}
             style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", padding: 0 }}
           >
-            {showCalendar ? "予定表の接続を閉じる" : "ご自身の予定表とつなぐ (面談候補の精度が上がります)"}
+            {showCalendar ? t("c_close_cal") : t("c_open_cal")}
           </button>
         </p>
         {showCalendar && (
@@ -2709,8 +2693,8 @@ export default function ContactsPage() {
             <input
               value={icsUrl}
               onChange={(e) => setIcsUrl(e.target.value)}
-              placeholder="カレンダーの共有アドレス (https://...ics)"
-              aria-label="予定表アドレス"
+              placeholder={t("c_ics_ph")}
+              aria-label={t("c_aria_ics")}
               style={{ flex: 1, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8 }}
             />
             <button
@@ -2722,56 +2706,53 @@ export default function ContactsPage() {
                 });
                 const body = await res.json().catch(() => ({}));
                 if (res.ok) {
-                  setNotice(`予定表をつなぎました (${body.saved}件の予定を取り込み)`);
+                  setNotice(`${t("c_cal_connected_a")}${body.saved}${t("c_cal_connected_b")}`);
                   setIcsUrl("");
                   setShowCalendar(false);
                 } else {
-                  setError(body.detail ?? "予定表をつなげませんでした");
+                  setError(body.detail ?? t("c_cal_connect_failed"));
                 }
               }}
               disabled={busy || !icsUrl.trim()}
               style={{ padding: "10px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
             >
-              つなぐ
+              {t("c_connect_btn")}
             </button>
             <button
               onClick={async () => {
                 const res = await apiFetch("relationship/refresh-calendars", { method: "POST", body: "{}" });
                 const body = await res.json().catch(() => ({}));
-                if (res.ok) setNotice(`予定表を最新にしました (${body.refreshed}件)`);
+                if (res.ok) setNotice(`${t("c_cal_refreshed_a")}${body.refreshed}${t("c_cal_refreshed_b")}`);
               }}
               style={{ padding: "10px 12px", border: "1px solid #2563eb", color: "#2563eb", background: "#fff", borderRadius: 8, cursor: "pointer" }}
             >
-              最新にする
+              {t("c_refresh_btn")}
             </button>
           </div>
         )}
         {showCalendar && (
           <p style={{ color: "#94a3b8", fontSize: 12, margin: "8px 0 0", lineHeight: 1.7 }}>
-            Outlook は予定表の共有 (ICS) アドレスを、Google カレンダーは設定の「非公開の ICS 形式アドレス」を貼ると、
-            ご予定をふまえた面談候補が出せます。一度つなぐと、最新にするボタンで取り直せます。
+            {t("c_cal_hint")}
           </p>
         )}
       </section>
 
-      <Fold k="cl27" defaultOpen={false} title={<>パーティ・イベントで出会った方をまとめて迎える</>} style={{ margin: "24px 0", border: "1px solid #fbcfe8", background: "#fdf2f8", borderRadius: 12, padding: "14px 16px" }}>
+      <Fold k="cl27" defaultOpen={false} title={<>{t("c_newcomer_title")}</>} style={{ margin: "24px 0", border: "1px solid #fbcfe8", background: "#fdf2f8", borderRadius: 12, padding: "14px 16px" }}>
         <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 10px", lineHeight: 1.7 }}>
-          交換した名刺や教えてもらった SNS を、アプリからダウンロードし直さなくてもその場で迎えられます。
-          1 行にお一人ずつ、お名前と SNS の URL やメールを混ぜて貼るだけ。どこで出会ったかは、
-          みなさんのメモと出会いの記録として自動で残ります。
+          {t("c_newcomer_desc")}
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
           <input
             value={eventName}
             onChange={(e) => setEventName(e.target.value)}
-            placeholder="どこで出会いましたか (例: ◯◯交流会)"
+            placeholder={t("c_event_name_ph")}
             style={{ flex: "2 1 220px", padding: "10px 12px", border: "1px solid #cbd5e1", borderRadius: 8 }}
           />
           <input
             type="date"
             value={eventDate}
             onChange={(e) => setEventDate(e.target.value)}
-            aria-label="出会った日"
+            aria-label={t("c_aria_event_date")}
             style={{ flex: "1 1 140px", padding: "10px 12px", border: "1px solid #cbd5e1", borderRadius: 8 }}
           />
         </div>
@@ -2779,7 +2760,7 @@ export default function ContactsPage() {
           value={newcomerText}
           onChange={(e) => setNewcomerText(e.target.value)}
           rows={5}
-          placeholder={"1 行にお一人ずつ。たとえば:\n田中太郎 https://x.com/tanaka_taro tanaka@example.com\n山田花子 株式会社青空 090-1234-5678"}
+          placeholder={t("c_newcomer_ph")}
           style={{ width: "100%", padding: "10px 12px", border: "1px solid #cbd5e1", borderRadius: 8, boxSizing: "border-box" }}
         />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
@@ -2788,10 +2769,10 @@ export default function ContactsPage() {
             disabled={busy || !newcomerText.trim()}
             style={{ padding: "10px 16px", background: "#db2777", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
           >
-            まとめて迎える
+            {t("c_newcomer_btn")}
           </button>
           <label style={{ padding: "10px 16px", border: "1px solid #db2777", color: "#db2777", background: "#fff", borderRadius: 8, cursor: "pointer" }}>
-            いただいた名刺を撮って迎える
+            {t("c_newcomer_capture")}
             <input
               type="file"
               accept="image/*"
@@ -2807,15 +2788,13 @@ export default function ContactsPage() {
         </div>
         {newcomerResult && <p style={{ color: "#166534", marginTop: 8 }}>{newcomerResult}</p>}
         <p style={{ color: "#94a3b8", fontSize: 12, margin: "8px 0 0", lineHeight: 1.7 }}>
-          名刺の写真は読み取りに少し時間がかかります。上の「取り込みの状況」で進み具合が見られ、
-          読み終えた方にも同じ出会いの記録が付きます。
+          {t("c_newcomer_footer")}
         </p>
       </Fold>
 
-      <Fold k="cl18" defaultOpen={false} title={<>SNS・サービスと連携して、関係する人をまとめる</>} style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+      <Fold k="cl18" defaultOpen={false} title={<>{t("c_sns_panel_title")}</>} style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
         <p style={{ color: "#64748b", margin: "4px 0 10px", fontSize: 14 }}>
-          お使いのサービスから、つながっている方をまとめて連絡帳に取り込めます。各社のボタンを押すと、
-          その取り出し方のページが開きます。受け取ったファイルを下の取り込みに置くだけで大丈夫です。
+          {t("c_sns_panel_desc")}
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {SNS_CONNECTORS.map((s) => (
@@ -2823,7 +2802,7 @@ export default function ContactsPage() {
               key={s.key}
               onClick={() => {
                 window.open(s.url, "_blank", "noopener,noreferrer");
-                setConnectHint(s.hint);
+                setConnectHint(t(s.hintKey));
                 setShowImport(true);
               }}
               style={{
@@ -2835,7 +2814,7 @@ export default function ContactsPage() {
                 cursor: "pointer",
               }}
             >
-              {s.label} とつなぐ
+              {t(s.label)}{t("c_connect_suffix")}
             </button>
           ))}
         </div>
@@ -2846,14 +2825,13 @@ export default function ContactsPage() {
         )}
       </Fold>
 
-      <Fold k="cl19" defaultOpen={false} title={<>いちばん簡単: Google（連絡先・カレンダー）からまとめて取り込む</>} style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+      <Fold k="cl19" defaultOpen={false} title={<>{t("c_google_title")}</>} style={{ margin: "24px 0", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
         <p style={{ color: "#64748b", margin: "4px 0 10px", fontSize: 14 }}>
-          ボタンをひとつ押すだけで、Google の連絡先（アドレス帳）とカレンダーの同席者が連絡帳へ自動でまとまります。
-          つないだあとはその場で取り込みが始まります。読み取りだけの最小限の権限で、予定やアドレス帳を書き換えることはありません。
+          {t("c_google_desc")}
         </p>
-        {googleStatus === null && <p style={{ color: "#64748b" }}>確認しています…</p>}
+        {googleStatus === null && <p style={{ color: "#64748b" }}>{t("c_checking")}</p>}
         {googleStatus?.available === false && (
-          <p style={{ color: "#64748b" }}>この機能は準備中です (運営者側の接続設定が済むと使えるようになります)。</p>
+          <p style={{ color: "#64748b" }}>{t("c_google_unavailable")}</p>
         )}
         {googleStatus?.available && !googleStatus.connected && (
           <button
@@ -2861,63 +2839,62 @@ export default function ContactsPage() {
               const res = await apiFetch("google/auth-url");
               const body = await res.json().catch(() => ({}));
               if (res.ok && body.url) window.location.href = body.url;
-              else setError(body.detail ?? "いまはつなげませんでした");
+              else setError(body.detail ?? t("c_connect_failed_now"));
             }}
             disabled={busy}
             style={{ padding: "10px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
           >
-            Google とつないで取り込む
+            {t("c_google_connect_btn")}
           </button>
         )}
         {googleStatus?.available && googleStatus.connected && (
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <span style={{ color: "#166534" }}>
-              つながっています{googleStatus.email ? ` (${googleStatus.email})` : ""}
+              {t("c_google_connected")}{googleStatus.email ? ` (${googleStatus.email})` : ""}
             </span>
             {googleStatus.lastSyncNote && (
-              <small style={{ color: "#64748b" }}>前回: {googleStatus.lastSyncNote}</small>
+              <small style={{ color: "#64748b" }}>{t("c_last_time")}{googleStatus.lastSyncNote}</small>
             )}
             <button
               onClick={() => void syncGoogle()}
               disabled={busy}
               style={{ padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
             >
-              いま取り込む
+              {t("c_sync_now_btn")}
             </button>
           </div>
         )}
         {googleStatus?.available && googleStatus.connected && !googleStatus.extended && (
           <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed #e2e8f0" }}>
             <p style={{ color: "#64748b", margin: "0 0 8px", fontSize: 13, lineHeight: 1.8 }}>
-              さらに、メールでやりとりした相手や共有ファイルの仲間も拾えます（メールは宛先と件名だけで本文は読みません）。
-              こちらは追加の確認画面が出ます。使いたいときだけどうぞ。
+              {t("c_google_ext_desc")}
             </p>
             <button
               onClick={async () => {
                 const res = await apiFetch("google/auth-url?scope=extended");
                 const body = await res.json().catch(() => ({}));
                 if (res.ok && body.url) window.location.href = body.url;
-                else setError(body.detail ?? "いまはつなげませんでした");
+                else setError(body.detail ?? t("c_connect_failed_now"));
               }}
               disabled={busy}
               style={{ padding: "8px 16px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer" }}
             >
-              メール・共有ファイルの相手も拾えるようにする
+              {t("c_google_ext_btn")}
             </button>
           </div>
         )}
       </Fold>
 
-      <Fold k="cl25" defaultOpen={false} title={<>軸で探す (影響力・専門性・価値観・誠実さ)</>} style={{ margin: "16px 0", border: "1px solid #cbd5e1", background: "#f8fafc", borderRadius: 12, padding: "12px 16px" }}>
+      <Fold k="cl25" defaultOpen={false} title={<>{t("c_axis_title")}</>} style={{ margin: "16px 0", border: "1px solid #cbd5e1", background: "#f8fafc", borderRadius: 12, padding: "12px 16px" }}>
         <p style={{ fontSize: 13, color: "#475569", margin: "4px 0 10px" }}>
-          蓄積した記録 (肩書き・論点整理・価値観・公人評価) から、軸に合いそうな方を挙げます。手がかりのある方だけが載ります。
+          {t("c_axis_desc")}
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
           {[
-            { key: "influence", label: "影響力の強い方" },
-            { key: "expertise", label: "専門性の高い方" },
-            { key: "values", label: "価値観の合いそうな方" },
-            { key: "integrity", label: "誠実さ・評判の高い方" },
+            { key: "influence", label: t("c_axis_influence") },
+            { key: "expertise", label: t("c_axis_expertise") },
+            { key: "values", label: t("c_axis_values") },
+            { key: "integrity", label: t("c_axis_integrity") },
           ].map((a) => (
             <button
               key={a.key}
@@ -2936,10 +2913,10 @@ export default function ContactsPage() {
             </button>
           ))}
         </div>
-        {axis && axisBusy && <p style={{ color: "#64748b", fontSize: 13 }}>探しています…</p>}
+        {axis && axisBusy && <p style={{ color: "#64748b", fontSize: 13 }}>{t("c_searching")}</p>}
         {axis && !axisBusy && axisItems.length === 0 && (
           <p style={{ color: "#64748b", fontSize: 13 }}>
-            この軸で挙げられる方はまだ見つかりませんでした。肩書き・メモ・論点整理が増えると挙がるようになります。
+            {t("c_axis_empty")}
           </p>
         )}
         {axis && axisItems.length > 0 && (
@@ -2953,7 +2930,7 @@ export default function ContactsPage() {
                   <span style={{ color: "#94a3b8", fontSize: 12, marginLeft: 8 }}>{[it.company, it.title].filter(Boolean).join(" ")}</span>
                 )}
                 {it.reasons.length > 0 && (
-                  <span style={{ display: "block", color: "#64748b", fontSize: 12, marginTop: 2 }}>{it.reasons.join("・")}</span>
+                  <span style={{ display: "block", color: "#64748b", fontSize: 12, marginTop: 2 }}>{it.reasons.join(t("c_sep"))}</span>
                 )}
               </li>
             ))}
@@ -2966,7 +2943,7 @@ export default function ContactsPage() {
           <input
             value={nameFilter}
             onChange={(e) => setNameFilter(e.target.value)}
-            placeholder="お名前・ふりがな・ローマ字・メール・電話・会社などで探す"
+            placeholder={t("c_search_ph")}
             style={{ flex: 1, minWidth: 200, padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14 }}
           />
           {contacts.length > 30 && !nameFilter && (
@@ -2974,18 +2951,18 @@ export default function ContactsPage() {
               onClick={() => setShowAll((v) => !v)}
               style={{ padding: "8px 14px", background: "transparent", color: "#475569", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
             >
-              {showAll ? "一覧を畳む" : `すべて表示する (${contacts.length}名)`}
+              {showAll ? t("c_collapse_list") : `${t("c_show_all_a")}${contacts.length}${t("c_show_all_b")}`}
             </button>
           )}
         </div>
         {contacts.length > 30 && !showAll && !nameFilter && (
           <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 8px" }}>
-            人数が多いため一覧は畳んでいます。上の「大切にしたい方々」から開くか、検索してください。全員の記録はそのまま残っています。
+            {t("c_list_collapsed_hint")}
           </p>
         )}
         {nameFilter.trim() && searchResults && (
           <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 8px" }}>
-            全員の中から {searchResults.length} 名が見つかりました{searchResults.length >= 100 ? " (多いため先頭の100名まで)" : ""}
+            {t("c_search_result_a")}{searchResults.length}{t("c_search_result_b")}{searchResults.length >= 100 ? t("c_search_capped") : ""}
           </p>
         )}
         <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 6 }}>
@@ -3013,21 +2990,21 @@ export default function ContactsPage() {
                   {c.name}
                   {c.company && <small style={{ color: "#64748b", marginLeft: 8 }}>{c.company}</small>}
                 </span>
-                <small style={{ color: "#64748b" }}>{DISTANCE_LABEL[c.distance] ?? ""}</small>
+                <small style={{ color: "#64748b" }}>{t(DISTANCE_LABEL[c.distance] ?? "")}</small>
               </Link>
               {c.email && (
                 <a
                   href={`mailto:${c.email}`}
-                  aria-label={`${c.name}さんにメールする`}
-                  title="メールする"
+                  aria-label={`${c.name}${t("c_aria_mail_suffix")}`}
+                  title={t("c_mail_title")}
                   style={{ display: "flex", alignItems: "center", padding: "0 12px", border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 10, textDecoration: "none", fontSize: 13, whiteSpace: "nowrap" }}
                 >
-                  ✉ メール
+                  ✉ {t("c_mail_word")}
                 </a>
               )}
             </li>
           ))}
-          {contacts.length === 0 && <li style={{ color: "#64748b" }}>まだ登録がありません。大切な方から登録してみましょう。</li>}
+          {contacts.length === 0 && <li style={{ color: "#64748b" }}>{t("c_list_empty")}</li>}
         </ul>
       </Fold>
     </main>
