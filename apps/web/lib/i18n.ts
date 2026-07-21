@@ -6,7 +6,14 @@
 export const LOCALES = ["ja", "en"] as const;
 export type Locale = (typeof LOCALES)[number];
 
-const DICT: Record<string, Partial<Record<Locale, string>>> = {
+import { DICT_CONTACTS } from "./i18n-dict-contacts";
+import { DICT_SUBJECTS } from "./i18n-dict-subjects";
+import { DICT_SECTIONS } from "./i18n-dict-sections";
+import { DICT_MISC } from "./i18n-dict-misc";
+
+export type DictEntry = Partial<Record<Locale, string>>;
+
+const DICT: Record<string, DictEntry> = {
   app_tagline: {
     ja: "人とのつながりを育てるための道具です。",
     en: "A tool for growing your relationships.",
@@ -49,6 +56,11 @@ const DICT: Record<string, Partial<Record<Locale, string>>> = {
   login_google: { ja: "Google ではじめる", en: "Continue with Google" },
   sign_in: { ja: "サインイン", en: "Sign in" },
   sign_out: { ja: "サインアウト", en: "Sign out" },
+  // 画面別の辞書 (肥大化を避けるためファイル分割。キー衝突は後勝ちなので接頭辞で避ける)
+  ...DICT_CONTACTS,
+  ...DICT_SUBJECTS,
+  ...DICT_SECTIONS,
+  ...DICT_MISC,
 };
 
 export function normalizeUiLocale(v: string | null | undefined): Locale {
