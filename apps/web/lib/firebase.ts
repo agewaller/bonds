@@ -2,6 +2,11 @@
 // Firebase Auth (GCP Identity Platform) — cares と同じプロジェクトを共用する。
 // 設定は NEXT_PUBLIC_FIREBASE_* (public 扱いで問題ない値のみ)。未設定なら
 // ログイン機能は出さず、BFF の開発用フォールバック (break-glass) で動く。
+//
+// ログイン持続の設計 (docs/login-reliability.md):
+//   1. ログイン成功時に idToken を /api/session へ渡し、サーバが httpOnly Cookie (14日) を設定
+//   2. ブラウザ側の状態 (IndexedDB) が消えていたら (Safari の7日削除など)、
+//      /api/session/restore の Cookie からカスタムトークンで静かにサインインし直す
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import {
   getAuth,
@@ -9,6 +14,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  signInWithCustomToken,
   indexedDBLocalPersistence,
   setPersistence,
   onAuthStateChanged,
@@ -60,6 +66,53 @@ const POPUP_UNAVAILABLE_CODES = new Set([
 
 function errCode(e: unknown): string {
   return e && typeof e === "object" && "code" in e ? String((e as { code: unknown }).code) : "";
+}
+
+// ── サーバセッションとの同期 (docs/login-reliability.md) ──
+
+let sessionSynced = false;
+
+/** ログイン成功後にサーバへセッション Cookie を発行させる (失敗しても致命ではない)。 */
+async function syncServerSession(user: User): Promise<void> {
+  if (sessionSynced) return;
+  try {
+    const idToken = await user.getIdToken();
+    await fetch("/api/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken }),
+    });
+    sessionSynced = true;
+  } catch {
+    // ネットワーク断など。次のログイン/復元で再試行される
+  }
+}
+
+let restoreAttempt: Promise<boolean> | null = null;
+
+/**
+ * クライアントにログイン状態が無いとき、サーバ Cookie から静かに復元する。
+ * 一度だけ試行 (メモ化)。復元できたら true。
+ */
+export function restoreSession(): Promise<boolean> {
+  if (restoreAttempt) return restoreAttempt;
+  restoreAttempt = (async () => {
+    const auth = firebaseAuth();
+    if (!auth) return false;
+    await auth.authStateReady();
+    if (auth.currentUser) return true;
+    try {
+      const res = await fetch("/api/session/restore", { method: "POST" });
+      if (!res.ok) return false;
+      const body = (await res.json()) as { customToken?: string };
+      if (!body.customToken) return false;
+      await signInWithCustomToken(auth, body.customToken);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  return restoreAttempt;
 }
 
 /**
@@ -122,6 +175,12 @@ export function authErrorMessage(code: string): string {
 export async function signOutUser(): Promise<void> {
   const auth = firebaseAuth();
   if (auth) await signOut(auth);
+  sessionSynced = false;
+  try {
+    await fetch("/api/session", { method: "DELETE" });
+  } catch {
+    // Cookie 破棄失敗は無害 (期限で消える)
+  }
 }
 
 export function watchUser(cb: (user: User | null) => void): () => void {
@@ -131,12 +190,21 @@ export function watchUser(cb: (user: User | null) => void): () => void {
     return () => {};
   }
   void ensurePersistence(auth);
-  return onAuthStateChanged(auth, cb);
+  return onAuthStateChanged(auth, (user) => {
+    if (user) {
+      void syncServerSession(user); // redirect 復帰・popup 成功のどちらもここを通る
+    } else {
+      void restoreSession(); // 消えたクライアント状態を Cookie から復元 (成功すれば再度発火)
+    }
+    cb(user);
+  });
 }
 
 /** 現在のユーザーの ID トークン (未ログイン/未設定なら null)。 */
 export async function currentIdToken(): Promise<string | null> {
   const auth = firebaseAuth();
-  const user = auth?.currentUser;
+  if (!auth) return null;
+  if (!auth.currentUser) await restoreSession();
+  const user = auth.currentUser;
   return user ? user.getIdToken() : null;
 }

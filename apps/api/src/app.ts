@@ -123,7 +123,20 @@ import {
   type OfferingLike,
   type ContactNeed,
 } from "./lib/offerings.js";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  SHARE_STATUSES,
+  normalizeKind,
+  normalizeDirection,
+  canTransition,
+  initialStatus,
+  counterpartTargetStatus,
+  canCounterpartRespond,
+  shareEligibility,
+  type ShareStatus,
+  type CounterpartResponse,
+} from "./lib/sharing.js";
+import { normalizeProduct, normalizeEmail, matchByEmail } from "./lib/integration.js";
 import { parseIcsBusy, parseIcsEvents, looksLikeIcs, buildMeetingInviteIcs, type IsoEvent } from "./lib/ics.js";
 import {
   buildMailer,
@@ -197,6 +210,15 @@ export type AppDeps = {
 };
 
 const SUBJECT_TYPES = ["politician", "executive", "other"] as const;
+
+
+// 共有シークレットの定数時間比較 (受信 webhook 認証用)
+function secretMatches(provided: string | undefined | null, expected: string): boolean {
+  if (!provided) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 export function createApp(deps: AppDeps) {
   const { prisma } = deps;
@@ -320,6 +342,12 @@ export function createApp(deps: AppDeps) {
   app.use("/api/contacts", requireUser);
   app.use("/api/relationship/*", requireUser);
   app.use("/api/outreach/*", requireUser);
+  // シェア (時間・知恵・モノ) のオーナー操作。相手 (第三者) の公開応答 /api/share/:token
+  // は別プレフィックス (単数) なので、この requireUser ガードには掛からない = 認証不要で開ける。
+  app.use("/api/resources/*", requireUser);
+  app.use("/api/resources", requireUser);
+  app.use("/api/shares/*", requireUser);
+  app.use("/api/shares", requireUser);
   app.use("/api/outreach", requireUser);
   app.use("/api/gifts/*", requireUser);
   app.use("/api/gifts", requireUser);
@@ -1092,16 +1120,24 @@ export function createApp(deps: AppDeps) {
   app.get("/api/contacts/export", async (c) => {
     // データ主権: 全件エクスポート (復号済み JSON)。ロックインしない。
     const ownerUid = c.get("ownerUid");
-    const [contacts, interactions, gifts, exchanges] = await Promise.all([
+    const [contacts, interactions, gifts, exchanges, externalRefs, resources, shares, threads] = await Promise.all([
       prisma.contact.findMany({ where: { ownerUid } }),
       // interaction / gift は ownerUid 列を持たず、contact 経由でスコープする
       // (where を付け忘れると他ユーザーの記録が混ざる = テナント越境)。
       prisma.contactInteraction.findMany({ where: { contact: { ownerUid } } }),
       prisma.contactGift.findMany({ where: { contact: { ownerUid } } }),
       prisma.exchange.findMany({ where: { ownerUid } }),
+      prisma.contactExternalRef.findMany({ where: { ownerUid } }),
+      prisma.sharedResource.findMany({ where: { ownerUid } }),
+      prisma.resourceShare.findMany({ where: { ownerUid } }),
+      prisma.messageThread.findMany({ where: { ownerUid } }),
     ]);
+    const messages = await prisma.message.findMany({ where: { threadId: { in: threads.map((t) => t.id) } } });
     c.header("Content-Disposition", "attachment; filename=bonds-contacts-export.json");
-    return c.json({ exportedAt: new Date().toISOString(), contacts, interactions, gifts, exchanges });
+    return c.json({
+      exportedAt: new Date().toISOString(),
+      contacts, interactions, gifts, exchanges, externalRefs, resources, shares, threads, messages,
+    });
   });
 
   // 名寄せ: 同じ人が二重に登録されていそうな組を検出する。メール/電話が一致する組は
@@ -7459,6 +7495,427 @@ export function createApp(deps: AppDeps) {
     if (!run) return c.json({ error: "not_found" }, 404);
     return c.json({ run });
   });
+
+
+  // ============ 時間・知恵・モノのシェア (旧 gift の進化) ============
+  // give/lend/teach/do/advise → kind(time/wisdom/thing)。相手は非ユーザーの第三者なので
+  // 二者間 handshake は取らず、オーナー主導 + 公開トークンによる相手の応答で双方向にする。
+
+  // 資源カタログ: オーナーが差し出せる時間・知恵・モノ
+  app.get("/api/resources", async (c) => {
+    const resources = await prisma.sharedResource.findMany({
+      where: { ownerUid: c.get("ownerUid"), status: { not: "archived" } },
+      orderBy: { updatedAt: "desc" },
+      take: 100,
+    });
+    return c.json({ resources });
+  });
+
+  app.post("/api/resources", async (c) => {
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const title = typeof b.title === "string" ? b.title.trim() : "";
+    if (!title) return c.json({ error: "title_required", detail: "何をシェアできるか入力してください" }, 400);
+    const resource = await prisma.sharedResource.create({
+      data: {
+        ownerUid: c.get("ownerUid"),
+        kind: normalizeKind(b.kind),
+        title,
+        description: typeof b.description === "string" ? b.description.trim() || null : null,
+        availability: typeof b.availability === "string" ? b.availability.trim() || null : null,
+      },
+    });
+    return c.json({ resource }, 201);
+  });
+
+  app.put("/api/resources/:id", async (c) => {
+    const r = await prisma.sharedResource.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!r) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const data: Record<string, unknown> = {};
+    if (typeof b.title === "string" && b.title.trim()) data.title = b.title.trim();
+    if (typeof b.kind === "string") data.kind = normalizeKind(b.kind);
+    if (typeof b.description === "string") data.description = b.description.trim() || null;
+    if (typeof b.availability === "string") data.availability = b.availability.trim() || null;
+    if (b.status === "active" || b.status === "paused" || b.status === "archived") data.status = b.status;
+    const updated = await prisma.sharedResource.update({ where: { id: r.id }, data });
+    return c.json({ resource: updated });
+  });
+
+  app.delete("/api/resources/:id", async (c) => {
+    const r = await prisma.sharedResource.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!r) return c.json({ error: "not_found" }, 404);
+    // データ主権: ソフト削除 (archived)。履歴のシェアは残す。
+    await prisma.sharedResource.update({ where: { id: r.id }, data: { status: "archived" } });
+    return c.json({ ok: true });
+  });
+
+  // 連絡先へシェアを差し出す (offer) / 頼む (request) / 受け取り記録 (inbound)
+  app.post("/api/contacts/:id/shares", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const direction = normalizeDirection(b.direction);
+    const elig = shareEligibility(direction, contact.distance);
+    if (!elig.eligible) return c.json({ error: "not_eligible", detail: elig.reason }, 409);
+
+    let kind = normalizeKind(b.kind);
+    let title = typeof b.title === "string" ? b.title.trim() : "";
+    let resourceId: string | null = null;
+    if (typeof b.resourceId === "string" && b.resourceId) {
+      const res = await prisma.sharedResource.findFirst({
+        where: { id: b.resourceId, ownerUid: c.get("ownerUid") },
+      });
+      if (!res) return c.json({ error: "resource_not_found" }, 404);
+      resourceId = res.id;
+      kind = normalizeKind(res.kind);
+      if (!title) title = res.title;
+    }
+    if (!title) return c.json({ error: "title_required", detail: "何をシェアするか入力してください" }, 400);
+
+    const share = await prisma.resourceShare.create({
+      data: {
+        ownerUid: c.get("ownerUid"),
+        contactId: contact.id,
+        resourceId,
+        kind,
+        direction,
+        title,
+        message: typeof b.message === "string" ? b.message.trim() || null : null,
+        status: initialStatus(direction),
+      },
+    });
+    // inbound (相手から受け取った) は往復不要 = 即座に接触として還流する
+    if (direction === "inbound") {
+      await prisma.contactInteraction.create({
+        data: { contactId: contact.id, type: "share_received", occurredAt: new Date(), notes: title },
+      });
+    }
+    return c.json({ share, eligibility: elig }, 201);
+  });
+
+  app.get("/api/shares", async (c) => {
+    const contactId = c.req.query("contactId");
+    const shares = await prisma.resourceShare.findMany({
+      where: { ownerUid: c.get("ownerUid"), ...(contactId ? { contactId } : {}) },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    return c.json({ shares });
+  });
+
+  // 送信: proposed → sent。公開トークンを発行し、相手にリンクを送る (メール設定があれば)。
+  // メール未設定/アドレス無しでも sent にはする (オフライン手渡しでもリンクを使える)。
+  app.post("/api/shares/:id/send", async (c) => {
+    const share = await prisma.resourceShare.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!share) return c.json({ error: "not_found" }, 404);
+    if (!canTransition(share.status as ShareStatus, "sent")) {
+      return c.json({ error: "invalid_status", detail: `status=${share.status} は送信できません` }, 409);
+    }
+    const token = share.shareToken ?? randomBytes(24).toString("base64url");
+    const updated = await prisma.resourceShare.update({
+      where: { id: share.id },
+      data: { status: "sent", shareToken: token },
+    });
+    const base = process.env.PUBLIC_WEB_ORIGIN ?? "";
+    const shareUrl = `${base}/share/${token}`;
+    const contact = await prisma.contact.findFirst({ where: { id: share.contactId } });
+    let delivered = false;
+    if (mailer && contact?.email) {
+      const verb = share.direction === "request" ? "お願いしたいこと" : "お渡ししたいもの";
+      const body = [
+        `${contact.name} 様`,
+        "",
+        `${verb}があります。${share.title}`,
+        share.message ? `\n${share.message}` : "",
+        "",
+        `お返事はこちらから。ログインは要りません。 ${shareUrl}`,
+      ].filter(Boolean).join("\n");
+      try {
+        await mailer({ to: contact.email, subject: `${share.title} のご案内`, body });
+        delivered = true;
+      } catch {
+        delivered = false;
+      }
+    }
+    await prisma.contactInteraction.create({
+      data: {
+        contactId: share.contactId,
+        type: share.direction === "request" ? "share_request" : "share_offer",
+        occurredAt: new Date(),
+        notes: share.title,
+      },
+    });
+    return c.json({ share: { id: updated.id, status: updated.status }, shareUrl, delivered });
+  });
+
+  // オーナーによる状態更新 (オフラインで受諾/辞退/完了/取消を反映)。遷移は状態機械で検証。
+  app.post("/api/shares/:id/status", async (c) => {
+    const share = await prisma.resourceShare.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!share) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<{ status?: string }>().catch(() => ({}) as { status?: string });
+    const to = b.status as ShareStatus;
+    if (!SHARE_STATUSES.includes(to)) {
+      return c.json({ error: "bad_status", detail: "不正な状態です" }, 400);
+    }
+    if (!canTransition(share.status as ShareStatus, to)) {
+      return c.json({ error: "invalid_transition", detail: `status=${share.status} から ${to} へは変えられません` }, 409);
+    }
+    const updated = await prisma.resourceShare.update({
+      where: { id: share.id },
+      data: { status: to, ...(to === "fulfilled" ? { fulfilledAt: new Date() } : {}) },
+    });
+    // 完了は「貢献が実際に起きた」= 検証の還流。接触として記録する。
+    if (to === "fulfilled") {
+      await prisma.contactInteraction.create({
+        data: { contactId: share.contactId, type: "share_fulfilled", occurredAt: new Date(), notes: share.title },
+      });
+    }
+    return c.json({ share: { id: updated.id, status: updated.status } });
+  });
+
+  // ---- 相手 (第三者) 向けの公開エンドポイント。認証不要・トークンでのみ引ける ----
+  // 双方向連絡: 相手はアカウント無しでリンクを開き、受諾/辞退と一言を返せる。
+
+  app.get("/api/share/:token", async (c) => {
+    const share = await prisma.resourceShare.findUnique({
+      where: { shareToken: c.req.param("token") },
+    });
+    if (!share || !share.shareToken) return c.json({ error: "not_found" }, 404);
+    let description: string | null = null;
+    if (share.resourceId) {
+      const res = await prisma.sharedResource.findFirst({ where: { id: share.resourceId } });
+      description = res?.description ?? null;
+    }
+    // PII は最小限。連絡先本人の情報・オーナー識別子・相手の過去の返答は返さない。
+    return c.json({
+      share: {
+        kind: share.kind,
+        direction: share.direction,
+        title: share.title,
+        message: share.message,
+        description,
+        status: share.status,
+        respondable: canCounterpartRespond(share.status as ShareStatus, "accept"),
+      },
+    });
+  });
+
+  app.post("/api/share/:token/respond", async (c) => {
+    const share = await prisma.resourceShare.findUnique({
+      where: { shareToken: c.req.param("token") },
+    });
+    if (!share || !share.shareToken) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<{ response?: string; note?: string }>().catch(() => ({}) as { response?: string; note?: string });
+    const resp: CounterpartResponse | null =
+      b.response === "accept" || b.response === "decline" ? b.response : null;
+    if (!resp) return c.json({ error: "bad_response", detail: "accept または decline を指定してください" }, 400);
+    if (!canCounterpartRespond(share.status as ShareStatus, resp)) {
+      return c.json({ error: "not_respondable", detail: "この共有には今は応答できません" }, 409);
+    }
+    const target = counterpartTargetStatus(resp);
+    const note = typeof b.note === "string" ? b.note.trim() || null : null;
+    const updated = await prisma.resourceShare.update({
+      where: { id: share.id },
+      data: { status: target, respondedAt: new Date(), responseNote: note },
+    });
+    // 双方向の還流: 相手の応答を接触記録に残す (距離スコア・打ち手の材料になる)
+    await prisma.contactInteraction.create({
+      data: {
+        contactId: share.contactId,
+        type: "share_response",
+        occurredAt: new Date(),
+        notes: `${resp === "accept" ? "受諾" : "辞退"}${note ? `: ${note}` : ""}`,
+      },
+    });
+    return c.json({ ok: true, status: updated.status });
+  });
+
+  // ============ 統合ハブ: 知り合い/リストの集約 + 双方向メッセージ ============
+  // integration-architecture.md §3。他プロダクト(cares/vm/zentrack)の人物を uid スコープで
+  // bonds contacts に集約し、メッセージ(往復)を1基盤に束ねる。
+
+  // 他プロダクトから人物を冪等 upsert (外部参照つき)。同じ (product, externalId) は再取込しても重複しない。
+  app.post("/api/contacts/upsert-external", async (c) => {
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const product = normalizeProduct(b.product);
+    const externalId = typeof b.externalId === "string" ? b.externalId.trim() : "";
+    if (!product || !externalId) {
+      return c.json({ error: "product_external_required", detail: "product と externalId は必須です" }, 400);
+    }
+    const ownerUid = c.get("ownerUid");
+    const kind = typeof b.kind === "string" && b.kind.trim() ? b.kind.trim() : "person";
+    const existing = await prisma.contactExternalRef.findUnique({
+      where: { ownerUid_product_externalId: { ownerUid, product, externalId } },
+    });
+    if (existing) {
+      const contact = await prisma.contact.findFirst({ where: { id: existing.contactId, ownerUid } });
+      return c.json({ contact, ref: existing, created: false });
+    }
+    const name = clampName(b.name);
+    if (!name) return c.json({ error: "name_required", detail: "お名前が必要です" }, 400);
+    const contact = await prisma.contact.create({
+      data: { ownerUid, name, source: product, ...contactData(b) },
+    });
+    const ref = await prisma.contactExternalRef.create({
+      data: { ownerUid, contactId: contact.id, product, externalId, kind },
+    });
+    return c.json({ contact, ref, created: true }, 201);
+  });
+
+  // ある連絡先の外部参照 (どの製品のどのレコードと繋がっているか)
+  app.get("/api/contacts/:id/external-refs", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const refs = await prisma.contactExternalRef.findMany({ where: { contactId: contact.id } });
+    return c.json({ refs });
+  });
+
+  // 連絡先へメッセージを送る/記録する (outbound)。スレッドが無ければ作る。
+  // 第三者への実送信は send=true かつメール設定ありのときだけ。既定は下書き記録 (承認前提)。
+  app.post("/api/contacts/:id/messages", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const body = typeof b.body === "string" ? b.body.trim() : "";
+    if (!body) return c.json({ error: "body_required", detail: "本文を入力してください" }, 400);
+    const channel = typeof b.channel === "string" && b.channel.trim() ? b.channel.trim() : "email";
+    const subject = typeof b.subject === "string" ? b.subject.trim() || null : null;
+    const wantSend = b.send === true;
+
+    let thread = await prisma.messageThread.findFirst({
+      where: { ownerUid: c.get("ownerUid"), contactId: contact.id, channel },
+    });
+    if (!thread) {
+      thread = await prisma.messageThread.create({
+        data: { ownerUid: c.get("ownerUid"), contactId: contact.id, channel, subject },
+      });
+    }
+
+    let status: "draft" | "sent" | "failed" = "draft";
+    let externalId: string | null = null;
+    if (wantSend && channel === "email" && mailer && contact.email) {
+      try {
+        const r = await mailer({ to: contact.email, subject: subject ?? "メッセージ", body });
+        status = "sent";
+        externalId = r.messageId;
+      } catch {
+        status = "failed";
+      }
+    }
+    const message = await prisma.message.create({
+      data: { threadId: thread.id, direction: "outbound", body, status, externalId },
+    });
+    await prisma.messageThread.update({ where: { id: thread.id }, data: { lastAt: new Date() } });
+    if (status === "sent") {
+      await prisma.contactInteraction.create({
+        data: { contactId: contact.id, type: "message", occurredAt: new Date(), notes: subject ?? null },
+      });
+    }
+    return c.json({ thread: { id: thread.id, channel }, message }, 201);
+  });
+
+  // 連絡先のスレッドとメッセージ (往復) を読む
+  app.get("/api/contacts/:id/messages", async (c) => {
+    const contact = await prisma.contact.findFirst({
+      where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") },
+    });
+    if (!contact) return c.json({ error: "not_found" }, 404);
+    const threads = await prisma.messageThread.findMany({
+      where: { ownerUid: c.get("ownerUid"), contactId: contact.id },
+      orderBy: { lastAt: "desc" },
+    });
+    const messages = await prisma.message.findMany({
+      where: { threadId: { in: threads.map((t) => t.id) } },
+      orderBy: { createdAt: "asc" },
+    });
+    return c.json({
+      threads: threads.map((t) => ({ ...t, messages: messages.filter((m) => m.threadId === t.id) })),
+    });
+  });
+
+  // 受信 webhook (双方向の inbound)。SendGrid Inbound Parse 等が叩く。認証はガードでなく
+  // 共有シークレット (INBOUND_WEBHOOK_SECRET) で行う。未設定なら fail closed (503)。
+  // SendGrid はカスタムヘッダを付けられないため、シークレットは URL クエリ (?secret=) でも受ける。
+  // ボディも SendGrid は multipart フォームで送るため、JSON / フォームの両方を受け付ける。
+  // 送信元メール → 連絡先を突合し、スレッドに inbound メッセージを積む → 接触記録へ還流。
+  app.post("/api/inbound/email", async (c) => {
+    const secret = process.env.INBOUND_WEBHOOK_SECRET;
+    if (!secret) return c.json({ error: "unavailable", detail: "受信の設定が未完了です" }, 503);
+    const provided = c.req.header("x-inbound-secret") ?? c.req.query("secret");
+    if (!secretMatches(provided, secret)) return c.json({ error: "unauthorized" }, 401);
+
+    // ボディの取り出し: JSON も multipart/x-www-form-urlencoded も受ける。
+    const contentType = c.req.header("content-type") ?? "";
+    let field: (k: string) => string;
+    if (contentType.includes("application/json")) {
+      const b = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+      field = (k) => (typeof b[k] === "string" ? (b[k] as string) : "");
+    } else {
+      const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
+      field = (k) => {
+        const v = (form as Record<string, unknown>)[k];
+        return typeof v === "string" ? v : "";
+      };
+    }
+    // SendGrid: from は "名前 <addr>"、text は本文、envelope は {"from":"addr",...}。
+    let from = normalizeEmail(field("from"));
+    if (!from) {
+      const env = field("envelope");
+      if (env) {
+        try {
+          from = normalizeEmail((JSON.parse(env) as { from?: string }).from);
+        } catch {
+          // envelope が壊れていても from 無しとして扱う
+        }
+      }
+    }
+    const text = field("text") || field("body");
+    if (!from || !text.trim()) return c.json({ error: "from_text_required" }, 400);
+    // 単一オーナー前提 (ownerUid="owner")。将来は to のエイリアスで owner を解決する。
+    const ownerUid = "owner";
+    // email は暗号化列で where 検索できないため、復号済みの連絡先をアプリ層で突合する。
+    const contacts = await prisma.contact.findMany({ where: { ownerUid, state: "active" } });
+    const contact = matchByEmail(contacts, from);
+    if (!contact) return c.json({ matched: false }); // 未知の送信元は静かに無視 (ノイズを作らない)
+    const channel = "email";
+    let thread = await prisma.messageThread.findFirst({ where: { ownerUid, contactId: contact.id, channel } });
+    if (!thread) {
+      thread = await prisma.messageThread.create({ data: { ownerUid, contactId: contact.id, channel } });
+    }
+    await prisma.message.create({
+      data: { threadId: thread.id, direction: "inbound", body: text.trim(), status: "received" },
+    });
+    await prisma.messageThread.update({ where: { id: thread.id }, data: { lastAt: new Date() } });
+    await prisma.contactInteraction.create({
+      data: { contactId: contact.id, type: "message", occurredAt: new Date(), notes: "返信あり" },
+    });
+    return c.json({ matched: true, threadId: thread.id });
+  });
+
+  // 実行詳細 (ステップ含む)
+  app.get("/api/dd/runs/:id", async (c) => {
+    const run = await prisma.personDueDiligence.findUnique({
+      where: { id: c.req.param("id") },
+      include: { steps: { orderBy: { createdAt: "asc" } }, subject: true },
+    });
+    if (!run) return c.json({ error: "not_found" }, 404);
+    return c.json({ run });
+  });
+
 
   return app;
 }

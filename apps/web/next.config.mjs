@@ -9,5 +9,11 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
   },
+  // Firebase 認証ハンドラの第一者化 (docs/login-reliability.md §A)。
+  // App Router は _ 始まりのフォルダを無視するため、/__/auth/* は rewrite で
+  // app/auth-handler/[...path] に載せる (SDK が期待するパスは /__/auth/*)。
+  async rewrites() {
+    return [{ source: "/__/auth/:path*", destination: "/auth-handler/:path*" }];
+  },
 };
 export default nextConfig;

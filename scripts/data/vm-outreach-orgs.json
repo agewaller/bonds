@@ -1,0 +1,67 @@
+{
+  "_comment": "VM アウトリーチ Tier 2 の法人ターゲット。個人・富裕層は含めない (法人の公開窓口のみ)。メールアドレスは意図的に含めない — 公開窓口を確認のうえ scripts/data/vm-outreach-emails.local.json (gitignore 済み) に置いて seed-vm-outreach.mjs で合流する。Tier 1 (マネックス/マネーフォワード/藤野氏/xenodata/QUICK/Moody's 等) はシーケンスに載せず 1対1 で扱うため、このファイルに入れない。",
+  "segments": {
+    "securities": "証券会社: 顧客向け銘柄分析コンテンツのエンジンとして。提案はデモ15分とOEM/ライセンスの示唆",
+    "asset-manager": "運用会社・ファンド: アナリストの下ごしらえを数十分に。提案は関心銘柄1社の無償レポート",
+    "japan-fund-overseas": "海外のJapan専業ファンド: EDINET一次情報ネイティブの分析を英語で。提案は英語レポート1本無償",
+    "ifa": "IFA・FA: 顧客に見せられる一次情報ベースの評価書。提案はサンプル3本",
+    "family-office": "ファミリーオフィス/MFO: 社内アナリスト1人ぶんの下ごしらえ。提案は保有・検討銘柄1社の無償レポート",
+    "ma-advisory": "M&A・FAS・事業承継: DD・株価算定の初動自動化。提案は実案件に近い1社の無償サンプル",
+    "info-vendor": "情報ベンダー・フィンテック: 組み込み可能な評価エンジン (買収・OEM候補)。提案は teaser とデモ"
+  },
+  "orgs": [
+    { "externalId": "vmout-okasan", "name": "岡三証券", "country": "JP", "segment": "securities" },
+    { "externalId": "vmout-tokai-tokyo", "name": "東海東京フィナンシャル・ホールディングス", "country": "JP", "segment": "securities" },
+    { "externalId": "vmout-ichiyoshi", "name": "いちよし証券", "country": "JP", "segment": "securities", "note": "中小型株リサーチに強み。VM の中小型カバレッジと補完" },
+    { "externalId": "vmout-matsui", "name": "松井証券", "country": "JP", "segment": "securities" },
+    { "externalId": "vmout-au-kabucom", "name": "三菱UFJ eスマート証券", "country": "JP", "segment": "securities", "note": "2025年2月に auカブコム証券から社名変更 (三菱UFJ銀行100%子会社)" },
+    { "externalId": "vmout-gmo-click", "name": "GMOクリック証券", "country": "JP", "segment": "securities", "note": "旧シェアーズ事業の売却先。歴史的接点あり" },
+    { "externalId": "vmout-iwai-cosmo", "name": "岩井コスモ証券", "country": "JP", "segment": "securities" },
+    { "externalId": "vmout-marusan", "name": "丸三証券", "country": "JP", "segment": "securities" },
+    { "externalId": "vmout-toyo-sec", "name": "東洋証券", "country": "JP", "segment": "securities" },
+
+    { "externalId": "vmout-sparx", "name": "スパークス・グループ", "country": "JP", "segment": "asset-manager", "note": "日本株バリューの老舗" },
+    { "externalId": "vmout-rheos", "name": "レオス・キャピタルワークス", "country": "JP", "segment": "asset-manager", "note": "藤野氏退任後の新体制。藤野さん経由の温度次第で Tier 1 昇格" },
+    { "externalId": "vmout-commons", "name": "コモンズ投信", "country": "JP", "segment": "asset-manager" },
+    { "externalId": "vmout-kamakura", "name": "鎌倉投信", "country": "JP", "segment": "asset-manager" },
+    { "externalId": "vmout-saison", "name": "セゾン投信", "country": "JP", "segment": "asset-manager" },
+    { "externalId": "vmout-misaki", "name": "みさき投資", "country": "JP", "segment": "asset-manager", "note": "エンゲージメント投資。経営の質の点検が刺さる" },
+    { "externalId": "vmout-hibiki-path", "name": "ひびき・パース・アドバイザーズ", "country": "JP", "segment": "asset-manager" },
+    { "externalId": "vmout-strategic-capital", "name": "ストラテジックキャピタル", "country": "JP", "segment": "asset-manager", "note": "アクティビスト。ガバナンス指摘の根拠資料需要" },
+    { "externalId": "vmout-bayview", "name": "ベイビュー・アセット・マネジメント", "country": "JP", "segment": "asset-manager" },
+
+    { "externalId": "vmout-gaia", "name": "GAIA", "country": "JP", "segment": "ifa" },
+    { "externalId": "vmout-financial-standard", "name": "ファイナンシャルスタンダード", "country": "JP", "segment": "ifa" },
+    { "externalId": "vmout-value-advisers", "name": "バリューアドバイザーズ", "country": "JP", "segment": "ifa" },
+
+    { "externalId": "vmout-wealth-partners", "name": "ウェルス・パートナー", "country": "JP", "segment": "family-office", "note": "正式社名は末尾ズなし (港区赤坂・富裕層向けIFA)" },
+    { "externalId": "vmout-cap-asset-planning", "name": "キャピタル・アセット・プランニング", "country": "JP", "segment": "family-office" },
+
+    { "externalId": "vmout-macp", "name": "M&Aキャピタルパートナーズ", "country": "JP", "segment": "ma-advisory" },
+    { "externalId": "vmout-strike", "name": "ストライク", "country": "JP", "segment": "ma-advisory" },
+    { "externalId": "vmout-ondeck", "name": "オンデック", "country": "JP", "segment": "ma-advisory" },
+    { "externalId": "vmout-fundbook", "name": "fundbook", "country": "JP", "segment": "ma-advisory" },
+    { "externalId": "vmout-yamada-consulting", "name": "山田コンサルティンググループ", "country": "JP", "segment": "ma-advisory", "note": "事業承継・株価算定の反復業務" },
+
+    { "externalId": "vmout-minkabu", "name": "ミンカブ・ジ・インフォノイド", "country": "JP", "segment": "info-vendor" },
+    { "externalId": "vmout-fisco", "name": "フィスコ", "country": "JP", "segment": "info-vendor" },
+    { "externalId": "vmout-shared-research", "name": "シェアードリサーチ", "country": "JP", "segment": "info-vendor", "note": "スポンサードリサーチ。レポート生成の親和性高" },
+    { "externalId": "vmout-logmi", "name": "ログミーファイナンス", "country": "JP", "segment": "info-vendor" },
+
+    { "externalId": "vmout-dalton", "name": "Dalton Investments", "country": "US", "segment": "japan-fund-overseas", "note": "LA。日本株バリュー・エンゲージメントの長い実績" },
+    { "externalId": "vmout-taiyo-pacific", "name": "Taiyo Pacific Partners", "country": "US", "segment": "japan-fund-overseas", "note": "WA。日本株エンゲージメント専業" },
+    { "externalId": "vmout-kaname", "name": "Kaname Capital", "country": "US", "segment": "japan-fund-overseas", "note": "Boston。日本株バリュー" },
+    { "externalId": "vmout-verdad", "name": "Verdad Advisers", "country": "US", "segment": "japan-fund-overseas", "note": "Boston。日本小型バリューの発信が多くデータ親和性高" },
+    { "externalId": "vmout-indus", "name": "Indus Capital Partners", "country": "US", "segment": "japan-fund-overseas", "note": "NY。アジア・日本" },
+    { "externalId": "vmout-hennessy", "name": "Hennessy Funds", "country": "US", "segment": "japan-fund-overseas", "note": "Japan Fund を擁する。米販売網" },
+    { "externalId": "vmout-arcus", "name": "Arcus Investment", "country": "GB", "segment": "japan-fund-overseas", "note": "ロンドン。日本株専業" },
+    { "externalId": "vmout-zennor", "name": "Zennor Asset Management", "country": "GB", "segment": "japan-fund-overseas", "note": "ロンドン。日本株専業" },
+    { "externalId": "vmout-3d-investment", "name": "3D Investment Partners", "country": "SG", "segment": "japan-fund-overseas", "note": "シンガポール。日本株アクティビスト" },
+    { "externalId": "vmout-oasis", "name": "Oasis Management", "country": "HK", "segment": "japan-fund-overseas", "note": "香港。日本株アクティビスト" },
+
+    { "externalId": "vmout-morningstar", "name": "Morningstar", "country": "US", "segment": "info-vendor", "note": "買い手・提携候補を兼ねる。product/BD 窓口" },
+    { "externalId": "vmout-factset", "name": "FactSet", "country": "US", "segment": "info-vendor", "note": "買い手・提携候補を兼ねる" },
+    { "externalId": "vmout-spglobal", "name": "S&P Global Market Intelligence", "country": "US", "segment": "info-vendor", "note": "買い手・提携候補を兼ねる" },
+    { "externalId": "vmout-smartkarma", "name": "Smartkarma", "country": "SG", "segment": "info-vendor", "note": "独立リサーチのマーケットプレイス。配信面の提携先" }
+  ]
+}

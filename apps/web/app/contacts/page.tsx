@@ -1187,6 +1187,7 @@ export default function ContactsPage() {
         <Link href="/" style={{ color: "#2563eb" }}>{t("back_home")}</Link>
         <Link href="/schedule" style={{ color: "#2563eb" }}>日程調整と時間の受け付け</Link>
         <Link href="/campaigns" style={{ color: "#2563eb" }}>一斉配信（お便り）</Link>
+        <Link href="/resources" style={{ color: "#2563eb" }}>差し出せるもの</Link>
       </p>
       <h1 style={{ fontSize: 24 }}>{t("contacts_title")}</h1>
 

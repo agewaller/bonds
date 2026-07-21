@@ -1,0 +1,38 @@
+{
+  "comment": "VM Next (Google Sheet) の提供先リスト。氏名のみ — メールアドレスとパスワードは意図的に含めない (誤送信・漏洩防止)。メールは bonds の連絡先画面で Sheet から貼り付けて補完する。",
+  "resource": {
+    "kind": "wisdom",
+    "title": "企業価値評価レポートを1本お作りします (バリューマトリクス)",
+    "availability": "1〜2社まで無償。ご関心の銘柄をお知らせください"
+  },
+  "people": [
+    { "name": "真鍋 康正", "externalId": "vmnext-manabe-yasumasa" },
+    { "name": "夏目 岳彦", "externalId": "vmnext-natsume-takehiko" },
+    { "name": "笠原 健治", "externalId": "vmnext-kasahara-kenji" },
+    { "name": "細貝 康介", "externalId": "vmnext-hosokai-kosuke" },
+    { "name": "岡 俊子", "externalId": "vmnext-oka-toshiko" },
+    { "name": "松村 宗和", "externalId": "vmnext-matsumura-munekazu" },
+    { "name": "桃井 智徳", "externalId": "vmnext-momoi-tomonori" },
+    { "name": "森川 亮", "externalId": "vmnext-morikawa-akira" },
+    { "name": "松本 大", "externalId": "vmnext-matsumoto-oki" },
+    { "name": "伊藤 秋津", "externalId": "vmnext-ito-akitsu" },
+    { "name": "柳沢 和正", "externalId": "vmnext-yanagisawa-kazumasa" },
+    { "name": "加藤 靖之", "externalId": "vmnext-kato-yasuyuki" },
+    { "name": "西川 裕一朗", "externalId": "vmnext-nishikawa-yuichiro" },
+    { "name": "野寺 大輔", "externalId": "vmnext-nodera-daisuke" },
+    { "name": "野村 謙司", "externalId": "vmnext-nomura-kenji" },
+    { "name": "永山 あいな", "externalId": "vmnext-nagayama-aina" },
+    { "name": "穐田 誉輝", "externalId": "vmnext-akita-yoshiteru" },
+    { "name": "安東 泰志", "externalId": "vmnext-ando-yasushi" },
+    { "name": "金田 欧奈", "externalId": "vmnext-kaneda-ona" },
+    { "name": "清水 義尚", "externalId": "vmnext-shimizu-yoshinao" },
+    { "name": "高橋 伸彰", "externalId": "vmnext-takahashi-nobuaki" },
+    { "name": "佐野 哲哉", "externalId": "vmnext-sano-tetsuya" },
+    { "name": "山田 進太郎", "externalId": "vmnext-yamada-shintaro" },
+    { "name": "赤浦 徹", "externalId": "vmnext-akaura-toru" },
+    { "name": "谷家 衛", "externalId": "vmnext-taniya-mamoru" },
+    { "name": "辻 庸介", "externalId": "vmnext-tsuji-yosuke" },
+    { "name": "南 章行", "externalId": "vmnext-minami-akiyuki" },
+    { "name": "丸岡 照幸", "externalId": "vmnext-maruoka-teruyuki" }
+  ]
+}

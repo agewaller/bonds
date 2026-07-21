@@ -13,3 +13,4 @@ playwright-report/
 .DS_Store
 next-env.d.ts
 node-compile-cache/
+scripts/data/*.local.json

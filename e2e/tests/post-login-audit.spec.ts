@@ -260,9 +260,15 @@ test("連絡先詳細: プロフィール保存・面談候補・お便り導線
   await expect(mail).toBeVisible();
   await expect(mail).toHaveAttribute("href", "mailto:kenta@example.com");
 
-  // 面談候補 (カレンダー未登録の縮退案内: 営業時間すべてが候補になる旨の通知が出る)
+  // 面談候補: カレンダー未登録なら縮退案内、予定が登録済みの環境なら実際の候補が出る。
+  // どちらも「ボタンが機能して結果が表示される」ことの監査として合格 (DB の状態に依存しない)。
   await page.getByRole("button", { name: "おたがいの空きから候補を出す" }).click();
-  await expect(page.getByText(/ご自身の予定が未登録|重なる空きが見つかりませんでした/)).toBeVisible();
+  await expect(
+    page
+      .getByText(/ご自身の予定が未登録|重なる空きが見つかりませんでした/)
+      .or(page.getByRole("link", { name: "カレンダーに入れる" }))
+      .first(),
+  ).toBeVisible();
 
   // お便りセクション: AI キー無し環境では 503 の優しい文言、鍵のある実機では
   // 実際に文面候補が返る (実生成は 1 分ほどかかりうるため長めに待つ)

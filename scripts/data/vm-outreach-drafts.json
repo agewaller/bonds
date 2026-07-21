@@ -1,0 +1,189 @@
+{
+  "_comment": "VM アウトリーチ第一陣のドラフト (Tier 2 46社)。seed-vm-outreach-drafts.mjs が status=draft で bonds に積む。送信はしない — オーナーが承認画面で修正・承認してはじめて送信される。文面は BR-09 準拠 (記号装飾なし・散文)。相手固有の記述は公開情報に基づく一般的な言及に留めてあり、送信前にオーナーが実態に合わせて調整する前提。",
+  "drafts": {
+    "vmout-okasan": {
+      "subject": "リテールのお客様向け銘柄分析の下ごしらえを数十分に",
+      "body": "岡三証券 ご担当者様\n\n対面とリテールに深い基盤をお持ちの御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、有価証券報告書などの一次情報から、財務の実態分析、DCF三シナリオの一株価値、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。お客様への銘柄説明の根拠資料として、そのままお使いいただける品質を目指しています。もしご関心があれば、いま注目されている銘柄を一社お知らせください。評価レポートを一本、無償でお作りしてお送りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-tokai-tokyo": {
+      "subject": "投資情報サービスの差別化に、一次情報ベースの企業価値評価を",
+      "body": "東海東京フィナンシャル・ホールディングス ご担当者様\n\n中部圏を軸に独自の証券ビジネスを展開されている御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。お客様向け投資情報の差別化コンテンツとして組み込める形を想定しています。ご関心があれば、注目されている銘柄を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-ichiyoshi": {
+      "subject": "中小型株リサーチの下ごしらえを数十分に畳む道具のご紹介",
+      "body": "いちよし証券 ご担当者様\n\n中小型株のリサーチに長く独自の地位を築いてこられた御社なら、この道具の価値をすぐに見極めていただけると思い、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、有価証券報告書などの一次情報から、財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。カバレッジの薄い中小型ほど、この時間圧縮が効きます。ご関心があれば、御社が注目する中小型銘柄を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-matsui": {
+      "subject": "個人投資家向け銘柄分析コンテンツのエンジンとして",
+      "body": "松井証券 ご担当者様\n\n個人投資家に寄り添う情報サービスを次々と形にされている御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。かつて個人投資家10万人に使われた企業分析サイト、シェアーズを開発し証券会社に売却した者です。その進化形として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。個人のお客様向けコンテンツとして組み込める品質を目指しています。ご関心があれば、注目の銘柄を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-au-kabucom": {
+      "subject": "投資情報の差別化に、一次情報ベースの自動企業価値評価を",
+      "body": "三菱UFJ eスマート証券 ご担当者様\n\nテクノロジーで投資体験を磨いてこられた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。数字はすべて開示資料に根拠を紐づけ、機械的に再検証しています。ご関心があれば、注目されている銘柄を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-gmo-click": {
+      "subject": "旧シェアーズの山口です。あれから15年ぶんの進化をお見せしたく",
+      "body": "GMOクリック証券 ご担当者様\n\n2010年に企業分析サイト、シェアーズを御社にお譲りした山口揚平です。ご縁のあった御社に、あれから15年ぶんの進化を最初にお見せしたく、ご連絡しました。現在は、有価証券報告書などの一次情報から、財務の実態分析、DCF三シナリオの一株価値、類似会社比較、経営の質の点検までを数十分で一続きのレポートにするシステムを作っています。当時の企業カルテの思想を、現在の技術で作り直したものです。もしご関心があれば、注目されている銘柄を一社お知らせください。評価レポートを一本、無償でお作りしてお送りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-iwai-cosmo": {
+      "subject": "お客様向け銘柄説明の根拠資料を数十分で",
+      "body": "岩井コスモ証券 ご担当者様\n\n対面のお客様に丁寧な提案を続けてこられた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。お客様への銘柄説明の根拠資料として使える品質を目指しています。ご関心があれば、注目されている銘柄を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-marusan": {
+      "subject": "銘柄分析の下ごしらえを数十分に畳む道具のご紹介",
+      "body": "丸三証券 ご担当者様\n\n対面営業の丁寧さで知られる御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、有価証券報告書などの一次情報から、財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。お客様への提案の下ごしらえを、判断材料が揃った状態から始められます。ご関心があれば、注目されている銘柄を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-toyo-sec": {
+      "subject": "投資情報コンテンツの強化に、一次情報ベースの企業価値評価を",
+      "body": "東洋証券 ご担当者様\n\n中国株をはじめ独自の強みを築いてこられた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。日本株のお客様向けコンテンツとして組み込める形を想定しています。ご関心があれば、注目されている銘柄を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-sparx": {
+      "subject": "リサーチ初動の下ごしらえを数十分に。現物を一本お渡しします",
+      "body": "スパークス・グループ ご担当者様\n\n日本株の実地調査に裏づけられた運用を長く続けてこられた御社なら、この道具の使いどころも限界も、正確に見抜いていただけると思い、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。アナリストの判断を置き換えるものではなく、初動の下ごしらえを畳むものです。ご関心があれば、ユニバースの一社をお知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-rheos": {
+      "subject": "運用リサーチの初動を数十分に畳む道具のご紹介",
+      "body": "レオス・キャピタルワークス ご担当者様\n\n顔の見える運用で個人投資家の信頼を築いてこられた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。アナリストの足で稼ぐ調査を置き換えるものではなく、その前の下ごしらえを畳むものです。ご関心があれば、ユニバースの一社をお知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-commons": {
+      "subject": "長期投資の対話材料に、一次情報ベースの企業価値評価を",
+      "body": "コモンズ投信 ご担当者様\n\n30年目線の長期投資とお客様との対話を大切にされている御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、経営の質の点検までを数十分で一続きのレポートにするシステムを作りました。お客様に見せられる対話材料としても使える品質を目指しています。ご関心があれば、投資先か検討先を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-kamakura": {
+      "subject": "いい会社の見極めの下ごしらえに。現物を一本お渡しします",
+      "body": "鎌倉投信 ご担当者様\n\nいい会社への投資という思想を貫いてこられた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、経営の質の点検までを数十分で一続きのレポートにするシステムを作りました。数字の裏づけを揃える下ごしらえを畳むことで、対話と実地の時間を増やすための道具です。ご関心があれば、投資先か検討先を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-saison": {
+      "subject": "運用リサーチの下ごしらえを数十分に畳む道具のご紹介",
+      "body": "セゾン投信 ご担当者様\n\n長期積立の文化を日本に根づかせてこられた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。日本株の個別評価が必要になる場面での下ごしらえを想定しています。ご関心があれば、検討中の一社をお知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-misaki": {
+      "subject": "エンゲージメントの土台となる実態分析を数十分で",
+      "body": "みさき投資 ご担当者様\n\n働く投資を掲げ、経営との対話に深くコミットされている御社なら、この道具の使いどころを正確に見極めていただけると思い、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、経営の質の点検までを数十分で一続きのレポートにするシステムを作りました。対話の前提となる実態把握の下ごしらえを畳むものです。ご関心があれば、投資先か検討先を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-hibiki-path": {
+      "subject": "投資先の実態分析の下ごしらえを数十分に",
+      "body": "ひびき・パース・アドバイザーズ ご担当者様\n\n日本の中小型株に深くコミットした運用をされている御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。カバレッジの薄い中小型ほど時間圧縮が効きます。ご関心があれば、ユニバースの一社をお知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-strategic-capital": {
+      "subject": "ガバナンス指摘の根拠となる実態分析を数十分で",
+      "body": "ストラテジックキャピタル ご担当者様\n\n資本効率とガバナンスへの緊張感ある提言を続けてこられた御社なら、この道具の価値をすぐ判定いただけると思い、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、経営の質の点検までを数十分で一続きのレポートにするシステムを作りました。提言の土台となる数字の裏づけを、開示に紐づけた形で速く揃えられます。ご関心があれば、投資先か検討先を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-bayview": {
+      "subject": "中小型のリサーチカバレッジを数十分の下ごしらえで広げる",
+      "body": "ベイビュー・アセット・マネジメント ご担当者様\n\n独立系として複数の運用チームを擁する御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。各チームのリサーチ初動を共通の土台で速くするものです。ご関心があれば、ユニバースの一社をお知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-gaia": {
+      "subject": "お客様に見せられる一次情報ベースの銘柄評価書を",
+      "body": "GAIA ご担当者様\n\nお客様本位の資産運用アドバイスを実践されてきた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、有価証券報告書などの一次情報から、財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。お客様への説明にそのまま使える根拠資料を想定しています。ご関心があれば、お客様の関心が高い銘柄を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-financial-standard": {
+      "subject": "提案の根拠資料となる銘柄評価書を数十分で",
+      "body": "ファイナンシャルスタンダード ご担当者様\n\nIFAとしてお客様に中立の提案を続けてこられた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。お客様への説明の根拠資料として使える品質を目指しています。ご関心があれば、お客様の関心が高い銘柄を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-value-advisers": {
+      "subject": "お客様向けの銘柄説明資料を一次情報ベースで",
+      "body": "バリューアドバイザーズ ご担当者様\n\n資産運用の助言で信頼を積み重ねてこられた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。お客様への説明の根拠資料として使える品質を目指しています。ご関心があれば、お客様の関心が高い銘柄を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-wealth-partners": {
+      "subject": "富裕層のお客様の保有銘柄点検を数十分の下ごしらえで",
+      "body": "ウェルス・パートナー ご担当者様\n\n富裕層の資産管理に伴走されている御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。お客様の保有銘柄や検討銘柄の点検を、社内アナリスト一人ぶんの下ごしらえとして支えるものです。ご関心があれば、点検したい一社をお知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-cap-asset-planning": {
+      "subject": "資産承継のお客様向けに、保有銘柄の実態評価を数十分で",
+      "body": "キャピタル・アセット・プランニング ご担当者様\n\n資産承継と富裕層向けサービスの仕組みを築いてこられた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオまでを数十分で一続きのレポートにするシステムを作りました。お客様の保有株式の実態評価や、システムへの組み込みの両面でご一緒できる可能性があると考えています。ご関心があれば、一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-macp": {
+      "subject": "案件初期のバリュエーション下ごしらえを数十分に",
+      "body": "M&Aキャピタルパートナーズ ご担当者様\n\n中堅中小のM&A仲介で豊富な成約を重ねてこられた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。M&Aの実務から出発して企業価値評価を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。上場類似会社の倍率取得や案件初期の当たりづけを速くします。ご関心があれば、実案件に近い上場企業を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-strike": {
+      "subject": "類似会社比較と株価算定の初動を数十分で",
+      "body": "ストライク ご担当者様\n\nM&A仲介の第一線で案件を重ねてこられた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。M&Aの実務から出発して企業価値評価を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。案件初期の当たりづけと根拠資料の下ごしらえを速くするものです。ご関心があれば、実案件に近い上場企業を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-ondeck": {
+      "subject": "小規模M&Aのバリュエーション工数を数十分に畳む",
+      "body": "オンデック ご担当者様\n\n小規模M&Aに丁寧に向き合ってこられた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。M&Aの実務から出発して企業価値評価を20年続けてきた者として、開示の一次情報から財務の実態分析、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。少人数の体制でも、案件ごとの評価下ごしらえを一定品質で速く回せるようにするものです。ご関心があれば、類似会社として使う上場企業を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-fundbook": {
+      "subject": "M&Aプラットフォームの評価エンジンとして",
+      "body": "fundbook ご担当者様\n\nテクノロジーとアドバイザーの融合でM&A仲介を進化させている御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。M&Aの実務から出発して企業価値評価を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。プラットフォームへの評価エンジンの組み込みという形でもご一緒できる可能性があります。ご関心があれば、一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-yamada-consulting": {
+      "subject": "事業承継の株価算定の下ごしらえを数十分に",
+      "body": "山田コンサルティンググループ ご担当者様\n\n事業承継と企業再生の現場を長く支えてこられた御社に、一度ご覧いただきたい道具があり、ご連絡しました。シェアーズの山口揚平と申します。M&Aの実務から出発して企業価値評価を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするシステムを作りました。承継案件で反復する類似会社の倍率取得や実態把握の工数を大きく畳めます。ご関心があれば、類似会社として使う上場企業を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-minkabu": {
+      "subject": "投資メディアの差別化コンテンツとして、一次情報ベースの企業評価を",
+      "body": "ミンカブ・ジ・インフォノイド ご担当者様\n\n個人投資家向けメディアとフィンテックの両輪を築いてこられた御社に、一度ご覧いただきたいものがあり、ご連絡しました。シェアーズの山口揚平と申します。かつて個人投資家10万人に使われた企業分析サイトを開発し証券会社に売却した者として、その進化形を作りました。開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするエンジンです。メディアへの組み込みやライセンスの形でご一緒できる可能性があると考えています。ご関心があれば、まず現物を一本お送りします。銘柄を一社お知らせください。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-fisco": {
+      "subject": "アナリストレポート生成の下ごしらえエンジンとして",
+      "body": "フィスコ ご担当者様\n\n企業調査レポートを長く発信してこられた御社に、一度ご覧いただきたいものがあり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするエンジンを作りました。レポート制作の下ごしらえ工程を大きく畳める可能性があります。ご関心があれば、まず現物をご覧ください。銘柄を一社お知らせいただければ、評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-shared-research": {
+      "subject": "スポンサードリサーチの制作工程を数十分の下ごしらえで",
+      "body": "シェアードリサーチ ご担当者様\n\n発行体スポンサー型のリサーチという難しい仕事を、品質で成立させてこられた御社に、一度ご覧いただきたいものがあり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするエンジンを作りました。カバレッジ拡大の際の初稿づくりを大きく速くできる可能性があります。ご関心があれば、銘柄を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-logmi": {
+      "subject": "決算説明会コンテンツに評価レイヤーを重ねる可能性について",
+      "body": "ログミーファイナンス ご担当者様\n\n決算説明会の書き起こしという一次情報インフラを築いてこられた御社に、一度ご覧いただきたいものがあり、ご連絡しました。シェアーズの山口揚平と申します。企業価値評価の実務を20年続けてきた者として、開示の一次情報から財務の実態分析、DCF三シナリオ、類似会社比較までを数十分で一続きのレポートにするエンジンを作りました。御社の書き起こしに評価の層を重ねると、読者への価値が一段深くなる可能性があると考えています。ご関心があれば、銘柄を一社お知らせください。評価レポートを一本、無償でお作りします。ご不要でしたら、その旨一言ご返信いただければ以後ご連絡いたしません。\n\n山口揚平 シェアーズ株式会社 info@bluemarl.in"
+    },
+    "vmout-dalton": {
+      "subject": "Japan disclosure-native valuation reports, in English, in under an hour",
+      "body": "Dear Dalton Investments team,\n\nYour decades of value and engagement investing in Japan mean you know exactly how much of an analyst's week goes into reading Japanese filings. I'm Yohei Yamaguchi, a Tokyo-based practitioner of corporate valuation for 20 years; I sold my first equity-analytics business to a Japanese online broker in 2010. I've now built an engine that turns primary Japanese disclosures from EDINET into a full valuation report, normalized financials, three-scenario DCF, peer comparisons and a management-quality review, in English, in under an hour, with every number traceable to the filing. If useful, name one Japanese company you hold or watch and I will send you a complete report at no cost. If this isn't relevant, a one-line reply and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    },
+    "vmout-taiyo-pacific": {
+      "subject": "Engagement prep on Japanese names: filing-native analysis in English",
+      "body": "Dear Taiyo Pacific Partners team,\n\nAs pioneers of friendly engagement in Japan, your edge lives in the depth of preparation before each management dialogue. I'm Yohei Yamaguchi, a Tokyo-based valuation practitioner of 20 years who sold his first analytics business to a Japanese broker. I've built an engine that converts EDINET filings into full English valuation reports, normalized financials, three-scenario DCF, peer comps and a management-quality review, in under an hour, every figure traceable to the source disclosure. It is built to prepare dialogues, not replace judgment. Name one portfolio or watchlist company and I'll send a complete report at no cost. If not relevant, one line back and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    },
+    "vmout-kaname": {
+      "subject": "Japan small-cap value: filing-native reports in English, in an hour",
+      "body": "Dear Kaname Capital team,\n\nJapan value investing from Boston means living with the translation gap: the cheapest names have the thinnest English coverage. I'm Yohei Yamaguchi, a Tokyo-based valuation practitioner of 20 years; I sold my first equity-analytics business to a Japanese online broker. I've built an engine that turns EDINET filings directly into English valuation reports, normalized financials across JGAAP and IFRS, three-scenario DCF, peer comps, in under an hour, with every number traceable to the filing. It widens the universe you can screen deeply without adding headcount. Name one company you hold or watch and I'll send a complete report at no cost. If not relevant, one line back and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    },
+    "vmout-verdad": {
+      "subject": "Systematic Japan value, meet filing-native fundamental depth",
+      "body": "Dear Verdad team,\n\nYour published research on Japanese small-cap value is some of the clearest writing on why the opportunity exists, and why the bottleneck is research capacity, not ideas. I'm Yohei Yamaguchi, a Tokyo-based valuation practitioner of 20 years who sold his first analytics business to a Japanese broker. I've built an engine that turns EDINET filings into full English valuation reports, normalized JGAAP and IFRS financials, three-scenario DCF, peer comps, in under an hour, every figure traceable to the filing. It adds fundamental depth to a quantitative screen at near-zero marginal cost. Name one company in your universe and I'll send a complete report at no cost. If not relevant, one line back and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    },
+    "vmout-indus": {
+      "subject": "Japan coverage depth without Tokyo headcount: filing-native reports in English",
+      "body": "Dear Indus Capital team,\n\nRunning pan-Asia portfolios means Japan competes for scarce analyst hours against every other market you cover. I'm Yohei Yamaguchi, a Tokyo-based valuation practitioner of 20 years; I sold my first equity-analytics business to a Japanese online broker. I've built an engine that converts EDINET filings into complete English valuation reports, normalized financials, three-scenario DCF, peer comps and a management-quality review, in under an hour, with every number traceable to the disclosure. It lets Japan ideas reach investment-committee quality without additional headcount. Name one Japanese company you hold or watch and I'll send a full report at no cost. If not relevant, one line back and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    },
+    "vmout-hennessy": {
+      "subject": "Supplementary Japan research: filing-native analysis in English",
+      "body": "Dear Hennessy Funds team,\n\nWith a dedicated Japan strategy in your lineup, you know the scarcity of English-language depth on Japanese names outside the large caps. I'm Yohei Yamaguchi, a Tokyo-based valuation practitioner of 20 years who sold his first equity-analytics business to a Japanese broker. I've built an engine that turns Japanese primary disclosures into complete English valuation reports, normalized financials, three-scenario DCF, peer comps, in under an hour, every figure traceable to the filing. It can serve as independent supplementary research for your Japan sleeve. Name one company you hold or watch and I'll send a complete report at no cost. If not relevant, one line back and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    },
+    "vmout-arcus": {
+      "subject": "Japan value from London: filing-native English reports in an hour",
+      "body": "Dear Arcus Investment team,\n\nDecades of contrarian Japan value investing from London means your team reads more Japanese filings than most Tokyo desks. I'm Yohei Yamaguchi, a Tokyo-based valuation practitioner of 20 years; I sold my first equity-analytics business to a Japanese online broker. I've built an engine that converts EDINET filings into full English valuation reports, normalized JGAAP and IFRS financials, three-scenario DCF, peer comps, in under an hour, with every number traceable to the source. It compresses the grunt work between screen and conviction. Name one company you hold or watch and I'll send a complete report at no cost. If not relevant, one line back and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    },
+    "vmout-zennor": {
+      "subject": "Japan equity research capacity, without adding headcount",
+      "body": "Dear Zennor Asset Management team,\n\nA focused Japan boutique lives and dies by how many names it can research deeply per analyst. I'm Yohei Yamaguchi, a Tokyo-based valuation practitioner of 20 years who sold his first equity-analytics business to a Japanese broker. I've built an engine that turns EDINET filings into complete English valuation reports, normalized financials, three-scenario DCF, peer comps and a management-quality review, in under an hour, every figure traceable to the filing. It multiplies research capacity without diluting standards. Name one company you hold or watch and I'll send a complete report at no cost. If not relevant, one line back and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    },
+    "vmout-3d-investment": {
+      "subject": "Filing-native fundamental depth for Japan engagement work",
+      "body": "Dear 3D Investment Partners team,\n\nEngagement investing in Japan runs on the depth and speed of fundamental preparation behind each position. I'm Yohei Yamaguchi, a Tokyo-based valuation practitioner of 20 years; I sold my first equity-analytics business to a Japanese online broker. I've built an engine that converts EDINET filings into complete English valuation reports, normalized financials, three-scenario DCF, peer comps and a management-quality review, in under an hour, with every number traceable to the disclosure. It is designed for the preparation phase, where speed compounds. Name one Japanese company you hold or watch and I'll send a full report at no cost. If not relevant, one line back and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    },
+    "vmout-oasis": {
+      "subject": "Japan filings to full English valuation reports, in under an hour",
+      "body": "Dear Oasis Management team,\n\nYour Japan engagement record shows what disciplined preparation against primary disclosures can achieve. I'm Yohei Yamaguchi, a Tokyo-based valuation practitioner of 20 years who sold his first equity-analytics business to a Japanese broker. I've built an engine that turns EDINET filings into complete English valuation reports, normalized financials, three-scenario DCF, peer comps and a management-quality review, in under an hour, every figure traceable to the filing. It compresses the research groundwork under each position. Name one Japanese company you hold or watch and I'll send a full report at no cost. If not relevant, one line back and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    },
+    "vmout-morningstar": {
+      "subject": "Japan equity coverage engine: filing-native analysis, JP and EN",
+      "body": "Dear Morningstar team,\n\nIndependent coverage of Japanese equities beyond the large caps remains one of the thinnest spots in global research. I'm Yohei Yamaguchi, a Tokyo-based valuation practitioner of 20 years; I sold my first equity-analytics business to a Japanese online broker. I've built an engine that converts Japanese primary disclosures (EDINET) into complete valuation reports, normalized JGAAP and IFRS financials, three-scenario DCF, peer comps, in Japanese and English, in under an hour per name. I'd welcome a conversation with your data or research product team about whether this could extend your Japan coverage, as a content source, a licence, or something deeper. A sample report on any Japanese company is yours for the asking. If not relevant, one line back and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    },
+    "vmout-factset": {
+      "subject": "Japan disclosure-native analysis layer for your platform",
+      "body": "Dear FactSet team,\n\nYour clients running Japan strategies still face a gap between raw filing data and investment-committee-ready analysis, especially outside the TOPIX 100. I'm Yohei Yamaguchi, a Tokyo-based valuation practitioner of 20 years who sold his first equity-analytics business to a Japanese broker. I've built an engine that turns EDINET filings into complete valuation reports, normalized JGAAP and IFRS financials, three-scenario DCF, peer comps, in Japanese and English, in under an hour per name. I'd welcome a short conversation with your content or partnerships team about whether this belongs on your platform as licensed content. A sample report on any Japanese company is yours for the asking. If not relevant, one line back and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    },
+    "vmout-spglobal": {
+      "subject": "Japan mid and small cap analysis content, filing-native",
+      "body": "Dear S&P Global Market Intelligence team,\n\nDemand for Japan equity insight has outrun the supply of independent analysis outside the large caps. I'm Yohei Yamaguchi, a Tokyo-based valuation practitioner of 20 years; I sold my first equity-analytics business to a Japanese online broker. I've built an engine that converts Japanese primary disclosures into complete valuation reports, normalized financials across JGAAP and IFRS, three-scenario DCF, peer comps, in Japanese and English, in under an hour per name. I'd welcome a conversation with your content or corp-dev team about licensing or deeper arrangements. A sample report on any Japanese company is yours for the asking. If not relevant, one line back and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    },
+    "vmout-smartkarma": {
+      "subject": "Japan filing-native valuation research for your marketplace",
+      "body": "Dear Smartkarma team,\n\nYour marketplace has proven the demand for independent Asia insight, and Japan depth is perennially scarce. I'm Yohei Yamaguchi, a Tokyo-based valuation practitioner of 20 years who sold his first equity-analytics business to a Japanese broker. I've built an engine that turns EDINET filings into complete English valuation reports, normalized financials, three-scenario DCF, peer comps and a management-quality review, in under an hour per name, every figure traceable to the filing. I'd like to explore publishing on Smartkarma, or a deeper content arrangement. A sample report on any Japanese company is yours for the asking. If not relevant, one line back and I won't write again.\n\nYohei Yamaguchi, Sharez Inc., Tokyo. info@bluemarl.in"
+    }
+  }
+}

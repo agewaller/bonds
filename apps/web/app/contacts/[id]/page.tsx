@@ -6,6 +6,8 @@ import { useCallback, useEffect, useState } from "react";
 import Fold from "../../../components/Fold";
 import { apiFetch } from "../../../lib/client-api";
 import { safeExternalUrl, urlHost } from "../../../lib/safe-url";
+import { MessagesSection } from "../../../components/MessagesSection";
+import { SharesSection } from "../../../components/SharesSection";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
@@ -1408,6 +1410,10 @@ export default function ContactDetailPage() {
           {interactions.length === 0 && <li style={{ color: "#64748b" }}>まだ記録がありません</li>}
         </ul>
       </Fold>
+
+      <MessagesSection contactId={contact.id} contactEmail={contact.email} />
+
+      <SharesSection contactId={contact.id} />
     </main>
   );
 }

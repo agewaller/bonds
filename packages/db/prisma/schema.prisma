@@ -187,6 +187,9 @@ model Contact {
   interactions ContactInteraction[]
   gifts        ContactGift[]
   exchanges    Exchange[]
+  shares       ResourceShare[]
+  externalRefs ContactExternalRef[]
+  threads      MessageThread[]
 
   @@index([ownerUid, state])
   @@map("contacts")
@@ -217,6 +220,100 @@ model Exchange {
   @@index([contactId])
   @@index([ownerUid, createdAt])
   @@map("exchanges")
+}
+
+/// 統合ハブ: 他プロダクト (cares/vm/zentrack/lms) のレコードへの相互参照。
+/// 知り合い/リストを bonds の contacts に集約し、各製品の元レコードへ辿れるようにする。
+model ContactExternalRef {
+  id         String   @id @default(uuid())
+  ownerUid   String   @default("owner") @map("owner_uid")
+  contactId  String   @map("contact_id")
+  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  product    String // cares / vm / zentrack / lms
+  externalId String   @map("external_id")
+  kind       String   @default("person") // patient / investor / dd_subject / transcript_person / person
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([ownerUid, product, externalId])
+  @@index([contactId])
+  @@map("contact_external_refs")
+}
+
+/// 双方向メッセージのスレッド (連絡先ごと・チャネルごと)。
+/// outreach / share 応答 / メール往復を1つの基盤に束ねる (integration-architecture.md §3.2)。
+model MessageThread {
+  id        String   @id @default(uuid())
+  ownerUid  String   @default("owner") @map("owner_uid")
+  contactId String   @map("contact_id")
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  channel   String   @default("email") // email / share / line
+  subject   String?
+  lastAt    DateTime @default(now()) @map("last_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  messages Message[]
+
+  @@index([ownerUid, contactId])
+  @@map("message_threads")
+}
+
+model Message {
+  id         String        @id @default(uuid())
+  threadId   String        @map("thread_id")
+  thread     MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  direction  String // outbound / inbound
+  body       String // 暗号化
+  status     String        @default("sent") // draft / sent / delivered / received / failed
+  externalId String?       @map("external_id") // プロバイダのメッセージ ID
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  @@index([threadId, createdAt])
+  @@map("messages")
+}
+
+/// オーナーが差し出せる資源のカタログ (時間・知恵・モノ)。旧 gift の item を
+/// 一人称・非マーケットに進化させたもの。gift の give/lend/teach/do/advise → kind。
+model SharedResource {
+  id           String   @id @default(uuid())
+  ownerUid     String   @default("owner") @map("owner_uid")
+  kind         String // time / wisdom / thing
+  title        String
+  description  String? // 暗号化
+  availability String? // 空き時間・在庫などの自由記述 (表示用の軽い情報)
+  status       String   @default("active") // active / paused / archived
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  shares ResourceShare[]
+
+  @@index([ownerUid, status])
+  @@map("shared_resources")
+}
+
+/// シェアの成立記録。offer=差し出す / request=頼む / inbound=相手から。
+/// 相手は非ユーザーなので公開トークン (share_token) 経由で応答を受ける = 双方向。
+/// 応答・確定は contact_interactions に還流する (収集→検証の循環)。
+model ResourceShare {
+  id           String    @id @default(uuid())
+  ownerUid     String    @default("owner") @map("owner_uid")
+  contactId    String    @map("contact_id")
+  contact      Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  resourceId   String?   @map("resource_id")
+  resource     SharedResource? @relation(fields: [resourceId], references: [id], onDelete: SetNull)
+  kind         String // time / wisdom / thing
+  direction    String    @default("offer") // offer / request / inbound
+  title        String
+  message      String? // 暗号化 (相手へのひとこと)
+  status       String    @default("proposed") // proposed / sent / accepted / declined / fulfilled / cancelled
+  shareToken   String?   @unique @map("share_token") // 公開応答用マジックリンクのトークン
+  responseNote String?   @map("response_note") // 暗号化 (相手の返答)
+  respondedAt  DateTime? @map("responded_at")
+  fulfilledAt  DateTime? @map("fulfilled_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@index([ownerUid, contactId, status])
+  @@map("resource_shares")
 }
 
 /// 接触記録。距離スコアの入力であり、発信結果の還流先。
