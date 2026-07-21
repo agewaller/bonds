@@ -51,6 +51,19 @@ export default function SettingsPage() {
   } | null>(null);
   const [audit, setAudit] = useState<{ total: number; sample: string[] } | null>(null);
   const [purging, setPurging] = useState(false);
+  const [devices, setDevices] = useState<Array<{
+    provider: string;
+    ready: boolean;
+    connected: boolean;
+    lastSyncAt: string | null;
+    lastSyncNote: string | null;
+  }> | null>(null);
+
+  const loadDevices = async () => {
+    const res = await apiFetch("devices/status");
+    if (res.ok) setDevices((await res.json()).providers);
+    else setDevices([]);
+  };
 
   const loadAudit = async () => {
     const res = await apiFetch("admin/audit-data");
@@ -63,7 +76,32 @@ export default function SettingsPage() {
       setGoogle(res.ok ? await res.json() : { available: false, connected: false });
     })();
     void loadAudit();
+    void loadDevices();
   }, []);
+
+  const deviceConnect = async (provider: string) => {
+    setError("");
+    const res = await apiFetch(`devices/${provider}/auth-url`);
+    const body = await res.json().catch(() => ({}));
+    if (res.ok && body.url) window.location.href = body.url;
+    else setError(body.detail ?? t("m_set_connect_fail"));
+  };
+
+  const deviceSync = async (provider: string) => {
+    setError("");
+    const res = await apiFetch(`devices/${provider}/sync`, { method: "POST", body: "{}" });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) {
+      setNotice(`${t("m_set_dev_synced")} (${body.saved ?? 0})`);
+      await loadDevices();
+    } else setError(body.detail ?? t("m_set_connect_fail"));
+  };
+
+  const deviceDisconnect = async (provider: string) => {
+    setError("");
+    const res = await apiFetch(`devices/${provider}/disconnect`, { method: "POST", body: "{}" });
+    if (res.ok) await loadDevices();
+  };
 
   const purgeAudit = async () => {
     setError("");
@@ -132,6 +170,33 @@ export default function SettingsPage() {
             )}
           </div>
         )}
+      </section>
+
+      <section style={card}>
+        <h2 style={h2}>{T("m_set_devices")}</h2>
+        <p style={desc}>{T("m_set_devices_desc")}</p>
+        {devices === null && <p style={{ color: "#64748b", fontSize: 14 }}>{T("m_set_checking")}</p>}
+        {devices?.map((d) => (
+          <div key={d.provider} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "8px 0" }}>
+            <span style={{ fontSize: 14, minWidth: 180 }}>
+              {T(d.provider === "oura" ? "m_set_dev_oura" : "m_set_dev_withings")}
+            </span>
+            {!d.ready && <span style={{ color: "#64748b", fontSize: 13 }}>{T("m_set_dev_unavailable")}</span>}
+            {d.ready && !d.connected && (
+              <button style={btn} onClick={() => void deviceConnect(d.provider)}>{T("m_set_dev_connect")}</button>
+            )}
+            {d.ready && d.connected && (
+              <>
+                <span style={{ color: "#166534", fontSize: 13 }}>
+                  {T("m_set_dev_connected")}
+                  {d.lastSyncAt ? ` (${T("m_set_dev_last")}: ${new Date(d.lastSyncAt).toLocaleDateString()})` : ""}
+                </span>
+                <button style={btnGhost} onClick={() => void deviceSync(d.provider)}>{T("m_set_dev_sync")}</button>
+                <button style={btnGhost} onClick={() => void deviceDisconnect(d.provider)}>{T("m_set_dev_disconnect")}</button>
+              </>
+            )}
+          </div>
+        ))}
       </section>
 
       <section style={card}>

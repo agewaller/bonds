@@ -51,6 +51,9 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
   partnerMessage: ["body"],
   // Google 連携: refresh token は本人の Google データへの合鍵 = 暗号化
   googleConnection: ["refreshToken"],
+  // デバイス連携 (Oura/Withings 等): トークンは合鍵・健康データは要配慮情報 = 暗号化
+  deviceConnection: ["refreshToken", "accessToken"],
+  healthMetric: ["payload"],
   // 取り込みジョブの本文 (ファイル/貼り付けの中身) は PII = 暗号化
   importJob: ["payload"],
   // やり取り台帳の内容 (何を・メモ) は PII = 暗号化

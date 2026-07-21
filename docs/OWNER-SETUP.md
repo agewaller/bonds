@@ -428,3 +428,42 @@ Google 連携のボタンを押したとき、いまは「このアプリは Goo
 - 日程調整の共有ページの「Google でカレンダーをつなぐ」も同じアプリ名で審査されるため、
   審査が通れば相手側の警告も消えます（相手が見るのは「空いているかどうか」の確認だけの、
   いちばん軽い権限です）。
+
+---
+
+## タスク7：からだの記録のデバイス連携（Oura リング / Withings マット）を有効にする
+
+▼ ねらい: 指輪やベッドのマットで測った眠り・体調の記録を、毎日自動で bonds（共通の取り込み基盤）に
+集め、健康日記などの道具でそのまま使えるようにする。
+
+終わるまでこの機能は「準備中」と表示されるだけで、アプリは壊れません。
+デバイスをまだ持っていなければ、このタスクはデバイスが届いてからで大丈夫です。
+
+### 7-A. Oura（指輪）のアプリ登録
+
+1. https://cloud.ouraring.com/oauth/applications を開く（Oura アカウントでログイン）
+   【検索キーワード】Oura API OAuth application
+2. 「New Application（新しいアプリ）」を押し、名前は bonds など分かるもので登録
+3. Redirect URI（戻り先）に次を 1 行で入れる:
+   `https://bonds-api-xj6szhutkq-an.a.run.app/api/devices/callback`
+4. 発行された **Client ID**（公開値）と **Client Secret**（秘密の値）を控える
+
+### 7-B. Withings（マット）のアプリ登録
+
+1. https://developer.withings.com/ を開き、アカウント登録 → 「Create an application」
+   【検索キーワード】Withings developer create application
+2. 種類は Public API integration でよい。Callback URL に 7-A と同じ URL を入れる
+3. **Client ID** と **Client Secret** を控える
+
+### 7-C. 鍵の投入（Secret と公開値の置き場所を間違えないこと）
+
+- **秘密の値（Secret Manager）**: `BONDS_OURA_CLIENT_SECRET` と `BONDS_WITHINGS_CLIENT_SECRET`
+  に各 Client Secret を投入（`bash infra/scripts/01-create-secrets.sh` で器はできます）
+- **公開値（デプロイ時の環境変数）**: `OURA_CLIENT_ID` / `WITHINGS_CLIENT_ID` /
+  `DEVICE_OAUTH_REDIRECT_URL`（= 7-A の URL）を GitHub の Variables か deploy 実行時の env に
+
+投入後にデプロイすると、設定ページの「からだの記録のデバイス連携」に「つなぐ」ボタンが
+現れます。押して各社の同意画面を通れば、以後は 1 時間ごとに自動で取り込まれます。
+片方だけ設定しても、その片方だけ有効になります。
+
+分からなければ止めて、画面の写真を送って相談してください。

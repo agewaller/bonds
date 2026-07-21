@@ -271,6 +271,7 @@ export default function ContactsPage() {
   };
   const [voiceMemos, setVoiceMemos] = useState<VoiceMemo[]>([]);
   const [plaudBusy, setPlaudBusy] = useState(false);
+  const [voicePaste, setVoicePaste] = useState("");
   // 軸検索 (影響力・専門性・価値観・誠実さ/評判)
   const [axis, setAxis] = useState<string | null>(null);
   const [axisItems, setAxisItems] = useState<
@@ -520,6 +521,30 @@ export default function ContactsPage() {
             ? `${t("c_plaud_loaded_a")}${b.imported}${t("c_plaud_loaded_b")}`
             : t("c_plaud_none"),
         );
+        const vmRes = await apiFetch("relationship/voice-memos");
+        if (vmRes.ok) setVoiceMemos((await vmRes.json()).memos ?? []);
+      } else {
+        setError(b.detail ?? t("c_load_failed_now"));
+      }
+    } finally {
+      setPlaudBusy(false);
+    }
+  };
+  // Plaud 以外の録音・文字起こしの取り込み口 (どのレコーダーのテキストでも貼り付けで入る)
+  const addVoiceMemoText = async () => {
+    const text = voicePaste.trim();
+    if (!text) return;
+    setPlaudBusy(true);
+    setError("");
+    try {
+      const res = await apiFetch("relationship/voice-memos", {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      });
+      const b = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setVoicePaste("");
+        setNotice(t("c_voice_added"));
         const vmRes = await apiFetch("relationship/voice-memos");
         if (vmRes.ok) setVoiceMemos((await vmRes.json()).memos ?? []);
       } else {
@@ -1682,12 +1707,13 @@ export default function ContactsPage() {
         </Fold>
       )}
 
-      {googleStatus?.available && (googleStatus.connected || voiceMemos.length > 0) && (
+      {/* 貼り付けの取り込み口は Google 連携が無くても使えるため、パネルは常時出す */}
+      {(
         <Fold k="cl24" defaultOpen={false} title={<>{t("c_voice_title")}{voiceMemos.length > 0 ? ` (${voiceMemos.length})` : ""}</>} style={{ margin: "16px 0", border: "1px solid #c7d2fe", background: "#eef2ff", borderRadius: 12, padding: "12px 16px" }}>
           <p style={{ fontSize: 13, color: "#3730a3", margin: "4px 0 10px" }}>
             {t("c_voice_desc")}
           </p>
-          {!googleStatus.mailRead ? (
+          {googleStatus?.available && googleStatus.connected && !googleStatus.mailRead ? (
             <div>
               <p style={{ fontSize: 13, color: "#475569", margin: "0 0 8px", lineHeight: 1.8 }}>
                 {t("c_voice_need_permission")}
@@ -1701,13 +1727,15 @@ export default function ContactsPage() {
             </div>
           ) : (
             <div>
-              <button
-                onClick={() => void syncPlaud()}
-                disabled={plaudBusy}
-                style={{ padding: "6px 14px", background: "#4f46e5", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, marginBottom: 10 }}
-              >
-                {plaudBusy ? t("c_loading_progress") : t("c_load_now")}
-              </button>
+              {googleStatus?.mailRead && (
+                <button
+                  onClick={() => void syncPlaud()}
+                  disabled={plaudBusy}
+                  style={{ padding: "6px 14px", background: "#4f46e5", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, marginBottom: 10 }}
+                >
+                  {plaudBusy ? t("c_loading_progress") : t("c_load_now")}
+                </button>
+              )}
               {voiceMemos.length === 0 && (
                 <p style={{ fontSize: 13, color: "#64748b", margin: 0 }}>
                   {t("c_voice_empty")}
@@ -1765,6 +1793,24 @@ export default function ContactsPage() {
               </ul>
             </div>
           )}
+          {/* Plaud 以外の取り込み口: どのレコーダー・文字起こしアプリのテキストでも貼り付けで入る */}
+          <div style={{ marginTop: 12, borderTop: "1px solid #c7d2fe", paddingTop: 10 }}>
+            <p style={{ fontSize: 13, color: "#4338ca", margin: "0 0 6px" }}>{t("c_voice_paste_desc")}</p>
+            <textarea
+              value={voicePaste}
+              onChange={(e) => setVoicePaste(e.target.value)}
+              placeholder={t("c_voice_paste_ph")}
+              rows={3}
+              style={{ width: "100%", boxSizing: "border-box", border: "1px solid #c7d2fe", borderRadius: 8, padding: 8, fontSize: 13 }}
+            />
+            <button
+              onClick={() => void addVoiceMemoText()}
+              disabled={plaudBusy || !voicePaste.trim()}
+              style={{ marginTop: 6, padding: "6px 14px", background: "#4f46e5", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+            >
+              {plaudBusy ? t("c_loading_progress") : t("c_voice_paste_btn")}
+            </button>
+          </div>
         </Fold>
       )}
 

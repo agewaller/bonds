@@ -197,6 +197,15 @@ import {
   type GmailHeaderMessage,
   type DriveFile,
 } from "./lib/google.js";
+import {
+  buildDeviceClient,
+  signDeviceState,
+  verifyDeviceState,
+  isDeviceProvider,
+  DEVICE_PROVIDERS,
+  type DeviceClient,
+  type DeviceProvider,
+} from "./lib/devices.js";
 
 export type AppDeps = {
   prisma: ExtendedPrismaClient;
@@ -207,6 +216,7 @@ export type AppDeps = {
   search?: SearchFn | null;
   google?: GoogleClient | null;
   stripe?: StripeClient | null;
+  devices?: DeviceClient | null;
 };
 
 const SUBJECT_TYPES = ["politician", "executive", "other"] as const;
@@ -233,6 +243,8 @@ export function createApp(deps: AppDeps) {
   const google = deps.google !== undefined ? deps.google : buildGoogleClient();
   // Stripe (時間の出品の決済)。STRIPE_SECRET_KEY 未設定なら null = 有料出品は「準備中」に縮退
   const stripe = deps.stripe !== undefined ? deps.stripe : buildStripeClient();
+  // デバイス連携 (Oura/Withings)。env 未設定のプロバイダは「準備中」に縮退
+  const devices = deps.devices !== undefined ? deps.devices : buildDeviceClient();
   // ICS 購読 URL の取得器。既定は SSRF 対策つき (https のみ・内部IP拒否・リダイレクト手動
   // 再検証・サイズ上限・タイムアウト)。ゲストが指定できる公開経路からも呼ばれるため必須。
   const fetchText = deps.fetchText !== undefined ? deps.fetchText : (url: string) => safeFetchText(url);
@@ -367,6 +379,12 @@ export function createApp(deps: AppDeps) {
   app.use("/api/google/status", requireUser);
   app.use("/api/google/auth-url", requireUser);
   app.use("/api/google/sync", requireUser);
+  // デバイス連携 (Oura/Withings): callback だけは未認証 (state 署名で本人性を担保)
+  app.use("/api/devices/status", requireUser);
+  app.use("/api/devices/:provider/auth-url", requireUser);
+  app.use("/api/devices/:provider/sync", requireUser);
+  app.use("/api/devices/:provider/disconnect", requireUser);
+  app.use("/api/health/*", requireUser);
 
   // ---------------- 管理: モデル設定 (cares person-eval-config と同形) ----------------
 
@@ -7277,6 +7295,48 @@ export function createApp(deps: AppDeps) {
     });
   });
 
+  // 録音メモの手動追加 — Plaud 以外の取り込み口。どのレコーダー・文字起こしアプリの
+  // テキストでも、貼り付ければ同じ「タスクと課題」パイプラインに乗る (AI 不可でもメモは残る)。
+  app.post("/api/relationship/voice-memos", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const b = await c.req.json<{ subject?: string; text?: string }>().catch(() => ({}) as { subject?: string; text?: string });
+    const text = (typeof b.text === "string" ? b.text : "").trim().slice(0, 20000);
+    if (!text) return c.json({ error: "text_required", detail: "文字起こしの本文を貼り付けてください" }, 400);
+    const subject = (typeof b.subject === "string" ? b.subject : "").trim().slice(0, 200) || null;
+
+    let summary: string | null = null;
+    let tasks: PlaudTask[] | null = null;
+    let digested = false;
+    if (generate) {
+      const r = await runRelationshipAi(
+        "plaud_tasks",
+        '出力は JSON オブジェクト 1 個だけ: {"summary": "...", "tasks": [{"text": "...", "kind": "task|issue"}]}',
+        text.slice(0, 12000),
+        "plaud_tasks",
+        "ja",
+        { actor: actorOf(c) },
+      );
+      if (r.ok) {
+        const digest = validatePlaudDigest(extractJson(r.text));
+        summary = digest.summary || null;
+        tasks = digest.tasks;
+        digested = true;
+      }
+    }
+    const memo = await prisma.voiceMemo.create({
+      data: {
+        ownerUid,
+        gmailMessageId: `manual:${randomUUID()}`,
+        subject,
+        receivedAt: new Date(),
+        content: text,
+        summary,
+        tasks: tasks ? JSON.stringify(tasks) : null,
+      },
+    });
+    return c.json({ id: memo.id, digested });
+  });
+
   // タスクの済み印・メモの片付け (done / dismissed / new)。1 件単位で操作できる = データ主権。
   app.put("/api/relationship/voice-memos/:id", async (c) => {
     const memo = await prisma.voiceMemo.findFirst({ where: { id: c.req.param("id"), ownerUid: c.get("ownerUid") } });
@@ -7482,6 +7542,198 @@ export function createApp(deps: AppDeps) {
       } catch {
         failed++;
       }
+    }
+    return c.json({ picked: conns.length, synced, failed });
+  });
+
+  // ============ デバイス連携 (Oura / Withings) — 共通取り込み基盤 (LMS 構想) ============
+  // 接続とデータの正本は bonds。読み手は cares / LMS (GET /api/health/metrics)。
+  // env 未設定のプロバイダは「準備中」。健康データは要配慮情報のため payload を暗号化。
+
+  const DEVICE_SYNC_LOOKBACK_DAYS = 14;
+
+  const dayString = (d: Date) => {
+    // TZ (Asia/Tokyo) のローカル日付で YYYY-MM-DD
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${dd}`;
+  };
+
+  const runDeviceSync = async (
+    ownerUid: string,
+    provider: DeviceProvider,
+  ): Promise<{ ok: true; fetched: number; saved: number } | { ok: false; status: 400 | 502 | 503; error: string; detail: string }> => {
+    if (!devices || !devices.ready(provider)) {
+      return { ok: false, status: 503, error: "unavailable", detail: "この連携は準備中です" };
+    }
+    const conn = await prisma.deviceConnection.findUnique({
+      where: { ownerUid_provider: { ownerUid, provider } },
+    });
+    if (!conn) return { ok: false, status: 400, error: "not_connected", detail: "先に設定からつないでください" };
+    try {
+      const tokens = await devices.refreshAccessToken(provider, conn.refreshToken);
+      const end = new Date();
+      const start = new Date(end.getTime() - DEVICE_SYNC_LOOKBACK_DAYS * 24 * 3600 * 1000);
+      const metrics = await devices.fetchDaily(provider, tokens, dayString(start), dayString(end));
+      let saved = 0;
+      for (const m of metrics) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(m.day)) continue; // 形式の壊れた日付は捨てる
+        const day = new Date(`${m.day}T00:00:00Z`);
+        await prisma.healthMetric.upsert({
+          where: { ownerUid_provider_kind_day: { ownerUid, provider, kind: m.kind, day } },
+          create: { ownerUid, provider, kind: m.kind, day, payload: JSON.stringify(m.payload) },
+          update: { payload: JSON.stringify(m.payload) },
+        });
+        saved++;
+      }
+      await prisma.deviceConnection.update({
+        where: { id: conn.id },
+        data: {
+          refreshToken: tokens.refreshToken,
+          accessToken: tokens.accessToken,
+          externalUserId: tokens.externalUserId ?? conn.externalUserId,
+          lastSyncAt: new Date(),
+          lastSyncNote: `${saved}件`,
+        },
+      });
+      return { ok: true, fetched: metrics.length, saved };
+    } catch (err) {
+      console.error(
+        JSON.stringify({ event: "device_sync_failed", provider, detail: err instanceof Error ? err.message : String(err) }),
+      );
+      return { ok: false, status: 502, error: "sync_failed", detail: "いまは取り込めませんでした。時間をおいてお試しください" };
+    }
+  };
+
+  app.get("/api/devices/status", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const conns = await prisma.deviceConnection.findMany({ where: { ownerUid } });
+    return c.json({
+      providers: DEVICE_PROVIDERS.map((p) => {
+        const conn = conns.find((x) => x.provider === p);
+        return {
+          provider: p,
+          ready: Boolean(devices?.ready(p)),
+          connected: Boolean(conn),
+          lastSyncAt: conn?.lastSyncAt ?? null,
+          lastSyncNote: conn?.lastSyncNote ?? null,
+        };
+      }),
+    });
+  });
+
+  app.get("/api/devices/:provider/auth-url", async (c) => {
+    const provider = c.req.param("provider");
+    if (!isDeviceProvider(provider)) return c.json({ error: "unknown_provider" }, 404);
+    if (!devices || !devices.ready(provider)) {
+      return c.json({ error: "unavailable", detail: "この連携は準備中です" }, 503);
+    }
+    const state = signDeviceState(`${c.get("ownerUid")}|${provider}`, Math.floor(Date.now() / 1000));
+    if (!state) return c.json({ error: "unavailable", detail: "この連携は準備中です" }, 503);
+    return c.json({ url: devices.authUrl(provider, state) });
+  });
+
+  // OAuth コールバック (未認証)。state の署名で「誰の・どのプロバイダの接続か」を確かめてから保存。
+  app.get("/api/devices/callback", async (c) => {
+    const back = (q: string) => c.redirect(`${webBaseUrl()}/settings?device=${q}`, 302);
+    if (!devices) return back("error");
+    const subject = verifyDeviceState(c.req.query("state"), Math.floor(Date.now() / 1000));
+    const code = c.req.query("code");
+    if (!subject || !code) return back("error");
+    const sep = subject.lastIndexOf("|");
+    const ownerUid = subject.slice(0, sep);
+    const provider = subject.slice(sep + 1);
+    if (!ownerUid || !isDeviceProvider(provider)) return back("error");
+    try {
+      const t = await devices.exchangeCode(provider, code);
+      await prisma.deviceConnection.upsert({
+        where: { ownerUid_provider: { ownerUid, provider } },
+        create: {
+          ownerUid,
+          provider,
+          refreshToken: t.refreshToken,
+          accessToken: t.accessToken,
+          externalUserId: t.externalUserId ?? null,
+          scopes: t.scopes ?? null,
+        },
+        update: {
+          refreshToken: t.refreshToken,
+          accessToken: t.accessToken,
+          externalUserId: t.externalUserId ?? null,
+          scopes: t.scopes ?? null,
+        },
+      });
+      return back("connected");
+    } catch (err) {
+      console.error(
+        JSON.stringify({ event: "device_callback_failed", provider, detail: err instanceof Error ? err.message : String(err) }),
+      );
+      return back("error");
+    }
+  });
+
+  app.post("/api/devices/:provider/sync", async (c) => {
+    const provider = c.req.param("provider");
+    if (!isDeviceProvider(provider)) return c.json({ error: "unknown_provider" }, 404);
+    const r = await runDeviceSync(c.get("ownerUid"), provider);
+    if (!r.ok) return c.json({ error: r.error, detail: r.detail }, r.status);
+    return c.json(r);
+  });
+
+  app.post("/api/devices/:provider/disconnect", async (c) => {
+    const provider = c.req.param("provider");
+    if (!isDeviceProvider(provider)) return c.json({ error: "unknown_provider" }, 404);
+    await prisma.deviceConnection.deleteMany({ where: { ownerUid: c.get("ownerUid"), provider } });
+    return c.json({ disconnected: true }); // 蓄積済みの health_metrics は残す (データ主権: 消すのは本人の明示操作で)
+  });
+
+  // 蓄積した健康データの読み出し (cares / LMS がここを読む。復号して返す)
+  app.get("/api/health/metrics", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const from = c.req.query("from");
+    const to = c.req.query("to");
+    const provider = c.req.query("provider");
+    const kind = c.req.query("kind");
+    const where: Record<string, unknown> = { ownerUid };
+    if (provider) where.provider = provider;
+    if (kind) where.kind = kind;
+    if (from || to) {
+      where.day = {
+        ...(from && /^\d{4}-\d{2}-\d{2}$/.test(from) ? { gte: new Date(`${from}T00:00:00Z`) } : {}),
+        ...(to && /^\d{4}-\d{2}-\d{2}$/.test(to) ? { lte: new Date(`${to}T00:00:00Z`) } : {}),
+      };
+    }
+    const rows = await prisma.healthMetric.findMany({
+      where: where as never,
+      orderBy: [{ day: "desc" }],
+      take: 400,
+    });
+    return c.json({
+      metrics: rows.map((r) => ({
+        provider: r.provider,
+        kind: r.kind,
+        day: r.day.toISOString().slice(0, 10),
+        payload: JSON.parse(r.payload) as unknown,
+      })),
+    });
+  });
+
+  // 毎時 sweep: 全接続を順に同期 (少数ずつ・古い順)
+  app.post("/api/admin/devices/sync-all", async (c) => {
+    if (!devices) return c.json({ picked: 0, synced: 0, failed: 0, note: "not_configured" });
+    const batch = Math.min(20, Math.max(1, Number(c.req.query("batch")) || 5));
+    const conns = await prisma.deviceConnection.findMany({
+      orderBy: [{ lastSyncAt: { sort: "asc", nulls: "first" } }],
+      take: batch,
+    });
+    let synced = 0;
+    let failed = 0;
+    for (const conn of conns) {
+      if (!isDeviceProvider(conn.provider)) continue;
+      const r = await runDeviceSync(conn.ownerUid, conn.provider);
+      if (r.ok) synced++;
+      else failed++;
     }
     return c.json({ picked: conns.length, synced, failed });
   });

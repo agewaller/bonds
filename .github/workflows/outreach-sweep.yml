@@ -59,3 +59,6 @@ jobs:
           # 公人評価の自動下ごしらえ (公人らしい肩書きの方を候補確認→一意なら自動登録・曖昧は保留。評価は 1 sweep 1 人)
           curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/contacts/dd-scan?batch=2" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}" || true
+          # デバイス連携 (Oura/Withings) の日次健康データ同期 (接続のある人だけ・古い順に少数ずつ)
+          curl -fsS -X POST "${{ vars.BONDS_API_URL }}/api/admin/devices/sync-all?batch=5" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}" || true

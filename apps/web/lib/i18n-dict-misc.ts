@@ -322,6 +322,20 @@ export const DICT_MISC: Record<string, DictEntry> = {
 
   // ---- 設定 (/settings) ----
   m_set_title: { ja: "設定", en: "Settings" },
+  m_set_devices: { ja: "からだの記録のデバイス連携", en: "Body-data device connections" },
+  m_set_devices_desc: {
+    ja: "指輪（Oura リング）やベッドのマット（Withings）をつなぐと、眠りや体調の記録が毎日自動で集まります。集まった記録は健康の道具（健康日記など）でそのまま使えます。",
+    en: "Connect your ring (Oura) or bed sensor (Withings), and your sleep and body records gather automatically every day. They are shared with your health tools, ready to use.",
+  },
+  m_set_dev_oura: { ja: "指輪（Oura リング）", en: "Ring (Oura)" },
+  m_set_dev_withings: { ja: "ベッドのマット（Withings）", en: "Bed sensor (Withings)" },
+  m_set_dev_connect: { ja: "つなぐ", en: "Connect" },
+  m_set_dev_connected: { ja: "つながっています", en: "Connected" },
+  m_set_dev_unavailable: { ja: "準備中です", en: "Coming soon" },
+  m_set_dev_sync: { ja: "いま取り込む", en: "Sync now" },
+  m_set_dev_disconnect: { ja: "外す", en: "Disconnect" },
+  m_set_dev_synced: { ja: "取り込みました", en: "Synced" },
+  m_set_dev_last: { ja: "前回の取り込み", en: "Last sync" },
   m_set_google: { ja: "Google 連携", en: "Google connection" },
   m_set_google_desc: {
     ja: "連絡先（アドレス帳）とカレンダーを読み取り専用でつなぎ、お相手を連絡帳へ自動でまとめます。 つなぐと連絡帳の画面に戻り、その場で取り込みが始まります。",

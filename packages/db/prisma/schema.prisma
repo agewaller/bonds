@@ -417,6 +417,42 @@ model GoogleConnection {
   @@map("google_connections")
 }
 
+/// デバイス連携 (Oura / Withings 等) — 共通取り込み基盤。トークンは暗号化。
+/// 使うのは cares 等の各プロダクトだが、格納は bonds (接続ハブ) に一本化する。
+model DeviceConnection {
+  id             String    @id @default(uuid())
+  ownerUid       String    @map("owner_uid")
+  provider       String // oura | withings
+  refreshToken   String    @map("refresh_token") // 暗号化
+  accessToken    String?   @map("access_token") // 暗号化 (短命。無ければ refresh で取り直す)
+  externalUserId String?   @map("external_user_id") // Withings の userid 等
+  scopes         String?
+  lastSyncAt     DateTime? @map("last_sync_at")
+  lastSyncNote   String?   @map("last_sync_note")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@unique([ownerUid, provider])
+  @@map("device_connections")
+}
+
+/// デバイス由来の日次健康データ (要配慮情報のため中身は暗号化 JSON)。
+/// provider×kind×day で冪等 upsert。読み手は cares / LMS (API 経由)。
+model HealthMetric {
+  id        String   @id @default(uuid())
+  ownerUid  String   @map("owner_uid")
+  provider  String // oura | withings
+  kind      String // sleep | readiness | activity など
+  day       DateTime @db.Date
+  payload   String // 暗号化 JSON
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([ownerUid, provider, kind, day])
+  @@index([ownerUid, day])
+  @@map("health_metrics")
+}
+
 /// 監査ログ (フェーズ5)。書き込み系 API の who/what/when を記録する。
 model AuditLog {
   id        String   @id @default(uuid())
