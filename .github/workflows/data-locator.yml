@@ -43,3 +43,7 @@ jobs:
           echo "== /api/admin/mailer-status?probe=1 (メール送信の点検・オーナー宛に1通だけテスト送信) =="
           curl -sS "${{ vars.BONDS_API_URL }}/api/admin/mailer-status?probe=1" \
             -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"
+          echo
+          echo "== /api/admin/plaud-status (録音メモ取り込みの点検・どの段で止まっているか) =="
+          curl -sS "${{ vars.BONDS_API_URL }}/api/admin/plaud-status" \
+            -H "x-admin-token: ${{ secrets.BONDS_ADMIN_TOKEN }}"

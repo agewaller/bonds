@@ -145,6 +145,25 @@ describe("録音メモの読み取りと整理", () => {
     expect(digest.memo.tasks).toHaveLength(2);
   });
 
+  it("plaud-status の点検口が、どの段で止まっているかを返す", async () => {
+    const app = createApp({ prisma, generate: null, google: fakeGoogle });
+    // 未接続
+    const none = await (await app.request("/api/admin/plaud-status", { headers: H })).json();
+    expect(none.note).toBe("google_not_connected");
+    // 許可なし
+    await connect("openid email");
+    const noScope = await (await app.request("/api/admin/plaud-status", { headers: H })).json();
+    expect(noScope.note).toBe("mailread_scope_missing");
+    // 許可あり → Gmail の件数と添付の形が見える
+    await prisma.googleConnection.update({
+      where: { ownerUid: "owner" },
+      data: { scopes: "openid email https://www.googleapis.com/auth/gmail.readonly" },
+    });
+    const ok = await (await app.request("/api/admin/plaud-status", { headers: H })).json();
+    expect(ok.gmail.strictQuery).toBe(1);
+    expect(ok.samples[0].textAttachmentsFound).toContain("transcript.txt");
+  });
+
   it("毎時 sweep は mailread 許可のある接続だけを同期する", async () => {
     const app = createApp({ prisma, generate: fakeGenerate, google: fakeGoogle });
     await connect("https://www.googleapis.com/auth/gmail.readonly");

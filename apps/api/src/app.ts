@@ -551,6 +551,66 @@ export function createApp(deps: AppDeps) {
     });
   });
 
+  // 録音メモ (Plaud) 取り込みの点検 (読み取り専用・オーナー専用)。パイプラインの
+  // どの段で止まっているかを実測で返す: 連携→メール読み取り許可→Gmail 検索→添付の形式→保存済み件数。
+  // 件名・差出人はオーナー自身の受信箱のもの (admin 認証必須)。添付は名前と種類だけで中身は読まない。
+  app.get("/api/admin/plaud-status", async (c) => {
+    const out: Record<string, unknown> = { googleConfigured: !!google };
+    const memoCount = await prisma.voiceMemo.count();
+    const latest = await prisma.voiceMemo.findFirst({ orderBy: { createdAt: "desc" }, select: { createdAt: true, subject: true } });
+    out.memos = { count: memoCount, latestAt: latest?.createdAt ?? null };
+    if (!google) return c.json(out);
+    const conns = await prisma.googleConnection.findMany();
+    out.connections = conns.map((x) => ({
+      ownerUid: x.ownerUid,
+      scopes: x.scopes,
+      mailRead: hasMailReadScope(x.scopes),
+    }));
+    const conn = conns.find((x) => hasMailReadScope(x.scopes)) ?? conns[0];
+    if (!conn) return c.json({ ...out, note: "google_not_connected" });
+    if (!hasMailReadScope(conn.scopes)) return c.json({ ...out, note: "mailread_scope_missing" });
+    try {
+      const accessToken = await google.refreshAccessToken(conn.refreshToken);
+      const q = async (query: string) => {
+        const r = (await google!.apiGet(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=25&q=${encodeURIComponent(query)}`,
+          accessToken,
+        )) as { messages?: Array<{ id: string }>; resultSizeEstimate?: number };
+        return { count: (r.messages ?? []).length, ids: (r.messages ?? []).map((m) => m.id) };
+      };
+      const strict = await q("from:plaud has:attachment newer_than:90d");
+      const broad = await q("from:plaud newer_than:90d");
+      const domain = await q("from:plaud.ai newer_than:90d");
+      out.gmail = { strictQuery: strict.count, fromPlaud: broad.count, fromPlaudAi: domain.count };
+      // 直近のメールの形 (添付の名前と種類だけ) を最大 3 通ぶん
+      const sampleIds = (strict.count > 0 ? strict.ids : broad.count > 0 ? broad.ids : domain.ids).slice(0, 3);
+      const samples: Array<Record<string, unknown>> = [];
+      for (const id of sampleIds) {
+        const msg = (await google
+          .apiGet(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, accessToken)
+          .catch(() => null)) as { payload?: GmailPart & { headers?: Array<{ name?: string; value?: string }> } } | null;
+        if (!msg?.payload) continue;
+        const parts: Array<{ filename: string; mimeType: string }> = [];
+        const walk = (p: GmailPart | undefined) => {
+          if (!p) return;
+          if ((p.filename ?? "").trim()) parts.push({ filename: p.filename!, mimeType: p.mimeType ?? "" });
+          for (const ch of p.parts ?? []) walk(ch);
+        };
+        walk(msg.payload);
+        samples.push({
+          from: headerValue(msg.payload.headers, "From").slice(0, 80),
+          subject: headerValue(msg.payload.headers, "Subject").slice(0, 80),
+          attachments: parts,
+          textAttachmentsFound: findTextAttachments(msg.payload).map((a) => a.filename),
+        });
+      }
+      out.samples = samples;
+    } catch (e) {
+      out.gmailError = (e instanceof Error ? e.message : String(e)).slice(0, 300);
+    }
+    return c.json(out);
+  });
+
   // 公開情報の検索 (Tavily) と AI の設定状況の点検 (読み取り専用・秘密は返さない)。
   // ?probe=1 のときだけ実際に 1 回だけ検索して、鍵が本当に有効か (件数が返るか) を確かめる。
   app.get("/api/admin/search-status", async (c) => {
