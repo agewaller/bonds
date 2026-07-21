@@ -107,6 +107,21 @@
   table.price .std{background:color-mix(in srgb, var(--health) 6%, transparent)}
   table.price .note-cell{font-size:12.5px; color:var(--sub)}
   .pricing .foot{text-align:center; font-size:12.5px; color:var(--sub); margin-top:12px}
+  .contact{max-width:560px; margin:56px auto 0; padding:0 8px}
+  .contact h3{font-size:19px; font-weight:600; letter-spacing:.06em; text-align:center; margin-bottom:8px}
+  .contact .sub{text-align:center; font-size:14px; color:var(--sub); margin-bottom:20px}
+  .contact label{display:block; font-size:13px; color:var(--sub); margin:14px 0 6px}
+  .contact input, .contact textarea{
+    width:100%; box-sizing:border-box; font:inherit; font-size:14px; color:var(--fg);
+    background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 12px;
+  }
+  .contact textarea{min-height:120px; resize:vertical}
+  .contact button{
+    display:block; margin:20px auto 0; font:inherit; font-size:14px; letter-spacing:.04em;
+    background:var(--fg); color:var(--bg); border:none; border-radius:999px; padding:11px 30px; cursor:pointer;
+  }
+  .contact button:hover{opacity:.85}
+  .contact .note{text-align:center; font-size:12.5px; color:var(--sub); margin-top:12px}
 
   .connect{
     margin:52px 0 0; padding:36px 32px; text-align:center;
@@ -199,7 +214,7 @@
       <h2 class="serif" data-t="n6">バリュエーションマトリクス</h2>
       <p class="en">ValuationMatrix</p>
       <p class="mission" data-t="m6">株価ではなく、価値を見る。</p>
-      <p class="desc" data-t="d6">有価証券報告書などの開示の一次情報を、比較できる形に整えるところから作った企業分析サイトです。会社ごと・年度ごと・会計基準ごとにばらばらな財務の科目を統一の物差しに載せているので、どの会社も同じ土俵で正しく比べられます。財務の実態、事業の価値、経営の質までを一続きに。じっくり選んで長く持つ投資のための道具です。</p>
+      <p class="desc" data-t="d6">会社の「次の一手」まで織り込む、戦略オプション付きの企業価値評価（DCF）が主役です。そこに、会計の誠実さ、経営者の評価、事業の本質的な強さといった、数字の外側を見る他にはない8つの定性分析を重ねて、会社を立体的に評価します。じっくり選んで長く持つ投資のための道具です。</p>
       <p class="cta"><a href="https://next.valuationmatrix.com/" target="_blank" rel="noopener" data-t="c6">バリュエーションマトリクスをひらく</a></p>
     </section>
 
@@ -276,6 +291,21 @@
     <h3 class="serif" data-t="ch3">五つの道具、ひとつのあなた。</h3>
     <p data-t="cp">それぞれのサービスは、ふだんお使いの Google アカウントでログインできます。同じアカウントで使うほど、道具どうしの連携が深まり、あなたの「人生のカルテ」がひとつにそろっていきます（連携は順次ひろがります）。記録はあなたのものです。いつでも書き出せて、いつでも消せます。</p>
   </section>
+
+  <section class="contact" id="contact">
+    <h3 class="serif" data-t="ct_h">お問い合わせ</h3>
+    <p class="sub" data-t="ct_sub">ご質問・ご相談・お申し込みは、こちらからどうぞ。</p>
+    <form id="contact-form">
+      <label for="ct-name" data-t="ct_name">お名前</label>
+      <input id="ct-name" name="name" type="text" autocomplete="name">
+      <label for="ct-mail" data-t="ct_email">ご連絡先メールアドレス</label>
+      <input id="ct-mail" name="email" type="email" autocomplete="email">
+      <label for="ct-msg" data-t="ct_msg">ご用件</label>
+      <textarea id="ct-msg" name="message" required></textarea>
+      <button type="submit" data-t="ct_send">メールを作成する</button>
+    </form>
+    <p class="note" data-t="ct_note">ボタンを押すと、お使いのメールアプリが宛先入りで開きます。直接お送りいただく場合は info@bluemarl.in へどうぞ。</p>
+  </section>
 </main>
 
 <footer>
@@ -310,11 +340,18 @@
     c5:"See bonds",
     t6:"VI&nbsp;&nbsp;WEALTH — money", n6:"ValuationMatrix",
     m6:"See value, not price.",
-    d6:"A company-analysis platform built from the ground up on primary disclosures — annual securities reports and filings — normalized until they can truly be compared. Because line items that differ by company, by year and by accounting standard are mapped onto one common yardstick, every company stands on the same ground. Financial reality, business value and quality of management, in one continuous read. A tool for choosing carefully and holding long.",
+    d6:"At its center is DCF valuation with strategic options — pricing a company all the way through its next move. Layered on top are eight original qualitative analyses found nowhere else: accounting integrity, the caliber of management, the essential strength of the business. Together they give you a three-dimensional view. A tool for choosing carefully and holding long.",
     c6:"Open ValuationMatrix",
     cap_h:"The more you use them, the more capital you build.",
     cap_sub:"Your daily records and exchanges are not chores that vanish. They are capital that accrues to you.",
     cap_src:"And the ground from which all of these grow is a settled mind. ZenTrack tends that soil.",
+    ct_h:"Contact",
+    ct_sub:"Questions, requests, sign-ups — we read every message.",
+    ct_name:"Your name",
+    ct_email:"Your email address",
+    ct_msg:"Message",
+    ct_send:"Compose email",
+    ct_note:"The button opens your usual mail app with the address filled in. You can also write to us directly at info@bluemarl.in.",
     cap1_n:"Physical capital \u2014 the asset of health",
     cap1_d:"An accumulating record of your condition protects and grows your body, the first asset you own and the ground of everything else.",
     cap1_v:"Accrues through Health Diary",
@@ -375,6 +412,19 @@
   try { saved = localStorage.getItem('bmp-lang'); } catch(e){}
   var initial = saved || ((navigator.language || '').toLowerCase().indexOf('ja') === 0 ? 'ja' : 'en');
   if (initial === 'en') apply('en');
+
+  // 問い合わせフォーム: 静的ページのため、宛先入りのメール作成画面を開く方式
+  var form = document.getElementById('contact-form');
+  if (form) form.addEventListener('submit', function(e){
+    e.preventDefault();
+    var name = document.getElementById('ct-name').value.trim();
+    var mail = document.getElementById('ct-mail').value.trim();
+    var msg = document.getElementById('ct-msg').value.trim();
+    var body = msg + '\n\n' + (name ? name + '\n' : '') + (mail || '');
+    location.href = 'mailto:info@bluemarl.in'
+      + '?subject=' + encodeURIComponent('お問い合わせ / Inquiry')
+      + '&body=' + encodeURIComponent(body);
+  });
 })();
 </script>
 
