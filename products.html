@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>人生のカルテ — ブルー・マーリン・パートナーズのプロダクト</title>
+<meta name="description" content="健康・意識・才能・関係・資産。人生の五つの層をひとつずつ支える道具たち。ひとつのGoogleアカウントでつながります。">
+<style>
+  :root{
+    --bg:#faf9f6; --fg:#26221c; --sub:#6b6459; --card:#ffffff; --line:#e8e4dc;
+    --health:#0f9d76; --mind:#6C63FF; --talent:#d99000; --ties:#d84b57; --money:#b06e10;
+    --radius:14px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#171512; --fg:#ece7de; --sub:#a39a8c; --card:#211e1a; --line:#37322a; }
+  }
+  :root[data-theme="dark"]{ --bg:#171512; --fg:#ece7de; --sub:#a39a8c; --card:#211e1a; --line:#37322a; }
+  :root[data-theme="light"]{ --bg:#faf9f6; --fg:#26221c; --sub:#6b6459; --card:#ffffff; --line:#e8e4dc; }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family:"Hiragino Kaku Gothic ProN","Yu Gothic Medium","Noto Sans JP",system-ui,sans-serif;
+    line-height:1.85; -webkit-font-smoothing:antialiased;
+  }
+  .serif{font-family:"Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif}
+  .wrap{max-width:920px; margin:0 auto; padding:0 24px}
+
+  header{padding:88px 0 40px; text-align:center}
+  .kicker{font-size:13px; letter-spacing:.35em; color:var(--sub); text-transform:uppercase}
+  h1{font-size:clamp(30px,6vw,44px); font-weight:600; letter-spacing:.06em; margin:18px 0 20px}
+  .lede{max-width:600px; margin:0 auto; color:var(--sub); font-size:15.5px}
+
+  .layers{display:flex; justify-content:center; gap:6px; flex-wrap:wrap; margin:44px auto 8px}
+  .layers span{
+    font-size:13px; letter-spacing:.14em; padding:7px 16px; border-radius:999px;
+    border:1px solid var(--line); color:var(--sub); background:var(--card);
+  }
+  .layers .arrow{border:none; background:none; padding:7px 0; color:var(--sub); letter-spacing:0}
+  .layers b{font-weight:600}
+  .layers .l1 b{color:var(--health)} .layers .l2 b{color:var(--mind)}
+  .layers .l3 b{color:var(--talent)} .layers .l4 b{color:var(--ties)} .layers .l5 b{color:var(--money)}
+  .layers .l0 b{color:var(--sub)}
+
+  main{padding:40px 0 8px}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:20px}
+  @media (max-width:760px){ .grid{grid-template-columns:1fr} }
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:30px 28px 26px; display:flex; flex-direction:column; gap:0;
+    border-top:3px solid var(--ac);
+  }
+  .card.full{grid-column:1 / -1}
+  .tag{font-size:12px; letter-spacing:.22em; color:var(--ac); font-weight:600}
+  .card h2{font-size:22px; font-weight:600; letter-spacing:.04em; margin:10px 0 2px}
+  .card .en{font-size:12.5px; color:var(--sub); letter-spacing:.08em; margin-bottom:14px}
+  .mission{font-size:15.5px; font-weight:600; margin-bottom:10px}
+  .desc{font-size:14px; color:var(--sub); flex:1}
+  .cta{margin-top:20px}
+  .cta a{
+    display:inline-block; font-size:14px; font-weight:600; text-decoration:none;
+    color:var(--ac); border:1.5px solid var(--ac); border-radius:999px; padding:8px 22px;
+    transition:opacity .15s;
+  }
+  .cta a:hover{opacity:.7}
+  .cta .soon{
+    display:inline-block; font-size:14px; color:var(--sub);
+    border:1.5px dashed var(--line); border-radius:999px; padding:8px 22px;
+  }
+  .c-health{--ac:var(--health)} .c-mind{--ac:var(--mind)} .c-talent{--ac:var(--talent)}
+  .c-ties{--ac:var(--ties)} .c-money{--ac:var(--money)}
+  .interlude{--ac:var(--line); border-top-style:dashed; padding:18px 28px}
+  .interlude p{font-size:13.5px; color:var(--sub)}
+  .interlude .num{font-weight:600; letter-spacing:.22em; color:var(--fg)}
+
+  .connect{
+    margin:52px 0 0; padding:36px 32px; text-align:center;
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+  }
+  .connect h3{font-size:19px; font-weight:600; letter-spacing:.06em; margin-bottom:12px}
+  .connect p{max-width:560px; margin:0 auto; font-size:14px; color:var(--sub)}
+  .gmark{
+    display:inline-flex; align-items:center; gap:10px; margin-bottom:16px;
+    font-size:14px; font-weight:600; color:var(--fg);
+    border:1px solid var(--line); border-radius:999px; padding:9px 20px;
+  }
+  .gmark svg{width:18px; height:18px}
+
+  footer{padding:56px 0 64px; text-align:center; color:var(--sub); font-size:13px}
+  footer a{color:var(--sub)}
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <p class="kicker">Blue Marlin Partners</p>
+  <h1 class="serif">人生のカルテを、そろえる。</h1>
+  <p class="lede">意識がととのうと、からだが健やかになる。<br>
+  健やかさは時間を生み、時間は誰かへの貢献にかわる。<br>
+  貢献は信用というつながりを育て、信用はやがて資産になる。<br>
+  私たちはこの流れを信じて、それぞれの段を支える道具を作っています。<br>
+  どれも単体で使えて、同じアカウントでつながります。</p>
+  <div class="layers">
+    <span class="l2"><b>意識</b></span>
+    <span class="arrow">→</span>
+    <span class="l1"><b>健康</b></span>
+    <span class="arrow">→</span>
+    <span class="l0"><b>時間</b></span>
+    <span class="arrow">→</span>
+    <span class="l3"><b>貢献</b></span>
+    <span class="arrow">→</span>
+    <span class="l4"><b>信用</b>　関係</span>
+    <span class="arrow">→</span>
+    <span class="l5"><b>資産</b>　お金</span>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="grid">
+
+    <section class="card c-mind">
+      <p class="tag">一　意識</p>
+      <h2 class="serif">禅トラック</h2>
+      <p class="en">ZenTrack</p>
+      <p class="mission">こころの状態を、毎日おなじ場所から眺める。</p>
+      <p class="desc">すべてはここから始まります。意識の状態を七つの層で定点観測し、変化を見えるようにします。坐禅や日記、音声の記録とつないで、気分ではなく「観測」でこころを整える習慣をつくります。</p>
+      <p class="cta"><a href="https://zentrack-frontend-i1zp.onrender.com/analysis-log" target="_blank" rel="noopener">禅トラックをひらく</a></p>
+    </section>
+
+    <section class="card c-health">
+      <p class="tag">二　健康</p>
+      <h2 class="serif">健康日記</h2>
+      <p class="en">cares</p>
+      <p class="mission">病気と向き合う毎日を、ひとりで抱えない。</p>
+      <p class="desc">ととのった意識は、からだに向き合う力になります。体調や症状を毎日すこしずつ記録すると、蓄積から気づきが返ってきます。診察の前には、経過と質問事項を医師に伝わる形に自動でまとめられます。慢性の不調と長くつき合う方のための、体調の相棒です。</p>
+      <p class="cta"><a href="https://cares.advisers.jp" target="_blank" rel="noopener">健康日記をひらく</a></p>
+    </section>
+
+    <div class="card interlude full">
+      <p><span class="num">三　時間</span>　ととのった意識と健やかなからだが、あなたの時間をつくります。時間そのものを分かち合う道具は、いま仕込んでいるところです。</p>
+    </div>
+
+    <section class="card c-talent">
+      <p class="tag">四　貢献 ─ 才能を活かす</p>
+      <h2 class="serif">ジーニアスファインダー</h2>
+      <p class="en">Genius Finder</p>
+      <p class="mission">自分だけの天才性を見つけ、貢献にかえる。</p>
+      <p class="desc">健やかさが生んだ時間を、何に使うか。生まれ持った特性=天才性を診断と対話で掘り当て、それが最も活きる形で誰かの役に立つ道筋を組み直します。書籍から生まれ、六千人以上が自分の入口を見つけたメソッドです。</p>
+      <p class="cta"><a href="https://geniusfinder.me/" target="_blank" rel="noopener">診断をうける</a></p>
+    </section>
+
+    <section class="card c-ties">
+      <p class="tag">五　信用 ─ 関係</p>
+      <h2 class="serif">bonds</h2>
+      <p class="en">bonds</p>
+      <p class="mission">大切な人との縁を、途切れさせない。</p>
+      <p class="desc">貢献の積み重ねは、信用というつながりになって返ってきます。連絡先とやりとりの記録から、いま連絡すべき人と、ちょうどよい距離感を教えてくれます。時間や知恵やモノを分かち合う申し出も、リンクひとつで。縁を人生の資産として育てる道具です。</p>
+      <p class="cta"><a href="https://agewaller.github.io/bonds/" target="_blank" rel="noopener">bonds をみる</a></p>
+    </section>
+
+    <section class="card c-money full">
+      <p class="tag">六　資産 ─ お金</p>
+      <h2 class="serif">バリュエーションマトリクス</h2>
+      <p class="en">ValuationMatrix</p>
+      <p class="mission">株価ではなく、価値を見る。</p>
+      <p class="desc">有価証券報告書などの開示の一次情報を、比較できる形に整えるところから作った企業分析サイトです。会社ごと・年度ごと・会計基準ごとにばらばらな財務の科目を統一の物差しに載せているので、どの会社も同じ土俵で正しく比べられます。財務の実態、事業の価値、経営の質までを一続きに。じっくり選んで長く持つ投資のための道具です。</p>
+      <p class="cta"><a href="https://valuationmatrix.com/" target="_blank" rel="noopener">バリュエーションマトリクスをひらく</a></p>
+    </section>
+
+  </div>
+
+  <section class="connect">
+    <p class="gmark">
+      <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+      Google アカウントでつながります
+    </p>
+    <h3 class="serif">五つの道具、ひとつのあなた。</h3>
+    <p>それぞれのサービスは、ふだんお使いの Google アカウントでログインできます。同じアカウントで使うほど、道具どうしの連携が深まり、あなたの「人生のカルテ」がひとつにそろっていきます（連携は順次ひろがります）。記録はあなたのものです。いつでも書き出せて、いつでも消せます。</p>
+  </section>
+</main>
+
+<footer>
+  <p>ブルー・マーリン・パートナーズ株式会社／株式会社シェアーズ</p>
+  <p><a href="https://bluemarl.in" target="_blank" rel="noopener">bluemarl.in</a></p>
+</footer>
+
+</body>
+</html>
