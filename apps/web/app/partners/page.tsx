@@ -3,20 +3,24 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { safeExternalUrl } from "../../lib/safe-url";
+import { t, currentLocale, type Locale } from "../../lib/i18n";
 
 type Partner = { kind: string; name: string; url: string | null; blurb: string | null };
 
-const KIND_LABEL: Record<string, string> = {
-  site: "メディア・サイト",
-  sns: "SNS",
-  association: "団体・協会",
-  community: "コミュニティ",
-  service: "サービス",
-  corp: "企業",
-  other: "その他",
+const KIND_KEY: Record<string, string> = {
+  site: "m_prt_kind_site",
+  association: "m_prt_kind_association",
+  community: "m_prt_kind_community",
+  service: "m_prt_kind_service",
+  corp: "m_prt_kind_corp",
+  other: "m_prt_kind_other",
 };
 
 export default function PartnersPage() {
+  // cookie はクライアントでしか読めないため、初回描画後に反映する
+  const [locale, setLoc] = useState<Locale>("ja");
+  useEffect(() => setLoc(currentLocale()), []);
+  const T = (key: string) => t(key, locale);
   const [partners, setPartners] = useState<Partner[] | null>(null);
 
   useEffect(() => {
@@ -26,18 +30,21 @@ export default function PartnersPage() {
     })();
   }, []);
 
+  // "SNS" は日本語・英語とも同じ表記のため辞書を通さない
+  const kindLabel = (kind: string) => (kind === "sns" ? "SNS" : KIND_KEY[kind] ? T(KIND_KEY[kind]!) : "");
+
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
       <p>
         <Link href="/" style={{ color: "#2563eb" }}>
-          ホームへ戻る
+          {T("back_home")}
         </Link>
       </p>
-      <h1 style={{ fontSize: 24 }}>提携先のご紹介</h1>
-      <p style={{ color: "#64748b" }}>bonds と一緒に、人のつながりを支えてくださっている皆さまです。</p>
-      {partners === null && <p style={{ color: "#64748b" }}>読み込んでいます…</p>}
+      <h1 style={{ fontSize: 24 }}>{T("m_prt_title")}</h1>
+      <p style={{ color: "#64748b" }}>{T("m_prt_intro")}</p>
+      {partners === null && <p style={{ color: "#64748b" }}>{T("m_loading")}</p>}
       {partners !== null && partners.length === 0 && (
-        <p style={{ color: "#64748b" }}>提携先は準備中です。もうしばらくお待ちください。</p>
+        <p style={{ color: "#64748b" }}>{T("m_prt_empty")}</p>
       )}
       <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 8 }}>
         {(partners ?? []).map((p, i) => (
@@ -52,7 +59,7 @@ export default function PartnersPage() {
                   p.name
                 )}
               </span>
-              <small style={{ color: "#64748b", whiteSpace: "nowrap" }}>{KIND_LABEL[p.kind] ?? ""}</small>
+              <small style={{ color: "#64748b", whiteSpace: "nowrap" }}>{kindLabel(p.kind)}</small>
             </div>
             {p.blurb && <p style={{ margin: "6px 0 0", color: "#334155", fontSize: 14 }}>{p.blurb}</p>}
           </li>

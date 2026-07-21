@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import ShareSlotCalendar from "../../../components/ShareSlotCalendar";
+import { t, currentLocale, type Locale } from "../../../lib/i18n";
 
 type ShareInfo = {
   locked: boolean;
@@ -38,11 +39,19 @@ const btn = (primary = true): React.CSSProperties => ({
   cursor: "pointer",
 });
 
-const WD = ["日", "月", "火", "水", "木", "金", "土"];
-const dayLabel = (d: Date) => `${d.getMonth() + 1}月${d.getDate()}日(${WD[d.getDay()]})`;
+const DAY7 = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+const dayLabel = (d: Date, locale: Locale) =>
+  t("m_date_md", locale)
+    .replace("{m}", String(d.getMonth() + 1))
+    .replace("{d}", String(d.getDate()))
+    .replace("{w}", t(`m_wd_${DAY7[d.getDay()]}`, locale));
 const timeLabel = (d: Date) => `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
 
 export default function PublicSchedulePage() {
+  // cookie はクライアントでしか読めないため、初回描画後に反映する
+  const [locale, setLoc] = useState<Locale>("ja");
+  useEffect(() => setLoc(currentLocale()), []);
+  const T = (key: string) => t(key, locale);
   const { key } = useParams<{ key: string }>();
   const [info, setInfo] = useState<ShareInfo | null>(null);
   const [gone, setGone] = useState(false);
@@ -115,10 +124,10 @@ export default function PublicSchedulePage() {
         }
       } else if (g === "full") {
         setShowOverlay(true);
-        setOverlayError("重ねられる人数がいっぱいになっています。リンクを送ってくれた方にご相談ください");
+        setOverlayError(t("m_s_full"));
       } else if (g === "error") {
         setShowOverlay(true);
-        setOverlayError("Google との連携がうまくいきませんでした。もう一度お試しいただくか、下の予定表の貼り付けをお使いください");
+        setOverlayError(t("m_s_gerr"));
       }
       if (g) window.history.replaceState(null, "", window.location.pathname);
     } catch {
@@ -136,7 +145,7 @@ export default function PublicSchedulePage() {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError((body as { detail?: string }).detail ?? "あいことばが違うようです");
+      setError((body as { detail?: string }).detail ?? t("m_s_wrong_pw"));
       return;
     }
     const p = (body as { proof: string }).proof;
@@ -152,11 +161,11 @@ export default function PublicSchedulePage() {
   const joinOverlay = async () => {
     setOverlayError("");
     if (!pName.trim() && !myKey) {
-      setOverlayError("お名前を入れてください");
+      setOverlayError(t("m_s_need_name"));
       return;
     }
     if (!pIcsUrl.trim() && !pIcsText.trim()) {
-      setOverlayError("予定表のアドレスを入れるか、予定表ファイルの中身を貼り付けてください");
+      setOverlayError(t("m_s_need_ics"));
       return;
     }
     setOverlayBusy(true);
@@ -181,7 +190,7 @@ export default function PublicSchedulePage() {
     const body = (await res.json().catch(() => ({}))) as { detail?: string; participantKey?: string };
     setOverlayBusy(false);
     if (!res.ok) {
-      setOverlayError(body.detail ?? "重ねられませんでした。時間をおいてお試しください");
+      setOverlayError(body.detail ?? t("m_s_join_fail"));
       return;
     }
     if (body.participantKey) {
@@ -208,7 +217,7 @@ export default function PublicSchedulePage() {
     const body = (await res.json().catch(() => ({}))) as { url?: string; detail?: string };
     if (!res.ok || !body.url) {
       setOverlayBusy(false);
-      setOverlayError(body.detail ?? "Google との連携がいま使えません。下の予定表の貼り付けをお使いください");
+      setOverlayError(body.detail ?? t("m_s_gunavail"));
       return;
     }
     window.location.href = body.url;
@@ -242,7 +251,7 @@ export default function PublicSchedulePage() {
     const body = await res.json().catch(() => ({}));
     setBusy(false);
     if (!res.ok) {
-      setError((body as { detail?: string }).detail ?? "送信できませんでした。時間をおいてお試しください");
+      setError((body as { detail?: string }).detail ?? t("m_s_submit_fail"));
       if (res.status === 409) {
         setChosen([]);
         await loadInfoAndSlots(proof);
@@ -255,20 +264,20 @@ export default function PublicSchedulePage() {
   if (gone) {
     return (
       <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
-        <p>このページは終了したか、見つかりませんでした。お手数ですが、リンクを送ってくれた方にご確認ください。</p>
+        <p>{T("m_s_gone")}</p>
       </main>
     );
   }
   if (!info) {
     return (
       <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
-        <p>読み込んでいます…</p>
+        <p>{T("m_loading")}</p>
       </main>
     );
   }
 
-  const heading = info.title || "お会いする日時のご相談";
-  const who = info.displayName ? `${info.displayName} より` : "";
+  const heading = info.title || T("m_share_default_title");
+  const who = info.displayName ? `${T("m_s_who_pre")}${info.displayName}${T("m_s_who_post")}` : "";
 
   if (done) {
     return (
@@ -276,8 +285,7 @@ export default function PublicSchedulePage() {
         <h1 style={{ fontSize: 22 }}>{heading}</h1>
         <div style={{ marginTop: 24, padding: "20px 16px", background: "#f0fdf4", borderRadius: 12 }}>
           <p style={{ margin: 0, lineHeight: 1.9 }}>
-            ご都合をお送りいただき、ありがとうございました。内容を確かめて、決まった日時をあらためてご連絡します。
-            このページはもう閉じていただいて大丈夫です。
+            {T("m_s_done")}
           </p>
         </div>
       </main>
@@ -287,19 +295,19 @@ export default function PublicSchedulePage() {
   if (info.locked) {
     return (
       <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
-        <p style={{ color: "#94a3b8", fontSize: 13, letterSpacing: 1 }}>日程のご相談 {who}</p>
+        <p style={{ color: "#94a3b8", fontSize: 13, letterSpacing: 1 }}>{T("m_s_label")} {who}</p>
         <h1 style={{ fontSize: 22 }}>{heading}</h1>
-        <p style={{ lineHeight: 1.9 }}>このページを開くには、お伝えしてある「あいことば」を入れてください。</p>
+        <p style={{ lineHeight: 1.9 }}>{T("m_s_locked")}</p>
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
           <input
             style={{ ...input, flex: 1 }}
             type="password"
-            aria-label="あいことば"
+            aria-label={T("m_pw_aria")}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && void unlock()}
           />
-          <button style={btn()} onClick={() => void unlock()}>開く</button>
+          <button style={btn()} onClick={() => void unlock()}>{T("m_s_open_btn")}</button>
         </div>
         {error && <p role="alert" style={{ color: "#b91c1c", marginTop: 8 }}>{error}</p>}
       </main>
@@ -308,17 +316,16 @@ export default function PublicSchedulePage() {
 
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
-      <p style={{ color: "#94a3b8", fontSize: 13, letterSpacing: 1 }}>日程のご相談 {who}</p>
+      <p style={{ color: "#94a3b8", fontSize: 13, letterSpacing: 1 }}>{T("m_s_label")} {who}</p>
       <h1 style={{ fontSize: 22 }}>{heading}</h1>
       {info.note && <p style={{ lineHeight: 1.9, color: "#334155" }}>{info.note}</p>}
       <p style={{ lineHeight: 1.9, color: "#334155" }}>
-        {info.methodLabel ? `${info.methodLabel}、` : ""}おおよそ {info.slotMinutes ?? 60} 分を考えています。
-        空いている時間から、ご都合のよいものを 3 つまで選んで送ってください。
+        {info.methodLabel ? `${info.methodLabel}、` : ""}{T("m_s_about_p1")}{info.slotMinutes ?? 60}{T("m_s_about_p2")}
       </p>
 
       {basis === "common" && participants.length > 0 && (
         <p style={{ padding: "10px 14px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, color: "#166534", lineHeight: 1.8 }}>
-          {participants.join("さん、")}さんの予定表と重ねた、みんなに共通の空き時間を表示しています。
+          {participants.join(T("m_san_sep"))}{T("m_s_common_suffix")}
         </p>
       )}
 
@@ -328,29 +335,28 @@ export default function PublicSchedulePage() {
           onClick={() => setShowOverlay((v) => !v)}
           style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", padding: 0, fontSize: 14, fontWeight: 600 }}
         >
-          {myKey ? "あなたの予定表を重ねています (更新・取り消し)" : "あなたの予定表を重ねて、おたがいに空いている時間だけにする"}
+          {myKey ? T("m_s_overlay_on") : T("m_s_overlay_off")}
         </button>
         {showOverlay && (
           <div style={{ marginTop: 8 }}>
             <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.8, margin: "0 0 8px" }}>
-              あなたの空き時間と重ねると、おたがいに空いている時間だけが表示されます。
-              見るのは「空いているかどうか」だけで、予定の中身がこのページや相手に伝わることはありません。
+              {T("m_s_overlay_desc")}
             </p>
             {overlayError && <p role="alert" style={{ color: "#b91c1c" }}>{overlayError}</p>}
             {info.googleReady && (
               <div style={{ margin: "8px 0" }}>
                 <button style={btn()} disabled={overlayBusy} onClick={() => void connectGoogle()}>
-                  {overlayBusy ? "つないでいます…" : "Google でカレンダーをつなぐ"}
+                  {overlayBusy ? T("m_s_connecting") : T("m_s_gconnect")}
                 </button>
                 <p style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.7, margin: "6px 0 0" }}>
-                  Google の画面で確認を押すだけで重なります。合い鍵は預かりません。
+                  {T("m_s_gnote")}
                 </p>
               </div>
             )}
             {myKey && (
               <div style={{ margin: "8px 0" }}>
                 <button style={{ ...btn(false), color: "#b91c1c" }} disabled={overlayBusy} onClick={() => void leaveOverlay()}>
-                  重ねるのをやめる (あなたの分を消す)
+                  {T("m_s_leave")}
                 </button>
               </div>
             )}
@@ -359,26 +365,26 @@ export default function PublicSchedulePage() {
               onClick={() => setShowIcs((v) => !v)}
               style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", padding: 0, fontSize: 13, textDecoration: "underline" }}
             >
-              Google をお使いでない方はこちら (予定表のアドレスや貼り付け)
+              {T("m_s_ics_toggle")}
             </button>
             {(showIcs || !info.googleReady) && (
               <div style={{ marginTop: 8 }}>
                 {!myKey && (
                   <label style={{ display: "block", margin: "8px 0" }}>
-                    お名前
-                    <input style={input} value={pName} onChange={(e) => setPName(e.target.value)} aria-label="重ねる方のお名前" />
+                    {T("name_placeholder")}
+                    <input style={input} value={pName} onChange={(e) => setPName(e.target.value)} aria-label={T("m_s_pname_aria")} />
                   </label>
                 )}
                 <label style={{ display: "block", margin: "8px 0" }}>
-                  予定表のアドレス (https で始まる ICS)
-                  <input style={input} value={pIcsUrl} onChange={(e) => setPIcsUrl(e.target.value)} aria-label="予定表のアドレス" placeholder="https://calendar.google.com/.../basic.ics" />
+                  {T("m_ics_url_label")}
+                  <input style={input} value={pIcsUrl} onChange={(e) => setPIcsUrl(e.target.value)} aria-label={T("m_ics_url_aria")} placeholder="https://calendar.google.com/.../basic.ics" />
                 </label>
                 <label style={{ display: "block", margin: "8px 0" }}>
-                  またはカレンダーから書き出した .ics ファイルの中身を貼り付け
-                  <textarea style={input} rows={3} value={pIcsText} onChange={(e) => setPIcsText(e.target.value)} aria-label="予定表の貼り付け" placeholder="BEGIN:VCALENDAR …" />
+                  {T("m_s_ics_paste_label")}
+                  <textarea style={input} rows={3} value={pIcsText} onChange={(e) => setPIcsText(e.target.value)} aria-label={T("m_s_ics_paste_aria")} placeholder="BEGIN:VCALENDAR …" />
                 </label>
                 <button style={btn(false)} disabled={overlayBusy} onClick={() => void joinOverlay()}>
-                  {overlayBusy ? "重ねています…" : myKey ? "予定表を入れ直す" : "この予定表を重ねる"}
+                  {overlayBusy ? T("m_s_joining") : myKey ? T("m_s_rejoin") : T("m_s_join")}
                 </button>
               </div>
             )}
@@ -388,9 +394,7 @@ export default function PublicSchedulePage() {
 
       {options && options.length === 0 && (
         <p style={{ padding: "12px 16px", background: "#fef9c3", borderRadius: 8, lineHeight: 1.8, marginTop: 12 }}>
-          {basis === "common"
-            ? "あいにく、みんなに共通の空き時間が見つかりませんでした。お手数ですが、リンクを送ってくれた方に直接ご連絡ください。"
-            : "あいにく、いまお選びいただける時間がありません。お手数ですが、リンクを送ってくれた方に直接ご連絡ください。"}
+          {basis === "common" ? T("m_s_no_common") : T("m_s_no_slots")}
         </p>
       )}
 
@@ -398,7 +402,7 @@ export default function PublicSchedulePage() {
       {options && options.length > 0 && (
         <>
           <p style={{ color: "#64748b", fontSize: 13, margin: "12px 0 0" }}>
-            色のついた時間が{basis === "common" ? "みんなの共通の" : ""}空きです。前後の週は矢印で動かせます。
+            {T("m_s_hint_p1")}{basis === "common" ? T("m_s_hint_common") : ""}{T("m_s_hint_p2")}
           </p>
           <ShareSlotCalendar options={options} chosen={chosen} onToggle={toggle} common={basis === "common"} maxChoices={3} />
         </>
@@ -407,23 +411,23 @@ export default function PublicSchedulePage() {
       {chosen.length > 0 && options && (
         <section style={{ marginTop: 24, padding: "16px", border: "1px solid #e2e8f0", borderRadius: 12 }}>
           <p style={{ margin: "0 0 8px", color: "#334155" }}>
-            選んだ時間: {options.filter((o) => chosen.includes(o.start)).map((o) => `${dayLabel(new Date(o.start))} ${timeLabel(new Date(o.start))}`).join("、")}
+            {T("m_s_chosen_prefix")}{options.filter((o) => chosen.includes(o.start)).map((o) => `${dayLabel(new Date(o.start), locale)} ${timeLabel(new Date(o.start))}`).join(T("m_list_sep"))}
           </p>
           <label style={{ display: "block", margin: "8px 0" }}>
-            お名前 (必ず入れてください)
-            <input style={input} value={guestName} onChange={(e) => setGuestName(e.target.value)} aria-label="お名前" />
+            {T("m_guest_name_label")}
+            <input style={input} value={guestName} onChange={(e) => setGuestName(e.target.value)} aria-label={T("name_placeholder")} />
           </label>
           <label style={{ display: "block", margin: "8px 0" }}>
-            ご連絡先 (任意。メールやお電話など、返事を受け取りやすいもの)
-            <input style={input} value={guestContact} onChange={(e) => setGuestContact(e.target.value)} aria-label="ご連絡先" />
+            {T("m_s_contact_label")}
+            <input style={input} value={guestContact} onChange={(e) => setGuestContact(e.target.value)} aria-label={T("m_guest_contact_aria")} />
           </label>
           <label style={{ display: "block", margin: "8px 0" }}>
-            ひとこと (任意)
-            <textarea style={input} rows={3} value={message} onChange={(e) => setMessage(e.target.value)} aria-label="ひとこと" />
+            {T("m_s_msg_label")}
+            <textarea style={input} rows={3} value={message} onChange={(e) => setMessage(e.target.value)} aria-label={T("m_s_msg_aria")} />
           </label>
           {error && <p role="alert" style={{ color: "#b91c1c" }}>{error}</p>}
           <button style={btn()} disabled={busy || !guestName.trim()} onClick={() => void submit()}>
-            {busy ? "お送りしています…" : "この内容で送る"}
+            {busy ? T("m_s_sending") : T("m_s_send_btn")}
           </button>
         </section>
       )}

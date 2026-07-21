@@ -3,6 +3,7 @@
 // アカウント不要の訪問者が見て、問い合わせ・予約できる。新しいつながりの入口。
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { t, currentLocale, type Locale } from "../../lib/i18n";
 
 type TimeOffer = {
   offerKey: string;
@@ -22,6 +23,10 @@ const btn: React.CSSProperties = {
 };
 
 export default function MarketPage() {
+  // cookie はクライアントでしか読めないため、初回描画後に反映する
+  const [locale, setLoc] = useState<Locale>("ja");
+  useEffect(() => setLoc(currentLocale()), []);
+  const T = (key: string) => t(key, locale);
   const [timeOffers, setTimeOffers] = useState<TimeOffer[] | null>(null);
   const [offerings, setOfferings] = useState<Offering[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -47,7 +52,7 @@ export default function MarketPage() {
   const submitInterest = async (id: string) => {
     setError("");
     if (!name.trim() || !message.trim()) {
-      setError("お名前とひとことメッセージを入れてください");
+      setError(t("m_mkt_need_name_msg"));
       return;
     }
     const res = await fetch(`/api/bff/public/market/offerings/${id}/interest`, {
@@ -62,7 +67,7 @@ export default function MarketPage() {
       setContact("");
       setMessage("");
     } else {
-      setError("いまはお送りできませんでした。時間をおいてお試しください");
+      setError(t("m_mkt_send_fail"));
     }
   };
 
@@ -70,19 +75,18 @@ export default function MarketPage() {
 
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
-      <p><Link href="/" style={{ color: "#2563eb" }}>ホームへ戻る</Link></p>
-      <h1 style={{ fontSize: 24 }}>できること・お時間のご案内</h1>
+      <p><Link href="/" style={{ color: "#2563eb" }}>{T("back_home")}</Link></p>
+      <h1 style={{ fontSize: 24 }}>{T("m_mkt_title")}</h1>
       <p style={{ color: "#64748b", lineHeight: 1.8 }}>
-        お手伝いできること、ご相談にのれること、お時間の受け付けを載せています。気になるものがあれば、
-        お気軽にひとことお寄せください。
+        {T("m_mkt_intro")}
       </p>
       {error && <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>{error}</p>}
-      {timeOffers === null && <p style={{ color: "#64748b" }}>読み込んでいます…</p>}
-      {empty && <p style={{ color: "#64748b" }}>いまは準備中です。もうしばらくお待ちください。</p>}
+      {timeOffers === null && <p style={{ color: "#64748b" }}>{T("m_loading")}</p>}
+      {empty && <p style={{ color: "#64748b" }}>{T("m_mkt_empty")}</p>}
 
       {offerings.length > 0 && (
         <section style={{ margin: "20px 0" }}>
-          <h2 style={{ fontSize: 18 }}>力になれること</h2>
+          <h2 style={{ fontSize: 18 }}>{T("m_mkt_offerings")}</h2>
           <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 10 }}>
             {offerings.map((o) => (
               <li key={o.id} style={card}>
@@ -92,26 +96,26 @@ export default function MarketPage() {
                 </div>
                 {o.description && <p style={{ margin: "6px 0 0", color: "#334155", fontSize: 14 }}>{o.description}</p>}
                 {sentIds.has(o.id) ? (
-                  <p style={{ color: "#047857", fontSize: 14, margin: "10px 0 0" }}>お寄せいただきありがとうございます。追ってご連絡します。</p>
+                  <p style={{ color: "#047857", fontSize: 14, margin: "10px 0 0" }}>{T("m_mkt_thanks")}</p>
                 ) : openId === o.id ? (
                   <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-                    <input value={name} onChange={(e) => setName(e.target.value)} placeholder="お名前"
+                    <input value={name} onChange={(e) => setName(e.target.value)} placeholder={T("name_placeholder")}
                       style={{ padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 14 }} />
-                    <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="ご連絡先 (メールなど・任意)"
+                    <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder={T("m_mkt_contact_ph")}
                       style={{ padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 14 }} />
-                    <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="ひとことメッセージ" rows={3}
+                    <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder={T("m_mkt_msg_ph")} rows={3}
                       style={{ padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 14 }} />
                     <div style={{ display: "flex", gap: 8 }}>
-                      <button style={btn} onClick={() => void submitInterest(o.id)}>送る</button>
+                      <button style={btn} onClick={() => void submitInterest(o.id)}>{T("m_mkt_send")}</button>
                       <button onClick={() => setOpenId(null)}
                         style={{ padding: "8px 16px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 14 }}>
-                        やめる
+                        {T("m_mkt_cancel")}
                       </button>
                     </div>
                   </div>
                 ) : (
                   <button style={{ ...btn, marginTop: 10 }} onClick={() => { setOpenId(o.id); setError(""); }}>
-                    ひとこと送る
+                    {T("m_mkt_interest_btn")}
                   </button>
                 )}
               </li>
@@ -122,20 +126,20 @@ export default function MarketPage() {
 
       {timeOffers && timeOffers.length > 0 && (
         <section style={{ margin: "20px 0" }}>
-          <h2 style={{ fontSize: 18 }}>お時間の受け付け</h2>
+          <h2 style={{ fontSize: 18 }}>{T("m_mkt_time")}</h2>
           <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 10 }}>
             {timeOffers.map((o) => (
               <li key={o.offerKey} style={card}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
                   <span style={{ fontWeight: 600 }}>{o.title}</span>
                   <small style={{ color: "#64748b", whiteSpace: "nowrap" }}>
-                    {o.minutes}分・{o.priceJpy === 0 ? "無料" : `${o.priceJpy.toLocaleString()}円`}
+                    {o.minutes}{T("m_min_short")}・{o.priceJpy === 0 ? T("m_free") : `${o.priceJpy.toLocaleString()}${T("m_yen")}`}
                   </small>
                 </div>
                 {o.description && <p style={{ margin: "6px 0 0", color: "#334155", fontSize: 14 }}>{o.description}</p>}
                 <p style={{ margin: "8px 0 0" }}>
                   <Link href={`/b/${o.offerKey}`} style={{ color: "#2563eb", fontSize: 14 }}>
-                    {o.acceptingBookings ? "空いている時間を見て申し込む" : "詳しく見る"}
+                    {o.acceptingBookings ? T("m_mkt_book_link") : T("m_mkt_details_link")}
                   </Link>
                 </p>
               </li>

@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "../../lib/client-api";
+import { t, currentLocale, type Locale } from "../../lib/i18n";
 
 type Campaign = {
   id: string;
@@ -19,12 +20,12 @@ type Campaign = {
   skipped: number;
 };
 
-const STATUS_LABEL: Record<string, string> = {
-  draft: "下書き",
-  approved: "配信待ち",
-  sending: "配信中",
-  sent: "配信済み",
-  canceled: "中止",
+const STATUS_KEY: Record<string, string> = {
+  draft: "m_cmp_status_draft",
+  approved: "m_cmp_status_approved",
+  sending: "m_cmp_status_sending",
+  sent: "m_cmp_status_sent",
+  canceled: "m_cmp_status_canceled",
 };
 
 const input: React.CSSProperties = { width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, fontFamily: "inherit" };
@@ -39,6 +40,10 @@ const btn = (primary = true): React.CSSProperties => ({
 });
 
 export default function CampaignsPage() {
+  // cookie はクライアントでしか読めないため、初回描画後に反映する
+  const [locale, setLoc] = useState<Locale>("ja");
+  useEffect(() => setLoc(currentLocale()), []);
+  const T = (key: string) => t(key, locale);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [mailerReady, setMailerReady] = useState(true);
@@ -87,7 +92,7 @@ export default function CampaignsPage() {
   const createDraft = async () => {
     setError("");
     if (!subject.trim() || !body.trim()) {
-      setError("件名と本文を入力してください");
+      setError(t("m_cmp_need_subject_body"));
       return;
     }
     const r = await apiFetch("campaigns", {
@@ -96,14 +101,14 @@ export default function CampaignsPage() {
     });
     const bd = await r.json().catch(() => ({}));
     if (!r.ok) {
-      setError(bd.detail ?? "作成できませんでした");
+      setError(bd.detail ?? t("m_cmp_create_fail"));
       return;
     }
     setCurrent(bd.campaign);
     setTested(false);
     setAudience(null);
     setSamples([]);
-    setNotice("下書きを作りました。宛先を確かめ、テスト送信してから配信を始めます");
+    setNotice(t("m_cmp_draft_created"));
     await load();
     void preview(bd.campaign.id);
   };
@@ -121,16 +126,16 @@ export default function CampaignsPage() {
     if (!current) return;
     setError("");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testTo.trim())) {
-      setError("テストの送信先アドレスを確かめてください");
+      setError(t("m_cmp_test_addr_invalid"));
       return;
     }
     const r = await apiFetch(`campaigns/${current.id}/send-test`, { method: "POST", body: JSON.stringify({ to: testTo.trim() }) });
     const b = await r.json().catch(() => ({}));
     if (r.ok) {
       setTested(true);
-      setNotice("テストを送りました。受信を確かめてから、配信を始めてください");
+      setNotice(t("m_cmp_test_sent"));
     } else {
-      setError(b.detail ?? "テスト送信できませんでした");
+      setError(b.detail ?? t("m_cmp_test_fail"));
     }
   };
 
@@ -140,11 +145,11 @@ export default function CampaignsPage() {
     const r = await apiFetch(`campaigns/${current.id}/approve`, { method: "POST", body: "{}" });
     const b = await r.json().catch(() => ({}));
     if (r.ok) {
-      setNotice(`配信を始めました。${b.audience} 名に、1 日あたり最大 ${current.dailyLimit} 通ずつ、少しずつお送りします`);
+      setNotice(`${t("m_cmp_approved_p1")}${b.audience}${t("m_cmp_approved_p2")}${current.dailyLimit}${t("m_cmp_approved_p3")}`);
       setCurrent(null);
       await load();
     } else {
-      setError(b.detail ?? "配信を始められませんでした");
+      setError(b.detail ?? t("m_cmp_approve_fail"));
     }
   };
 
@@ -156,80 +161,78 @@ export default function CampaignsPage() {
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px" }}>
       <p>
-        <Link href="/contacts" style={{ color: "#2563eb" }}>連絡帳へ戻る</Link>
+        <Link href="/contacts" style={{ color: "#2563eb" }}>{T("m_back_contacts")}</Link>
       </p>
-      <h1 style={{ fontSize: 24 }}>一斉配信（お便り）</h1>
+      <h1 style={{ fontSize: 24 }}>{T("m_cmp_title")}</h1>
       <p style={{ color: "#64748b", fontSize: 14, lineHeight: 1.8 }}>
-        1 通の文面を、選んだ相手にまとめてお送りします。文面に <code>{"{{お名前}}"}</code> や <code>{"{{会社}}"}</code> と書くと、お一人ずつ差し込みます。
-        迷惑メールと見なされないよう、少しずつ（1 日の上限まで）お送りし、配信停止のリンクと差出人を自動で添えます。
-        取り込んだだけで面識のない多数への配信は、法律（特定電子メール法）と到達性の面からお控えください。
+        {T("m_cmp_intro1")}<code>{"{{お名前}}"}</code>{T("m_cmp_intro2")}<code>{"{{会社}}"}</code>{T("m_cmp_intro3")}
       </p>
 
       {!mailerReady && (
         <p style={{ color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", padding: 10, borderRadius: 8, fontSize: 13 }}>
-          メール送信の準備がまだのため、いまは「配信待ち」で保留します。送信の設定（差出人アドレス）が整うと、少しずつ送り始めます。
+          {T("m_cmp_mailer_pending")}
         </p>
       )}
       {notice && <p style={{ color: "#166534", background: "#f0fdf4", padding: 8, borderRadius: 8 }}>{notice}</p>}
       {error && <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 8 }}>{error}</p>}
 
       <section style={{ marginTop: 20, border: "1px solid #e2e8f0", borderRadius: 12, padding: 16 }}>
-        <h2 style={{ fontSize: 17 }}>文面をつくる</h2>
-        <label style={{ display: "block", margin: "10px 0 4px", fontSize: 14 }}>件名</label>
-        <input style={input} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="例: 夏のご挨拶" aria-label="件名" />
-        <label style={{ display: "block", margin: "10px 0 4px", fontSize: 14 }}>本文（{"{{お名前}}"} / {"{{会社}}"} が差し込めます）</label>
-        <textarea style={{ ...input, minHeight: 160 }} value={body} onChange={(e) => setBody(e.target.value)} aria-label="本文" />
-        <label style={{ display: "block", margin: "10px 0 4px", fontSize: 14 }}>差出人の名前（任意）</label>
-        <input style={input} value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="例: 山田太郎（〇〇株式会社）" aria-label="差出人の名前" />
+        <h2 style={{ fontSize: 17 }}>{T("m_cmp_sec_compose")}</h2>
+        <label style={{ display: "block", margin: "10px 0 4px", fontSize: 14 }}>{T("m_cmp_subject")}</label>
+        <input style={input} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder={T("m_cmp_subject_ph")} aria-label={T("m_cmp_subject")} />
+        <label style={{ display: "block", margin: "10px 0 4px", fontSize: 14 }}>{T("m_cmp_body_label1")}{"{{お名前}}"} / {"{{会社}}"}{T("m_cmp_body_label2")}</label>
+        <textarea style={{ ...input, minHeight: 160 }} value={body} onChange={(e) => setBody(e.target.value)} aria-label={T("m_cmp_body_aria")} />
+        <label style={{ display: "block", margin: "10px 0 4px", fontSize: 14 }}>{T("m_cmp_from_label")}</label>
+        <input style={input} value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder={T("m_cmp_from_ph")} aria-label={T("m_cmp_from_aria")} />
 
-        <h3 style={{ fontSize: 15, margin: "16px 0 6px" }}>宛先（誰に送るか）</h3>
+        <h3 style={{ fontSize: 15, margin: "16px 0 6px" }}>{T("m_cmp_sec_audience")}</h3>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, margin: "4px 0" }}>
           <input type="checkbox" checked={segAll} onChange={(e) => setSegAll(e.target.checked)} />
-          メールアドレスのある方すべて
+          {T("m_cmp_seg_all")}
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, margin: "4px 0" }}>
           <input type="checkbox" checked={segPinned} onChange={(e) => setSegPinned(e.target.checked)} />
-          「大切」と印を付けた方だけ
+          {T("m_cmp_seg_pinned")}
         </label>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", margin: "6px 0" }}>
           <label style={{ fontSize: 14 }}>
-            距離感がこれ以下:{" "}
+            {T("m_cmp_seg_distance")}{" "}
             <select value={segDistanceMax} onChange={(e) => setSegDistanceMax(e.target.value)} style={{ padding: 6, borderRadius: 6, border: "1px solid #e2e8f0" }}>
-              <option value="">指定なし</option>
-              <option value="2">2 まで（とても近い）</option>
-              <option value="3">3 まで</option>
-              <option value="4">4 まで</option>
+              <option value="">{T("m_cmp_no_limit")}</option>
+              <option value="2">{T("m_cmp_d2")}</option>
+              <option value="3">{T("m_cmp_d3")}</option>
+              <option value="4">{T("m_cmp_d4")}</option>
             </select>
           </label>
           <label style={{ fontSize: 14 }}>
-            最終連絡から:{" "}
+            {T("m_cmp_seg_last")}{" "}
             <select value={segLastDaysMin} onChange={(e) => setSegLastDaysMin(e.target.value)} style={{ padding: 6, borderRadius: 6, border: "1px solid #e2e8f0" }}>
-              <option value="">指定なし</option>
-              <option value="90">90 日以上あいた方</option>
-              <option value="180">半年以上あいた方</option>
-              <option value="365">1 年以上あいた方</option>
+              <option value="">{T("m_cmp_no_limit")}</option>
+              <option value="90">{T("m_cmp_last90")}</option>
+              <option value="180">{T("m_cmp_last180")}</option>
+              <option value="365">{T("m_cmp_last365")}</option>
             </select>
           </label>
         </div>
-        <label style={{ display: "block", margin: "6px 0 4px", fontSize: 14 }}>会社名にこの語を含む（任意）</label>
-        <input style={input} value={segCompany} onChange={(e) => setSegCompany(e.target.value)} placeholder="例: 商事" aria-label="会社名で絞る" />
-        <label style={{ display: "block", margin: "10px 0 4px", fontSize: 14 }}>1 日に送る上限（少しずつ送ると迷惑メール判定を避けられます）</label>
-        <input style={{ ...input, width: 120 }} value={dailyLimit} onChange={(e) => setDailyLimit(e.target.value.replace(/[^0-9]/g, ""))} aria-label="1日の上限" />
+        <label style={{ display: "block", margin: "6px 0 4px", fontSize: 14 }}>{T("m_cmp_company_label")}</label>
+        <input style={input} value={segCompany} onChange={(e) => setSegCompany(e.target.value)} placeholder={T("m_cmp_company_ph")} aria-label={T("m_cmp_company_aria")} />
+        <label style={{ display: "block", margin: "10px 0 4px", fontSize: 14 }}>{T("m_cmp_daily_label")}</label>
+        <input style={{ ...input, width: 120 }} value={dailyLimit} onChange={(e) => setDailyLimit(e.target.value.replace(/[^0-9]/g, ""))} aria-label={T("m_cmp_daily_aria")} />
 
         <div style={{ marginTop: 14 }}>
-          <button style={btn()} onClick={() => void createDraft()}>下書きを作って宛先を確かめる</button>
+          <button style={btn()} onClick={() => void createDraft()}>{T("m_cmp_create_btn")}</button>
         </div>
       </section>
 
       {current && (
         <section style={{ marginTop: 20, border: "2px solid #93c5fd", borderRadius: 12, padding: 16, background: "#eff6ff" }}>
-          <h2 style={{ fontSize: 17 }}>宛先の確認とテスト送信</h2>
+          <h2 style={{ fontSize: 17 }}>{T("m_cmp_sec_confirm")}</h2>
           <p style={{ fontSize: 14, color: "#1e3a8a" }}>
-            この文面が届く宛先は <strong>{audience ?? "…"}</strong> 名です（メール無し・配信停止済み・重複は自動で除いています）。
+            {T("m_cmp_audience_pre")}<strong>{audience ?? "…"}</strong>{T("m_cmp_audience_post")}
           </p>
           {samples.length > 0 && (
             <div style={{ margin: "8px 0" }}>
-              <p style={{ fontSize: 13, color: "#475569", margin: "0 0 4px" }}>差し込みの見本:</p>
+              <p style={{ fontSize: 13, color: "#475569", margin: "0 0 4px" }}>{T("m_cmp_samples")}</p>
               {samples.slice(0, 2).map((s, i) => (
                 <div key={i} style={{ border: "1px solid #dbeafe", borderRadius: 8, padding: "8px 10px", background: "#fff", margin: "4px 0" }}>
                   <div style={{ fontWeight: 600, fontSize: 13 }}>{s.subject}</div>
@@ -239,33 +242,33 @@ export default function CampaignsPage() {
             </div>
           )}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", margin: "8px 0" }}>
-            <input style={{ ...input, flex: "1 1 220px" }} value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="自分のメールアドレス（テスト用）" aria-label="テスト送信先" />
-            <button style={btn(false)} onClick={() => void sendTest()}>テスト送信</button>
+            <input style={{ ...input, flex: "1 1 220px" }} value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder={T("m_cmp_test_ph")} aria-label={T("m_cmp_test_aria")} />
+            <button style={btn(false)} onClick={() => void sendTest()}>{T("m_cmp_test_btn")}</button>
           </div>
           <button style={{ ...btn(), opacity: tested ? 1 : 0.5 }} disabled={!tested} onClick={() => void approve()}>
-            {tested ? "この内容で配信を始める" : "まずテスト送信を済ませてください"}
+            {tested ? T("m_cmp_start_btn") : T("m_cmp_test_first")}
           </button>
         </section>
       )}
 
       <section style={{ marginTop: 24 }}>
-        <h2 style={{ fontSize: 17 }}>これまでの配信</h2>
+        <h2 style={{ fontSize: 17 }}>{T("m_cmp_sec_history")}</h2>
         {campaigns.length === 0 ? (
-          <p style={{ color: "#64748b" }}>まだありません。</p>
+          <p style={{ color: "#64748b" }}>{T("m_none_yet")}</p>
         ) : (
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 10 }}>
             {campaigns.map((cm) => (
               <li key={cm.id} style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "10px 12px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ fontWeight: 600 }}>{cm.subject}</span>
-                  <span style={{ color: "#64748b", fontSize: 13 }}>{STATUS_LABEL[cm.status] ?? cm.status}</span>
+                  <span style={{ color: "#64748b", fontSize: 13 }}>{STATUS_KEY[cm.status] ? T(STATUS_KEY[cm.status]!) : cm.status}</span>
                 </div>
                 <div style={{ color: "#64748b", fontSize: 13, marginTop: 4 }}>
-                  宛先 {cm.total} 名・送信 {cm.sent}・失敗 {cm.failed}・除外 {cm.skipped}
+                  {T("m_cmp_st1")}{cm.total}{T("m_cmp_st2")}{cm.sent}{T("m_cmp_st3")}{cm.failed}{T("m_cmp_st4")}{cm.skipped}
                 </div>
                 {(cm.status === "approved" || cm.status === "sending") && (
                   <button style={{ ...btn(false), marginTop: 6, fontSize: 13, padding: "4px 12px" }} onClick={() => void cancel(cm.id)}>
-                    配信を止める
+                    {T("m_cmp_cancel_btn")}
                   </button>
                 )}
               </li>

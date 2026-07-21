@@ -4,8 +4,13 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
+import { t, currentLocale, type Locale } from "../../../../lib/i18n";
 
 function ThanksBody() {
+  // cookie はクライアントでしか読めないため、初回描画後に反映する
+  const [locale, setLoc] = useState<Locale>("ja");
+  useEffect(() => setLoc(currentLocale()), []);
+  const T = (key: string) => t(key, locale);
   const { key } = useParams<{ key: string }>();
   const search = useSearchParams();
   const sessionId = search.get("session_id") ?? "";
@@ -41,31 +46,33 @@ function ThanksBody() {
 
   return (
     <main style={{ maxWidth: 640, margin: "0 auto", padding: "40px 16px" }}>
-      <h1 style={{ fontSize: 22 }}>お申し込みありがとうございます</h1>
-      {status === "checking" && <p style={{ lineHeight: 1.9 }}>お支払いを確認しています。そのままお待ちください…</p>}
+      <h1 style={{ fontSize: 22 }}>{T("m_th_title")}</h1>
+      {status === "checking" && <p style={{ lineHeight: 1.9 }}>{T("m_th_checking")}</p>}
       {status === "confirmed" && (
         <div style={{ marginTop: 16, padding: "20px 16px", background: "#f0fdf4", borderRadius: 12 }}>
           <p style={{ margin: 0, lineHeight: 1.9 }}>
-            お支払いを確認し、ご予約が確定しました。当日の進め方は、いただいた連絡先へあらためてお知らせします。
+            {T("m_th_confirmed")}
           </p>
         </div>
       )}
       {status === "pending" && (
         <p style={{ lineHeight: 1.9 }}>
-          お支払いの確認に少し時間がかかっています。確認できしだい自動でご予約が確定しますので、
-          このままお待ちいただいて大丈夫です。ご心配な場合は、リンクを送ってくれた方にご連絡ください。
+          {T("m_th_pending")}
         </p>
       )}
       {status === "unknown" && (
-        <p style={{ lineHeight: 1.9 }}>このページを直接開くことはできません。予約のページからやり直してください。</p>
+        <p style={{ lineHeight: 1.9 }}>{T("m_th_unknown")}</p>
       )}
     </main>
   );
 }
 
 export default function BookingThanksPage() {
+  // cookie はクライアントでしか読めないため、初回描画後に反映する
+  const [locale, setLoc] = useState<Locale>("ja");
+  useEffect(() => setLoc(currentLocale()), []);
   return (
-    <Suspense fallback={<main style={{ maxWidth: 640, margin: "0 auto", padding: "40px 16px" }}><p>読み込んでいます…</p></main>}>
+    <Suspense fallback={<main style={{ maxWidth: 640, margin: "0 auto", padding: "40px 16px" }}><p>{t("m_loading", locale)}</p></main>}>
       <ThanksBody />
     </Suspense>
   );
