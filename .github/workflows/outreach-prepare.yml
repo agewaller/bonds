@@ -1,0 +1,107 @@
+# 発信の下ごしらえ (書き込みあり・送信はしない)。本番 api に連絡先と文面の下書きを
+# 作成する。承認と送信は必ずオーナーが web 画面で行う (下書き→承認→送信の原則は不変)。
+# サンドボックスから本番に届かないため、GitHub ランナーを経由する (data-locator と同じ方式)。
+# 必要な設定: Variables BONDS_API_URL / Secrets BONDS_ADMIN_TOKEN。
+name: outreach-prepare
+
+on:
+  workflow_dispatch:
+    inputs:
+      contact_name:
+        description: 相手のお名前 (同名が既にいれば再利用する)
+        required: true
+        type: string
+      contact_email:
+        description: 相手のメールアドレス
+        required: true
+        type: string
+      contact_company:
+        description: 会社・所属 (任意)
+        required: false
+        default: ""
+        type: string
+      points:
+        description: 伝えたいこと (文面の下書きのもと。長文可)
+        required: true
+        type: string
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: create contact and draft
+        env:
+          API: ${{ vars.BONDS_API_URL }}
+          TOKEN: ${{ secrets.BONDS_ADMIN_TOKEN }}
+          WEB: ${{ vars.BONDS_WEB_URL || 'https://bonds-web-xj6szhutkq-an.a.run.app' }}
+          C_NAME: ${{ inputs.contact_name }}
+          C_EMAIL: ${{ inputs.contact_email }}
+          C_COMPANY: ${{ inputs.contact_company }}
+          POINTS: ${{ inputs.points }}
+        run: |
+          if [ -z "$API" ] || [ -z "$TOKEN" ]; then
+            echo "::error::BONDS_API_URL / BONDS_ADMIN_TOKEN 未設定のため実行できません"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, os, sys, urllib.request, urllib.error
+
+          api = os.environ["API"].rstrip("/")
+          tok = os.environ["TOKEN"]
+
+          def call(method, path, payload=None):
+              req = urllib.request.Request(
+                  api + path,
+                  method=method,
+                  data=json.dumps(payload).encode() if payload is not None else None,
+                  headers={"x-admin-token": tok, "content-type": "application/json"},
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=180) as r:
+                      return r.status, json.load(r)
+              except urllib.error.HTTPError as e:
+                  try:
+                      return e.code, json.load(e)
+                  except Exception:
+                      return e.code, {"error": "unreadable_body"}
+
+          st, body = call("POST", "/api/contacts", {
+              "name": os.environ["C_NAME"],
+              "email": os.environ["C_EMAIL"],
+              "company": os.environ["C_COMPANY"] or None,
+          })
+          if st == 201:
+              cid = body["contact"]["id"]
+              print("連絡先を新規作成:", cid)
+          elif st == 409 and body.get("duplicates"):
+              cid = body["duplicates"][0]["id"]
+              print("同名の既存連絡先を再利用:", cid)
+          else:
+              sys.exit(f"連絡先の作成に失敗 {st}: {body}")
+
+          st, body = call("POST", "/api/outreach/draft", {
+              "contactId": cid,
+              "purpose": "keepup",
+              "channel": "email",
+              "points": os.environ["POINTS"],
+          })
+          if st != 201:
+              sys.exit(f"下書きの作成に失敗 {st}: {body}")
+          cands = body.get("candidates", [])
+          print(f"文面の下書き候補: {len(cands)} 件 (message id: {body.get('id')})")
+          for i, cand in enumerate(cands):
+              print(f"--- 候補 {i + 1}: {cand.get('subject', '')}")
+
+          print()
+          print("== この URL を開き、文面を確認・修正して承認のうえ送信してください ==")
+          print(os.environ["WEB"].rstrip("/") + "/contacts/" + cid)
+          PY
+
+      - name: mailer health (送信経路の事前点検)
+        env:
+          API: ${{ vars.BONDS_API_URL }}
+          TOKEN: ${{ secrets.BONDS_ADMIN_TOKEN }}
+        run: |
+          echo "== /api/admin/mailer-status?probe=1 (オーナー宛に1通だけテスト送信) =="
+          curl -sS "${API}/api/admin/mailer-status?probe=1" -H "x-admin-token: ${TOKEN}"
+          echo
