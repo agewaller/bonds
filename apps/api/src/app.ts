@@ -2941,6 +2941,38 @@ export function createApp(deps: AppDeps) {
     return c.json({ items });
   });
 
+  // 最近の動き — 最近お迎えした方 (登録) と、最近情報が新しくなった方 (編集・取込・
+  // 自動整理などでの更新)。ホームで「いま動いている名簿」がひと目で分かる (AI 不要・毎回無料)。
+  app.get("/api/relationship/recent-contacts", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const pick = { id: true, name: true, company: true, email: true, distance: true, createdAt: true, updatedAt: true } as const;
+    const added = await prisma.contact.findMany({
+      where: { ownerUid, state: "active" },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: pick,
+    });
+    // 「情報が新しくなった」= 作成から 1 時間より後に更新された方 (作りたては added 側に出す)
+    const updatedRows = await prisma.contact.findMany({
+      where: { ownerUid, state: "active" },
+      orderBy: { updatedAt: "desc" },
+      take: 40,
+      select: pick,
+    });
+    const updated = updatedRows
+      .filter((x) => x.updatedAt.getTime() - x.createdAt.getTime() > 60 * 60 * 1000)
+      .slice(0, 10);
+    const shape = (x: (typeof added)[number]) => ({
+      contactId: x.id,
+      name: x.name,
+      company: x.company,
+      email: x.email,
+      addedAt: x.createdAt,
+      updatedAt: x.updatedAt,
+    });
+    return c.json({ added: added.map(shape), updated: updated.map(shape) });
+  });
+
   // 1日1問 — 毎日ひとりについて、まだ知らない論点をひとつだけ聞く (定型・AI 不要)。
   // 1年続けば 365 個の事実が溜まる。答えは /api/contacts/:id/note で還流する。
   app.get("/api/relationship/daily-question", async (c) => {
