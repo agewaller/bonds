@@ -186,6 +186,21 @@ test("連絡帳: Google 取り込み枠が出る (未設定環境では準備中
   expect(errors, errors.join("\n")).toHaveLength(0);
 });
 
+test("連絡帳: 最近の動き — 登録した方が「最近お迎えした方」に出る", async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto("/contacts");
+  await expandAll(page);
+  const name = `監査最近 山口${Date.now() % 100000}`;
+  await page.getByLabel("お名前").fill(name);
+  await page.getByRole("button", { name: "追加", exact: true }).click();
+  await expect(page.getByText(name).first()).toBeVisible();
+  await page.reload();
+  await expandAll(page);
+  const panel = page.locator("section", { has: page.getByRole("heading", { name: /最近の動き/ }) });
+  await expect(panel.getByRole("link", { name: new RegExp(name) })).toBeVisible();
+  expect(errors, errors.join("\n")).toHaveLength(0);
+});
+
 test("連絡帳: 実行待ちのこと — 書き足し・済み・見送りが一周する", async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto("/contacts");

@@ -105,6 +105,33 @@ describe("会った直後のひとこと伺い (GET /api/relationship/recent-mee
   });
 });
 
+describe("最近の動き (GET /api/relationship/recent-contacts)", () => {
+  it("最近お迎えした方は登録の新しい順、情報が新しくなった方は作成 1 時間後より後の更新だけが挙がる", async () => {
+    const app = createApp({ prisma, generate: null });
+    const now = Date.now();
+    const mk = (name: string, createdAgoH: number, updatedAgoH: number) =>
+      prisma.contact.create({
+        data: {
+          ownerUid: "owner",
+          name,
+          distance: 3,
+          createdAt: new Date(now - createdAgoH * 3600_000),
+          updatedAt: new Date(now - updatedAgoH * 3600_000),
+        },
+      });
+    await mk("新しい方", 1, 1); // 作りたて (更新側には出ない)
+    await mk("古くて更新された方", 24 * 30, 2); // 30日前に登録・2時間前に更新
+    await mk("古くて動きの無い方", 24 * 60, 24 * 60);
+    const res = await app.request("/api/relationship/recent-contacts", { headers: H });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.added[0].name).toBe("新しい方");
+    expect(body.updated.map((x: { name: string }) => x.name)).toEqual(["古くて更新された方"]);
+    // 未認証は 401
+    expect((await app.request("/api/relationship/recent-contacts")).status).toBe(401);
+  });
+});
+
 describe("1日1問 (GET /api/relationship/daily-question)", () => {
   it("知らない論点についての質問が返り、今日メモを書いた相手は選ばれない", async () => {
     const app = createApp({ prisma, generate: null });

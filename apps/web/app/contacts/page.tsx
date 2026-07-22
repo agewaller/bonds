@@ -119,6 +119,11 @@ export default function ContactsPage() {
     { id: string; kind: string; kindLabel: string; title: string; note: string | null; contactId: string | null; name: string | null; email: string | null }[]
   >([]);
   const [manualAction, setManualAction] = useState("");
+  // 最近の動き (最近お迎えした方・最近情報が新しくなった方)。AI 不要なので自動で読み込む
+  const [recentContacts, setRecentContacts] = useState<{
+    added: { contactId: string; name: string; company: string | null; email: string | null; addedAt: string; updatedAt: string }[];
+    updated: { contactId: string; name: string; company: string | null; email: string | null; addedAt: string; updatedAt: string }[];
+  } | null>(null);
   const [connectHint, setConnectHint] = useState(""); // SNS連携ボタンを押したときの手順案内
   const [dragOver, setDragOver] = useState(false);
   // 距離感の見直し提案 (やりとりから 1〜5 を推し量る)
@@ -378,6 +383,8 @@ export default function ContactsPage() {
     if (soRes.ok) setMarketUrl((await soRes.json()).marketUrl ?? null);
     const acRes = await apiFetch("actions");
     if (acRes.ok) setActionItems((await acRes.json()).items ?? []);
+    const rcRes = await apiFetch("relationship/recent-contacts");
+    if (rcRes.ok) setRecentContacts(await rcRes.json());
   }, []);
 
   // 実行待ちへの受け入れ・済み/見送り。受け入れは source キーで冪等 (二重に貯まらない)。
@@ -1435,6 +1442,60 @@ export default function ContactsPage() {
           </button>
         </div>
       </Fold>
+
+      {recentContacts && (recentContacts.added.length > 0 || recentContacts.updated.length > 0) && (
+        <Fold k="cl29" defaultOpen={false} title={<>最近の動き (お迎えした方・情報が新しくなった方)</>} style={{ margin: "16px 0", border: "1px solid #a5b4fc", background: "#eef2ff", borderRadius: 12, padding: "12px 16px" }}>
+          {recentContacts.added.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <p style={{ fontSize: 13, color: "#3730a3", fontWeight: 700, margin: "0 0 6px" }}>最近お迎えした方 (登録した方)</p>
+              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 6 }}>
+                {recentContacts.added.map((r) => (
+                  <li key={r.contactId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, flexWrap: "wrap" }}>
+                    <Link href={`/contacts/${r.contactId}`} style={{ color: "#4338ca", fontWeight: 600, textDecoration: "none" }}>
+                      {r.name}
+                    </Link>
+                    {r.company && <span style={{ color: "#94a3b8", fontSize: 12 }}>{r.company}</span>}
+                    <span style={{ color: "#64748b", fontSize: 12, marginLeft: "auto" }}>
+                      {new Date(r.addedAt).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })} に登録
+                    </span>
+                    {r.email && (
+                      <a href={`mailto:${r.email}`} aria-label={`${r.name}さんにメールする`} style={{ color: "#1d4ed8", fontSize: 13, textDecoration: "none" }}>
+                        ✉
+                      </a>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {recentContacts.updated.length > 0 && (
+            <div>
+              <p style={{ fontSize: 13, color: "#3730a3", fontWeight: 700, margin: "0 0 6px" }}>最近、情報が新しくなった方</p>
+              <p style={{ fontSize: 12, color: "#64748b", margin: "0 0 6px" }}>
+                あなたの編集・取り込み・自動の整理などで、この方のページが更新されています。
+              </p>
+              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 6 }}>
+                {recentContacts.updated.map((r) => (
+                  <li key={r.contactId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, flexWrap: "wrap" }}>
+                    <Link href={`/contacts/${r.contactId}`} style={{ color: "#4338ca", fontWeight: 600, textDecoration: "none" }}>
+                      {r.name}
+                    </Link>
+                    {r.company && <span style={{ color: "#94a3b8", fontSize: 12 }}>{r.company}</span>}
+                    <span style={{ color: "#64748b", fontSize: 12, marginLeft: "auto" }}>
+                      {new Date(r.updatedAt).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })} に更新
+                    </span>
+                    {r.email && (
+                      <a href={`mailto:${r.email}`} aria-label={`${r.name}さんにメールする`} style={{ color: "#1d4ed8", fontSize: 13, textDecoration: "none" }}>
+                        ✉
+                      </a>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </Fold>
+      )}
 
       {shownOccasions.length > 0 && (
         <Fold k="cl3" defaultOpen={false} title={<>{t("c_gift_occasions_title")}</>} style={{ margin: "16px 0", border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
