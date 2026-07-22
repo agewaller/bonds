@@ -22,6 +22,26 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # 統合LP (products.html) の共通ログインに Firebase 設定を注入する。
+      # 値は公開してよいクライアント設定 (deploy-gcp と同じ Variables)。未設定なら
+      # 空文字が入り、LP 側はログインボタンを出さずに縮退する (壊れない)。
+      - name: inject Firebase config into products.html
+        env:
+          FB_API_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          FB_AUTH_DOMAIN: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          FB_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+        run: |
+          python3 - <<'PY'
+          import os
+          path = "products.html"
+          s = open(path, encoding="utf-8").read()
+          s = s.replace("__FB_API_KEY__", os.environ.get("FB_API_KEY", ""))
+          s = s.replace("__FB_AUTH_DOMAIN__", os.environ.get("FB_AUTH_DOMAIN", ""))
+          s = s.replace("__FB_PROJECT_ID__", os.environ.get("FB_PROJECT_ID", ""))
+          open(path, "w", encoding="utf-8").write(s)
+          ok = all(os.environ.get(k) for k in ("FB_API_KEY", "FB_AUTH_DOMAIN", "FB_PROJECT_ID"))
+          print("firebase config injected:", "yes" if ok else "no (login hidden)")
+          PY
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

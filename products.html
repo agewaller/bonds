@@ -27,12 +27,21 @@
   html[lang="en"] .serif{font-family:Georgia,"Times New Roman",serif}
   .wrap{max-width:920px; margin:0 auto; padding:0 24px}
 
-  .langbar{position:absolute; top:18px; right:20px}
+  .langbar{position:absolute; top:18px; right:20px; display:flex; gap:8px; align-items:center}
   .langbar button{
     font-size:12.5px; letter-spacing:.06em; background:var(--card); color:var(--sub);
     border:1px solid var(--line); border-radius:999px; padding:6px 14px; cursor:pointer;
   }
   .langbar button:hover{color:var(--fg)}
+  #authName{font-size:12.5px; color:var(--sub); max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  #authUser{display:flex; gap:8px; align-items:center}
+  .mytools{margin:0 auto 10px}
+  .mytools .box{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:22px 24px}
+  .mytools h2{font-size:20px; margin-bottom:4px}
+  .mytools .mt-sub{color:var(--sub); font-size:14px; margin-bottom:14px}
+  .mytools .tools{display:flex; flex-wrap:wrap; gap:10px}
+  .mytools .tools a{display:inline-block; padding:9px 16px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--fg); text-decoration:none; font-size:14px}
+  .mytools .tools a:hover{border-color:var(--sub)}
 
   header{padding:88px 0 40px; text-align:center; position:relative}
   .kicker{font-size:13px; letter-spacing:.35em; color:var(--sub); text-transform:uppercase}
@@ -143,7 +152,11 @@
 <body>
 
 <header class="wrap">
-  <div class="langbar"><button id="langToggle" type="button" aria-label="Switch language">English</button></div>
+  <div class="langbar">
+    <button id="loginBtn" type="button" hidden data-t="lg_in">Google でログイン</button>
+    <span id="authUser" hidden><span id="authName"></span><button id="logoutBtn" type="button" data-t="lg_out">サインアウト</button></span>
+    <button id="langToggle" type="button" aria-label="Switch language">English</button>
+  </div>
   <p class="kicker">Blue Marlin Partners</p>
   <h1 class="serif" data-t="h1">人生のカルテを、そろえる。</h1>
   <p class="lede" data-t="lede">意識がととのうと、からだが健やかになる。<br>
@@ -165,6 +178,20 @@
     <span class="l5"><b data-t="ly6">資産</b></span>
   </div>
 </header>
+
+<section class="mytools wrap" id="mytools" hidden>
+  <div class="box">
+    <h2 class="serif" data-t="mt_h">あなたの道具</h2>
+    <p class="mt-sub" data-t="mt_hello">おかえりなさい。同じ Google アカウントで、それぞれの道具がひらけます。</p>
+    <div class="tools">
+      <a href="https://zentrack-frontend-i1zp.onrender.com/" target="_blank" rel="noopener" data-t="mt1">禅トラック</a>
+      <a href="https://cares.advisers.jp" target="_blank" rel="noopener" data-t="mt2">健康日記</a>
+      <a href="https://geniusfinder.me/" target="_blank" rel="noopener" data-t="mt3">ジーニアスファインダー</a>
+      <a href="https://bonds-web-xj6szhutkq-an.a.run.app/" target="_blank" rel="noopener" data-t="mt4">bonds</a>
+      <a href="https://next.valuationmatrix.com/" target="_blank" rel="noopener" data-t="mt5">バリュエーションマトリクス</a>
+    </div>
+  </div>
+</section>
 
 <main class="wrap">
   <div class="grid">
@@ -318,6 +345,10 @@
     h1: "Bringing the chart of your life together.",
     lede: "When the mind settles, the body grows well.<br>Health gives you time, and time becomes contribution to others.<br>Contribution builds trust, and trust, in time, becomes wealth.<br>We believe in this flow, and we build a tool for each of its steps.<br>Each works on its own. All of them connect through one account.",
     ly1:"Mind", ly2:"Health", ly3:"Time", ly4:"Contribution", ly5:"Trust", ly6:"Wealth",
+    lg_in:"Sign in with Google", lg_out:"Sign out",
+    mt_h:"Your tools",
+    mt_hello:"Welcome back. Each tool opens with the same Google account.",
+    mt1:"ZenTrack", mt2:"Health Diary", mt3:"Genius Finder", mt4:"bonds", mt5:"ValuationMatrix",
     t1:"I&nbsp;&nbsp;MIND", n1:"ZenTrack",
     m1:"Watch your mind from the same place, every day.",
     d1:"Everything starts here. ZenTrack observes the state of your consciousness across seven layers and makes its changes visible. Connected with zazen, journaling and voice notes, it builds a habit of settling the mind by observation, not by mood.",
@@ -427,6 +458,55 @@
     location.href = 'mailto:info@bluemarl.in'
       + '?subject=' + encodeURIComponent('お問い合わせ / Inquiry')
       + '&body=' + encodeURIComponent(body);
+  });
+})();
+</script>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script>
+// 共通ログイン (五つの道具と同じ Firebase プロジェクト)。設定値は Pages デプロイ時に
+// GitHub Variables から注入される (pages.yml)。未注入・未設定ならボタン自体を出さない。
+(function(){
+  var cfg = { apiKey:"__FB_API_KEY__", authDomain:"__FB_AUTH_DOMAIN__", projectId:"__FB_PROJECT_ID__" };
+  function unset(v){ return !v || v.indexOf("__FB_") === 0; }
+  if (unset(cfg.apiKey) || unset(cfg.authDomain) || unset(cfg.projectId)) return;
+  if (typeof firebase === "undefined") return;
+  firebase.initializeApp(cfg);
+  var auth = firebase.auth();
+  var loginBtn = document.getElementById('loginBtn');
+  var logoutBtn = document.getElementById('logoutBtn');
+  var authUser = document.getElementById('authUser');
+  var authName = document.getElementById('authName');
+  var mytools = document.getElementById('mytools');
+  // popup が使えない環境 (モバイルの WebView 等) は画面遷移方式へ自動で切り替える。
+  // 利用者が自分で閉じた popup-closed-by-user は切り替えない (bonds/cares と同じ鉄則)。
+  var POPUP_NG = {
+    'auth/popup-blocked': 1,
+    'auth/cancelled-popup-request': 1,
+    'auth/operation-not-supported-in-this-environment': 1,
+    'auth/web-storage-unsupported': 1
+  };
+  function signIn(){
+    var provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(function(e){
+      if (e && POPUP_NG[e.code]) auth.signInWithRedirect(provider);
+    });
+  }
+  loginBtn.addEventListener('click', signIn);
+  logoutBtn.addEventListener('click', function(){ auth.signOut(); });
+  auth.getRedirectResult().catch(function(){});
+  auth.onAuthStateChanged(function(u){
+    if (u) {
+      loginBtn.hidden = true;
+      authUser.hidden = false;
+      mytools.hidden = false;
+      authName.textContent = u.displayName || u.email || '';
+    } else {
+      loginBtn.hidden = false;
+      authUser.hidden = true;
+      mytools.hidden = true;
+    }
   });
 })();
 </script>
