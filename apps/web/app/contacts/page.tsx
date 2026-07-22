@@ -97,6 +97,30 @@ const DISTANCE_LABEL: Record<number, string> = {
   5: "c_dist5",
 };
 
+// 取り込み元の表示名 (迎えた経路ごとのリスト表示に使う。未知の値はそのまま出す)
+const SOURCE_LABEL: Record<string, string> = {
+  line: "LINE",
+  whatsapp: "WhatsApp",
+  facebook: "Facebook",
+  instagram: "Instagram",
+  twitter: "X",
+  linkedin: "LinkedIn",
+  google: "Google",
+  gmail: "Gmail",
+  outlook: "Outlook",
+  eight: "Eight (名刺)",
+  nengajo: "年賀状",
+  csv: "CSV",
+  vcard: "vCard",
+  manual: "手入力",
+  import: "書類・写真の取り込み",
+  event: "パーティ・イベント",
+  market: "掲示板",
+  lms: "LMS",
+  zentrack: "禅トラック",
+  sns: "SNS",
+};
+
 export default function ContactsPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -224,6 +248,26 @@ export default function ContactsPage() {
   // 一覧 API は 500 件までのため、検索は必ずサーバに聞く。
   const [searchResults, setSearchResults] = useState<Contact[] | null>(null);
   const [totalContacts, setTotalContacts] = useState<number | null>(null);
+  // 取り込み元での絞り込み (LINE・Facebook・Google・名刺など、迎えた経路ごとのリスト)
+  const [sourceCounts, setSourceCounts] = useState<{ source: string; count: number }[]>([]);
+  const [sourceFilter, setSourceFilter] = useState<string | null>(null);
+  const [sourceResults, setSourceResults] = useState<Contact[] | null>(null);
+  const [sourceTotal, setSourceTotal] = useState<number | null>(null);
+  const pickSource = async (s: string) => {
+    if (sourceFilter === s) {
+      setSourceFilter(null);
+      setSourceResults(null);
+      return;
+    }
+    setSourceFilter(s);
+    setSourceResults(null);
+    const res = await apiFetch(`contacts?source=${encodeURIComponent(s)}`);
+    if (res.ok) {
+      const b = await res.json();
+      setSourceResults(b.contacts ?? []);
+      setSourceTotal(typeof b.total === "number" ? b.total : null);
+    }
+  };
   useEffect(() => {
     if (!nameFilter.trim()) {
       setSearchResults(null);
@@ -385,6 +429,8 @@ export default function ContactsPage() {
     if (acRes.ok) setActionItems((await acRes.json()).items ?? []);
     const rcRes = await apiFetch("relationship/recent-contacts");
     if (rcRes.ok) setRecentContacts(await rcRes.json());
+    const scRes = await apiFetch("relationship/contact-sources");
+    if (scRes.ok) setSourceCounts((await scRes.json()).items ?? []);
   }, []);
 
   // 実行待ちへの受け入れ・済み/見送り。受け入れは source キーで冪等 (二重に貯まらない)。
@@ -1265,6 +1311,65 @@ export default function ContactsPage() {
                 </li>
               ))}
             </ul>
+          </div>
+        )}
+        {!nameFilter.trim() && sourceCounts.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ color: "#64748b", fontSize: 12 }}>迎えた経路で見る:</span>
+              {sourceCounts.slice(0, 10).map((s) => (
+                <button
+                  key={s.source}
+                  onClick={() => void pickSource(s.source)}
+                  aria-pressed={sourceFilter === s.source}
+                  style={{
+                    padding: "4px 10px",
+                    borderRadius: 999,
+                    border: sourceFilter === s.source ? "1px solid #2563eb" : "1px solid #e2e8f0",
+                    background: sourceFilter === s.source ? "#dbeafe" : "#fff",
+                    color: sourceFilter === s.source ? "#1d4ed8" : "#475569",
+                    fontSize: 12,
+                    cursor: "pointer",
+                  }}
+                >
+                  {SOURCE_LABEL[s.source] ?? s.source} {s.count}
+                </button>
+              ))}
+            </div>
+            {sourceFilter && (
+              <div style={{ marginTop: 8 }}>
+                <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 8px" }}>
+                  {sourceResults === null
+                    ? "読み込んでいます…"
+                    : `${SOURCE_LABEL[sourceFilter] ?? sourceFilter} から迎えた方 ${sourceTotal ?? sourceResults.length} 名 (新しい順${(sourceTotal ?? 0) > 500 ? "・先頭の500名まで" : ""})`}
+                </p>
+                <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 6 }}>
+                  {(sourceResults ?? []).map((c) => (
+                    <li key={c.id} style={{ display: "flex", alignItems: "stretch", gap: 6 }}>
+                      <Link
+                        href={`/contacts/${c.id}`}
+                        style={{ flex: 1, display: "flex", justifyContent: "space-between", border: "1px solid #e2e8f0", background: "#fff", borderRadius: 10, padding: "10px 14px", textDecoration: "none", color: "inherit" }}
+                      >
+                        <span>
+                          {c.name}
+                          {c.company && <small style={{ color: "#64748b", marginLeft: 8 }}>{c.company}</small>}
+                        </span>
+                      </Link>
+                      {c.email && (
+                        <a
+                          href={`mailto:${c.email}`}
+                          aria-label={`${c.name}さんにメールする`}
+                          title="メールする"
+                          style={{ display: "flex", alignItems: "center", padding: "0 12px", border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 10, textDecoration: "none", fontSize: 13, whiteSpace: "nowrap" }}
+                        >
+                          ✉ メール
+                        </a>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
       </div>

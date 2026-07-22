@@ -1,5 +1,6 @@
 // 関係性 (contacts) API の結合テスト。実テスト DB (bonds_test)。
 // PII の項目暗号化が「DB 上は暗号文、API 応答は平文」であることを生 SQL で必ず検証する。
+// (取り込み元フィルタのテストは本ファイル末尾に追記)
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { createPrismaClient, type ExtendedPrismaClient, isEncrypted } from "@bonds/db";
 import { createApp } from "../../src/app.js";
@@ -485,5 +486,24 @@ describe("連絡先の検索 (GET /api/contacts?q= 全員が対象)", () => {
     // q なしの一覧にも総数が付く
     const list = await (await app.request("/api/contacts", { headers: H })).json();
     expect(list.total).toBe(3);
+  });
+});
+
+describe("取り込み元フィルタ (GET /api/contacts?source= と contact-sources)", () => {
+  it("経路別の内訳が数えられ、source=line で LINE から迎えた方だけが返る", async () => {
+    await prisma.contact.createMany({
+      data: [
+        { ownerUid: "owner", name: "LINE の花子", distance: 3, source: "line" },
+        { ownerUid: "owner", name: "LINE の太郎", distance: 4, source: "line" },
+        { ownerUid: "owner", name: "名刺の次郎", distance: 4, source: "import" },
+        { ownerUid: "someone-else", name: "他人の LINE", distance: 4, source: "line" },
+      ],
+    });
+    const sources = await (await app.request("/api/relationship/contact-sources", { headers: H })).json();
+    const line = sources.items.find((x: { source: string }) => x.source === "line");
+    expect(line.count).toBe(2); // 他人の分は数えない
+    const res = await (await app.request("/api/contacts?source=line", { headers: H })).json();
+    expect(res.total).toBe(2);
+    expect(res.contacts.map((c: { name: string }) => c.name).sort()).toEqual(["LINE の太郎", "LINE の花子"]);
   });
 });

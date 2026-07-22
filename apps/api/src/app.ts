@@ -1080,6 +1080,19 @@ export function createApp(deps: AppDeps) {
   // アプリ内で照合する)。q が無いときは従来どおり近しい順の一覧 (500 件まで)。
   app.get("/api/contacts", async (c) => {
     const q = (c.req.query("q") ?? "").trim();
+    // 取り込み元での絞り込み (例: source=line で LINE から迎えた方の一覧)。source は平文列
+    const source = (c.req.query("source") ?? "").trim().slice(0, 30);
+    if (source && !q) {
+      const [contacts, total] = await Promise.all([
+        prisma.contact.findMany({
+          where: { ownerUid: c.get("ownerUid"), state: "active", source },
+          orderBy: [{ createdAt: "desc" }, { name: "asc" }],
+          take: 500,
+        }),
+        prisma.contact.count({ where: { ownerUid: c.get("ownerUid"), state: "active", source } }),
+      ]);
+      return c.json({ contacts, total });
+    }
     if (q) {
       const all = await prisma.contact.findMany({
         where: { ownerUid: c.get("ownerUid"), state: "active" },
@@ -2938,6 +2951,20 @@ export function createApp(deps: AppDeps) {
       contacts,
       rows.map((r) => ({ contactId: r.contactId, type: r.type, occurredAt: r.occurredAt, hasNote: !!r.notes })),
     );
+    return c.json({ items });
+  });
+
+  // 取り込み元の内訳 — どの経路 (LINE・Facebook・Google・名刺など) から何名迎えたか。
+  // 経路チップで「LINE のリスト」のように経路別の一覧を出すために使う (AI 不要・毎回無料)。
+  app.get("/api/relationship/contact-sources", async (c) => {
+    const rows = await prisma.contact.groupBy({
+      by: ["source"],
+      where: { ownerUid: c.get("ownerUid"), state: "active" },
+      _count: { source: true },
+    });
+    const items = rows
+      .map((r) => ({ source: r.source, count: r._count.source }))
+      .sort((a, b) => b.count - a.count);
     return c.json({ items });
   });
 
