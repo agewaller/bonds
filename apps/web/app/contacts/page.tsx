@@ -143,6 +143,16 @@ export default function ContactsPage() {
     { id: string; kind: string; kindLabel: string; title: string; note: string | null; contactId: string | null; name: string | null; email: string | null }[]
   >([]);
   const [manualAction, setManualAction] = useState("");
+  // 連絡先がわからない方の橋渡し提案。AI 不要なので自動で読み込む
+  const [reachItems, setReachItems] = useState<
+    {
+      contactId: string;
+      name: string;
+      company: string | null;
+      hasSnsCandidates: boolean;
+      bridges: { contactId: string; name: string; email: string | null; reasons: string[] }[];
+    }[]
+  >([]);
   // 最近の動き (最近お迎えした方・最近情報が新しくなった方)。AI 不要なので自動で読み込む
   const [recentContacts, setRecentContacts] = useState<{
     added: { contactId: string; name: string; company: string | null; email: string | null; addedAt: string; updatedAt: string }[];
@@ -431,6 +441,8 @@ export default function ContactsPage() {
     if (rcRes.ok) setRecentContacts(await rcRes.json());
     const scRes = await apiFetch("relationship/contact-sources");
     if (scRes.ok) setSourceCounts((await scRes.json()).items ?? []);
+    const reRes = await apiFetch("relationship/reachability");
+    if (reRes.ok) setReachItems((await reRes.json()).items ?? []);
   }, []);
 
   // 実行待ちへの受け入れ・済み/見送り。受け入れは source キーで冪等 (二重に貯まらない)。
@@ -1249,6 +1261,7 @@ export default function ContactsPage() {
   const shownRecentMet = recentMet.filter((m) => !isDismissed("recent_meeting", `${m.contactId}:${m.metAt}`));
   const shownFirstMoves = firstMoves.filter((m) => !isDismissed("first_move", m.contactId));
   const shownGrowth = growthItems.filter((g) => !isDismissed("growth", g.contactId)).slice(0, 8);
+  const shownReach = reachItems.filter((r) => !isDismissed("reachability", r.contactId)).slice(0, 8);
   const todayKey = new Date().toISOString().slice(0, 10);
   const dailyQDismissed = dailyQ ? isDismissed("daily_question", `${dailyQ.contactId}:${todayKey}`) : false;
 
@@ -1599,6 +1612,72 @@ export default function ContactsPage() {
               </ul>
             </div>
           )}
+        </Fold>
+      )}
+
+      {shownReach.length > 0 && (
+        <Fold k="cl30" defaultOpen={false} title={<>連絡先がわからない方を、つながりでたどる ({shownReach.length})</>} style={{ margin: "16px 0", border: "1px solid #fbbf24", background: "#fffbeb", borderRadius: 12, padding: "12px 16px" }}>
+          <p style={{ fontSize: 13, color: "#92400e", margin: "4px 0 10px", lineHeight: 1.7 }}>
+            メールも電話も SNS もわからない方について、別の登録者づて (同じ所属・同じ日の同席・
+            同じ場での出会い・記録への登場) に連絡を取れそうな道を探しました。実際にお願いするかはあなたが決められます。
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 12 }}>
+            {shownReach.map((r) => (
+              <li key={r.contactId} style={{ border: "1px solid #fde68a", borderRadius: 10, padding: "10px 12px", background: "#fff" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  <Link href={`/contacts/${r.contactId}`} style={{ color: "#b45309", fontWeight: 700, textDecoration: "none" }}>
+                    {r.name}
+                  </Link>
+                  {r.company && <span style={{ color: "#94a3b8", fontSize: 12 }}>{r.company}</span>}
+                  <span style={{ color: "#92400e", fontSize: 12 }}>連絡先が未登録</span>
+                  {dismissX(`${r.name}さんの橋渡し提案を見送る`, () => dismissSuggestion("reachability", r.contactId))}
+                </div>
+                {r.bridges.length > 0 ? (
+                  <ul style={{ listStyle: "none", padding: 0, margin: "6px 0 0", display: "grid", gap: 6 }}>
+                    {r.bridges.map((b) => (
+                      <li key={b.contactId} style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span>
+                          <Link href={`/contacts/${b.contactId}`} style={{ color: "#1d4ed8", fontWeight: 600 }}>
+                            {b.name}
+                          </Link>
+                          さんづてに連絡できそうです
+                          <span style={{ color: "#78716c" }}> — {b.reasons.join("・")}</span>
+                        </span>
+                        {b.email && (
+                          <a
+                            href={`mailto:${b.email}?subject=${encodeURIComponent(`${r.name}さんへの橋渡しのお願い`)}`}
+                            style={{ padding: "3px 10px", border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 8, textDecoration: "none", fontSize: 12 }}
+                          >
+                            ✉ お願いのメール
+                          </a>
+                        )}
+                        <button
+                          onClick={() =>
+                            void acceptAction({
+                              kind: "email",
+                              contactId: b.contactId,
+                              title: `${b.name}さんに${r.name}さんへの橋渡しをお願いする`,
+                              sourceKind: "reachability",
+                              sourceKey: `${r.contactId}:${b.contactId}`,
+                            })
+                          }
+                          style={{ padding: "3px 10px", border: "1px solid #d97706", color: "#92400e", background: "#fffbeb", borderRadius: 8, cursor: "pointer", fontSize: 12 }}
+                        >
+                          実行待ちに入れる
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p style={{ fontSize: 12, color: "#64748b", margin: "6px 0 0" }}>
+                    {r.hasSnsCandidates
+                      ? "本人らしき SNS アカウントが見つかっています。この方のページで確認できます。"
+                      : "まだ手がかりが足りません。名刺の写真やトーク履歴を取り込むと、連絡先やつながりが見つかることがあります。"}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
         </Fold>
       )}
 

@@ -59,6 +59,7 @@ import { computeProgress } from "./lib/progress.js";
 import { parseContacts, parseImportText, stripHonorific, type ParsedContact, type ParsedInteraction } from "./lib/contact-parsers.js";
 import { parseNewcomerLines, normalizeEventDate, decorateWithEvent, type NewcomerEvent } from "./lib/newcomers.js";
 import { normalizeActionKind, sortActionItems, ACTION_KIND_LABEL } from "./lib/actions.js";
+import { pickUnreachableTargets, findBridges, isReachable, type ReachPerson } from "./lib/reachability.js";
 import { identityKeys, normalizeName } from "./lib/identity.js";
 import { parseImportFile, MAX_IMPORT_FILE_BYTES } from "./lib/import-file.js";
 import { computeGiftOccasions, summarizeGiftLedger } from "./lib/gifts.js";
@@ -2967,6 +2968,53 @@ export function createApp(deps: AppDeps) {
       .map((r) => ({ source: r.source, count: r._count.source }))
       .sort((a, b) => b.count - a.count);
     return c.json({ items });
+  });
+
+  // 連絡先がわからない方を、つながりでたどる — 連絡手段 (メール・電話・SNS) の無い方に
+  // ついて、別の登録者の中から橋渡し役 (同じ所属・同じ日の同席・同じイベント・記録への登場)
+  // を探して提案する (AI 不要・毎回無料)。実際に頼むかはユーザーが決める。
+  app.get("/api/relationship/reachability", async (c) => {
+    const ownerUid = c.get("ownerUid");
+    const rows = await prisma.contact.findMany({
+      where: { ownerUid, state: "active" },
+      select: {
+        id: true, name: true, company: true, email: true, phone: true, sns: true,
+        notes: true, personalProfile: true, sourceHits: true, distance: true,
+      },
+    });
+    const people: ReachPerson[] = rows;
+    const ids = people.map((p) => p.id);
+    const meetings = await prisma.contactInteraction.findMany({
+      where: { contactId: { in: ids }, type: { in: ["meeting", "meet"] } },
+      select: { contactId: true, occurredAt: true },
+    });
+    const meetDays = new Map<string, Set<string>>();
+    const interactionCount = new Map<string, number>();
+    for (const m of meetings) {
+      interactionCount.set(m.contactId, (interactionCount.get(m.contactId) ?? 0) + 1);
+      if (!meetDays.has(m.contactId)) meetDays.set(m.contactId, new Set());
+      meetDays.get(m.contactId)!.add(m.occurredAt.toISOString().slice(0, 10));
+    }
+    const targets = pickUnreachableTargets(people, interactionCount, 20);
+    const items = targets
+      .map((t) => ({
+        contactId: t.id,
+        name: t.name,
+        company: t.company,
+        hasSnsCandidates: false, // 下で埋める (暗号化列のため個別に見る)
+        bridges: findBridges(t, people, meetDays),
+      }))
+      // 橋渡し役が見つかった方を先に (見つからない方も取り込みの促しのため少数出す)
+      .sort((a, b) => b.bridges.length - a.bridges.length)
+      .slice(0, 12);
+    // SNS 候補 (未確認) の有無 — 「本人らしきアカウントが見つかっています」の案内に使う
+    const withCand = await prisma.contact.findMany({
+      where: { id: { in: items.map((x) => x.contactId) } },
+      select: { id: true, snsCandidates: true },
+    });
+    const candSet = new Set(withCand.filter((x) => (x.snsCandidates ?? "").trim().length > 2).map((x) => x.id));
+    for (const it of items) it.hasSnsCandidates = candSet.has(it.contactId);
+    return c.json({ items, unreachableTotal: people.filter((p) => !isReachable(p)).length });
   });
 
   // 最近の動き — 最近お迎えした方 (登録) と、最近情報が新しくなった方 (編集・取込・

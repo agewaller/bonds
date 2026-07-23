@@ -507,3 +507,25 @@ describe("取り込み元フィルタ (GET /api/contacts?source= と contact-sou
     expect(res.contacts.map((c: { name: string }) => c.name).sort()).toEqual(["LINE の太郎", "LINE の花子"]);
   });
 });
+
+describe("連絡先がわからない方の橋渡し (GET /api/relationship/reachability)", () => {
+  it("連絡手段の無い方に、同じ所属で連絡手段のある方が橋渡し役として付く", async () => {
+    await prisma.contact.createMany({
+      data: [
+        { ownerUid: "owner", name: "届かない太郎", distance: 3, company: "青空商事", sourceHits: 3 },
+        { ownerUid: "owner", name: "橋渡し花子", distance: 3, company: "青空商事", email: "hanako@example.com" },
+        { ownerUid: "owner", name: "無関係の方", distance: 4, company: "別の会社", email: "other@example.com" },
+      ],
+    });
+    const res = await app.request("/api/relationship/reachability", { headers: H });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const target = body.items.find((x: { name: string }) => x.name === "届かない太郎");
+    expect(target).toBeDefined();
+    expect(target.bridges).toHaveLength(1);
+    expect(target.bridges[0].name).toBe("橋渡し花子");
+    expect(target.bridges[0].reasons[0]).toContain("青空商事");
+    expect(body.unreachableTotal).toBeGreaterThanOrEqual(1);
+    expect((await app.request("/api/relationship/reachability")).status).toBe(401);
+  });
+});
