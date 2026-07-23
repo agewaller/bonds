@@ -11,6 +11,8 @@ import type { GenerateFn } from "./lib/anthropic.js";
 import { buildAnthropicGenerate } from "./lib/anthropic.js";
 import { isDdType, DD_TYPES, type DdType } from "./lib/dd-spec.js";
 import { summarizeForHistory, buildPriorBlock } from "./lib/novelty.js";
+import { GMAIL_SEND_SCOPE, hasMailSendScope, buildRfc822Raw } from "./lib/gmail-send.js";
+import { buildEmailVerifier, type EmailVerifier } from "./lib/email-verify.js";
 import {
   clampName,
   slugify,
@@ -184,6 +186,7 @@ import {
   signState,
   verifyState,
   GOOGLE_SCOPES_BASE,
+  GOOGLE_SCOPES_SEND,
   GOOGLE_SCOPES_EXTENDED,
   GOOGLE_SCOPES_MAIL_READ,
   GOOGLE_SCOPES_GUEST,
@@ -219,6 +222,7 @@ export type AppDeps = {
   google?: GoogleClient | null;
   stripe?: StripeClient | null;
   devices?: DeviceClient | null;
+  emailVerify?: EmailVerifier | null;
 };
 
 const SUBJECT_TYPES = ["politician", "executive", "other"] as const;
@@ -247,6 +251,8 @@ export function createApp(deps: AppDeps) {
   const stripe = deps.stripe !== undefined ? deps.stripe : buildStripeClient();
   // デバイス連携 (Oura/Withings)。env 未設定のプロバイダは「準備中」に縮退
   const devices = deps.devices !== undefined ? deps.devices : buildDeviceClient();
+  // 宛先の事前検証 (EMAIL_VERIFY_API_KEY 未設定なら null = 検証なしで従来どおり)
+  const emailVerify = deps.emailVerify !== undefined ? deps.emailVerify : buildEmailVerifier();
   // ICS 購読 URL の取得器。既定は SSRF 対策つき (https のみ・内部IP拒否・リダイレクト手動
   // 再検証・サイズ上限・タイムアウト)。ゲストが指定できる公開経路からも呼ばれるため必須。
   const fetchText = deps.fetchText !== undefined ? deps.fetchText : (url: string) => safeFetchText(url);
@@ -4168,6 +4174,41 @@ export function createApp(deps: AppDeps) {
     return c.json({ ok: true });
   });
 
+  // バウンス済みアドレスの取り込み (Resend 等の管理画面から書き出した一覧を貼り込む)。
+  // 配信停止と同じ恒久サプレッションに合流させ、以後どの経路の一斉配信からも送らない。
+  // 提携先に同じ宛先があれば送信除外にする (2026-07 のバウンス率超過による停止の再発防止)。
+  app.post("/api/campaigns/suppressions/import", async (c) => {
+    const b = await c.req.json<{ emails?: unknown }>().catch(() => ({}) as { emails?: unknown });
+    const raw = Array.isArray(b.emails) ? b.emails : [];
+    const emails = [
+      ...new Set(
+        raw
+          .filter((x): x is string => typeof x === "string" && isValidEmail(x.trim()))
+          .map((x) => x.trim().toLowerCase()),
+      ),
+    ].slice(0, 5000);
+    if (emails.length === 0) {
+      return c.json({ error: "emails_required", detail: "取り込むメールアドレスがありません" }, 400);
+    }
+    const ownerUid = c.get("ownerUid");
+    const result = await prisma.emailSuppression.createMany({
+      data: emails.map((email) => ({ ownerUid, emailHash: emailHash(email, campaignSecret()), reason: "bounced" })),
+      skipDuplicates: true,
+    });
+    // 提携先の突き合わせ (contactEmail は暗号化列 = where で引けないため全件を照合する)
+    const emailSet = new Set(emails);
+    const targets = await prisma.partnerTarget.findMany({ where: { state: "active" } });
+    let suppressedTargets = 0;
+    for (const t of targets) {
+      const e = typeof t.contactEmail === "string" ? t.contactEmail.trim().toLowerCase() : "";
+      if (e && emailSet.has(e) && t.status !== "suppressed") {
+        await prisma.partnerTarget.update({ where: { id: t.id }, data: { status: "suppressed" } });
+        suppressedTargets++;
+      }
+    }
+    return c.json({ received: emails.length, added: result.count, suppressedTargets });
+  });
+
   // ---------------- 軸検索 (影響力・専門性・価値観・誠実さ/評判) ----------------
   // 蓄積した記録と、公人リンク先の評価スコアだけで採点する (AI 不要・毎回無料・web 検索なし)。
   app.get("/api/relationship/axis-search", async (c) => {
@@ -6675,23 +6716,48 @@ export function createApp(deps: AppDeps) {
     if (recent >= partnerDailyLimit()) {
       return { status: "rate_limited", detail: "本日の送信上限に達しました" };
     }
-    if (!mailer) {
-      // 送信基盤が未設定でも失敗にせず、承認済みとして保留 (設定後に process-queue が送る)
+    // 送信チャネルは配信サービス (Resend 等) ではなく、オーナー自身の Gmail (2026-07-23)。
+    // 新規宛先への連絡は共有配信インフラのバウンス規律と相性が悪く、実際にアカウント停止を
+    // 招いた。本人の Gmail なら差出人は本人・返信は受信箱に届き、日次上限の規律とも整合する。
+    const conns = google ? await prisma.googleConnection.findMany() : [];
+    const sender = conns.find((x) => hasMailSendScope(x.scopes));
+    if (!google || !sender?.refreshToken) {
+      // 送信手段が未設定でも失敗にせず、承認済みとして保留 (許可が整うと process-queue が送る)
       await prisma.partnerMessage.update({ where: { id: msg.id }, data: { status: "approved" } });
       return {
         status: "approved",
-        detail: "送信基盤が未設定のため、承認済みとして保留しました。設定が整うと送信されます",
+        detail: "Gmail の送信許可が未設定のため、承認済みとして保留しました。設定ページで送信の許可が済むと送信されます",
       };
     }
+    // 宛先の事前検証 (バウンス予防)。無効判定の宛先には送らず、以後も送らないよう送信除外にする
+    if (emailVerify) {
+      const v = await emailVerify((target.contactEmail as string).trim());
+      if (v === "invalid") {
+        await prisma.partnerTarget.update({ where: { id: target.id }, data: { status: "suppressed" } });
+        await prisma.partnerMessage.update({
+          where: { id: msg.id },
+          data: { status: "failed", errorDetail: "宛先が無効と判定されたため送信せず、送信除外にしました" },
+        });
+        return { status: "suppressed", detail: "宛先が無効と判定されたため送信せず、送信除外にしました" };
+      }
+    }
     try {
-      const result = await mailer({
-        to: (target.contactEmail as string).trim(),
-        subject: msg.subject ?? "bonds との連携のご相談",
-        body: `${msg.body}${buildPartnerFooter()}`, // 送信者明示 + 配信停止フッタは必ず付ける
-      });
+      // gmail.send 単独のトークンへダウンスコープして送る (Plaud 経路と同じ流儀)
+      const accessToken = await google.refreshAccessToken(sender.refreshToken, GMAIL_SEND_SCOPE);
+      const sent = (await google.apiPost(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        accessToken,
+        {
+          raw: buildRfc822Raw({
+            to: (target.contactEmail as string).trim(),
+            subject: msg.subject ?? "bonds との連携のご相談",
+            body: `${msg.body}${buildPartnerFooter()}`, // 送信者明示 + 配信停止フッタは必ず付ける
+          }),
+        },
+      )) as { id?: string };
       await prisma.partnerMessage.update({
         where: { id: msg.id },
-        data: { status: "sent", sentAt: new Date(), providerMessageId: result.messageId, errorDetail: null },
+        data: { status: "sent", sentAt: new Date(), providerMessageId: sent?.id ?? null, errorDetail: null },
       });
       await prisma.partnerTarget.update({
         where: { id: target.id },
@@ -7251,6 +7317,8 @@ export function createApp(deps: AppDeps) {
       extended: hasExtendedScopes(conn?.scopes),
       // 録音メモ (メール添付) まで読める許可が済んでいるか
       mailRead: hasMailReadScope(conn?.scopes),
+      // 提携・紹介の連絡を本人の Gmail から送る許可が済んでいるか
+      mailSend: hasMailSendScope(conn?.scopes),
     });
   });
 
@@ -7268,9 +7336,11 @@ export function createApp(deps: AppDeps) {
     const scopes =
       scopeParam === "mailread"
         ? GOOGLE_SCOPES_MAIL_READ // 録音メモ (メール添付) の読み取りまで (制限付き区分。希望者だけ)
-        : scopeParam === "extended"
-          ? GOOGLE_SCOPES_EXTENDED
-          : GOOGLE_SCOPES_BASE;
+        : scopeParam === "send"
+          ? GOOGLE_SCOPES_SEND // 提携・紹介の連絡を本人の Gmail から送る (制限付き区分。希望者だけ)
+          : scopeParam === "extended"
+            ? GOOGLE_SCOPES_EXTENDED
+            : GOOGLE_SCOPES_BASE;
     return c.json({ url: google.authUrl(state, googleRedirectUri(), scopes) });
   });
 

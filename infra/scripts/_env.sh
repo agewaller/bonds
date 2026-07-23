@@ -41,6 +41,9 @@ export SECRET_TAVILY="${SECRET_TAVILY:-BONDS_TAVILY_API_KEY}"
 # Stripe (時間の出品の決済。BMP-LP と同方針 = 鍵は Secret Manager のみ)。
 # 未作成なら有料の出品だけ「準備中」に縮退する (無料の出品と日程調整は動く)。
 export SECRET_STRIPE="${SECRET_STRIPE:-BONDS_STRIPE_SECRET_KEY}"
+# 宛先の事前検証 (ZeroBounce 等。提携連絡のバウンス予防)。
+# 未作成なら検証なしで従来どおり動く (Gmail 送信チャネル自体は使える)。
+export SECRET_EMAIL_VERIFY="${SECRET_EMAIL_VERIFY:-BONDS_EMAIL_VERIFY_API_KEY}"
 
 # 本番 web の既定 URL (api 単独デプロイ時の ALLOWED_ORIGINS / OAuth 戻り先の既定)
 export PROD_WEB_URL="${PROD_WEB_URL:-https://bonds-web-xj6szhutkq-an.a.run.app}"

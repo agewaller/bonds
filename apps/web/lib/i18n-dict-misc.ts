@@ -353,6 +353,11 @@ export const DICT_MISC: Record<string, DictEntry> = {
     en: "You can also pick up people you emailed and people on shared files (for email, only recipients and subjects are read, never the body).",
   },
   m_set_google_ext_btn: { ja: "メール・共有ファイルの相手も拾えるようにする", en: "Also pick up email and shared-file contacts" },
+  m_set_google_send_desc: {
+    ja: "提携や紹介の連絡を、あなた自身の Gmail から送れるようにできます（差出人はあなたで、返信はふだんの受信箱に届きます。送るのは承認した文面だけです）。",
+    en: "You can allow partnership and introduction messages to be sent from your own Gmail (you are the sender, replies arrive in your inbox, and only messages you approved are sent).",
+  },
+  m_set_google_send_btn: { ja: "提携の連絡を自分の Gmail から送れるようにする", en: "Send partnership messages from my Gmail" },
   m_set_connect_fail: { ja: "いまはつなげませんでした", en: "Could not connect right now." },
   m_set_sched: { ja: "空き時間と日程調整", en: "Availability and scheduling" },
   m_set_sched_desc: {

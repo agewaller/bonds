@@ -41,6 +41,14 @@ export const GOOGLE_SCOPES_MAIL_READ = [
   "https://www.googleapis.com/auth/gmail.readonly",
 ];
 
+// 提携・紹介連絡をオーナー自身の Gmail から送るための追加の許可 (制限付き区分・明示オプトイン)。
+// 配信サービス経由の新規宛先連絡はバウンス規律で停止を招いたため、送信チャネルを本人の
+// メールボックスへ移す (lib/gmail-send.ts)。
+export const GOOGLE_SCOPES_SEND = [
+  ...GOOGLE_SCOPES_BASE,
+  "https://www.googleapis.com/auth/gmail.send",
+];
+
 export const GOOGLE_SCOPES_GUEST = [
   "openid",
   "email",

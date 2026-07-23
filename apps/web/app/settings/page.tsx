@@ -47,6 +47,7 @@ export default function SettingsPage() {
     available: boolean;
     connected: boolean;
     extended?: boolean;
+    mailSend?: boolean;
     email?: string | null;
   } | null>(null);
   const [audit, setAudit] = useState<{ total: number; sample: string[] } | null>(null);
@@ -116,9 +117,9 @@ export default function SettingsPage() {
     }
   };
 
-  const googleConnect = async (scope?: "extended") => {
+  const googleConnect = async (scope?: "extended" | "send") => {
     setError("");
-    const res = await apiFetch(`google/auth-url${scope ? "?scope=extended" : ""}`);
+    const res = await apiFetch(`google/auth-url${scope ? `?scope=${scope}` : ""}`);
     const body = await res.json().catch(() => ({}));
     if (res.ok && body.url) window.location.href = body.url;
     else setError(body.detail ?? t("m_set_connect_fail"));
@@ -165,6 +166,16 @@ export default function SettingsPage() {
                 </p>
                 <button style={btnGhost} onClick={() => void googleConnect("extended")}>
                   {T("m_set_google_ext_btn")}
+                </button>
+              </div>
+            )}
+            {!google.mailSend && (
+              <div style={{ marginTop: 8 }}>
+                <p style={desc}>
+                  {T("m_set_google_send_desc")}
+                </p>
+                <button style={btnGhost} onClick={() => void googleConnect("send")}>
+                  {T("m_set_google_send_btn")}
                 </button>
               </div>
             )}

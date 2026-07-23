@@ -48,6 +48,12 @@ if [ "$ONLY" != "web" ]; then
   else
     echo "注: Secret ${SECRET_STRIPE} が読めない (未作成/値が未投入) ため有料の出品は準備中で入ります"
   fi
+  # 宛先の事前検証 (提携連絡のバウンス予防) も任意。無ければ検証なしで従来どおり。
+  if secret_readable "$SECRET_EMAIL_VERIFY"; then
+    SECRETS="${SECRETS},EMAIL_VERIFY_API_KEY=${SECRET_EMAIL_VERIFY}:latest"
+  else
+    echo "注: Secret ${SECRET_EMAIL_VERIFY} が読めない (未作成/値が未投入) ため宛先の事前検証は無効で入ります"
+  fi
   # デバイス連携 (Oura/Withings) も任意。無ければ該当プロバイダだけ「準備中」に縮退。
   if secret_readable "$SECRET_OURA_CLIENT"; then
     SECRETS="${SECRETS},OURA_CLIENT_SECRET=${SECRET_OURA_CLIENT}:latest"
