@@ -44,6 +44,8 @@ const ENCRYPTED_FIELDS: Record<string, readonly string[]> = {
   // 録音メモ: 添付テキストの抜粋・要旨・タスク (JSON 文字列) は中身そのもの = 暗号化
   voiceMemo: ["content", "summary", "tasks"],
   actionItem: ["title", "note"],
+  // 出力履歴: 出した提案の要旨は相手に関する評価・示唆そのもの = 暗号化
+  outputHistory: ["summary"],
   // 公人評価の下ごしらえ: 候補 (人物名+プロフィール) は連絡先の同定情報 = 暗号化
   ddSuggestion: ["candidates"],
   // 提携先アウトリーチ (ADR-0022 移植): 連絡先メールと本文は要配慮のため暗号化
