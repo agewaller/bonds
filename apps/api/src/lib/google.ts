@@ -41,8 +41,9 @@ export const GOOGLE_SCOPES_MAIL_READ = [
   "https://www.googleapis.com/auth/gmail.readonly",
 ];
 
-// 個別メールを本人の Gmail から送るための追加の許可 (制限付き区分・希望者だけの明示オプトイン)。
-// 送るのは bonds の「下書き→承認→送信」を通った文面のみ (承認フローは不変)。
+// 個別メール・提携連絡を本人の Gmail から送るための追加の許可 (制限付き区分・希望者だけの
+// 明示オプトイン)。配信サービス経由の新規宛先連絡はバウンス規律で停止を招いたため、
+// 送信チャネルを本人のメールボックスへ移した。送るのは「下書き→承認→送信」を通った文面のみ。
 export const GOOGLE_SCOPES_MAIL_SEND = [
   ...GOOGLE_SCOPES_BASE,
   "https://www.googleapis.com/auth/gmail.send",

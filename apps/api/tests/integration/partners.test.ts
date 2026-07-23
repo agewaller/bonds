@@ -1,11 +1,13 @@
-// 提携先アウトリーチ (ADR-0022 移植) の結合テスト。実テスト DB + 偽 generate/mailer。
+// 提携先アウトリーチ (ADR-0022 移植) の結合テスト。実テスト DB + 偽 generate/Gmail。
 // 送信の安全装置 (承認制既定・suppressed 除外・日次上限・法的フッタ・暗号化) を必ず検証する。
+// 送信チャネルはオーナー自身の Gmail (2026-07-23。配信サービス経由はバウンス規律で停止を
+// 招いたため廃止)。偽 GoogleClient の apiPost で raw (RFC822) を受け、復号して検証する。
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import { createPrismaClient, type ExtendedPrismaClient, isEncrypted } from "@bonds/db";
 import { createApp } from "../../src/app.js";
 import { seedDdPrompts } from "../../src/dd/seed-prompts.js";
 import type { GenerateFn } from "../../src/lib/anthropic.js";
-import type { MailArgs, MailerFn } from "../../src/lib/mailer.js";
+import { GOOGLE_SCOPES_MAIL_SEND, type GoogleClient } from "../../src/lib/google.js";
 
 const ADMIN_TOKEN = "test-admin-token";
 process.env.ADMIN_BREAKGLASS_TOKEN = ADMIN_TOKEN;
@@ -29,11 +31,42 @@ const partnerGenerate: GenerateFn = async ({ system, model }) => {
   return { text, model, inputTokens: 500, outputTokens: 300 };
 };
 
-const sentMails: MailArgs[] = [];
-const okMailer: MailerFn = async (args) => {
-  sentMails.push(args);
-  return { messageId: "msg-1" };
+// 偽 Gmail 送信: apiPost で受けた raw (base64url RFC822) を復号し、旧 mailer と同じ形
+// ({to, subject, body}) に落として検証を続けられるようにする
+const sentMails: Array<{ to: string; subject: string; body: string }> = [];
+const fakeGmail: GoogleClient = {
+  authUrl: () => "https://accounts.google.com/o/oauth2/v2/auth?fake",
+  exchangeCode: async () => ({
+    refreshToken: "rt",
+    accessToken: "at",
+    email: "me@example.com",
+    name: "わたし",
+    grantedScopes: GOOGLE_SCOPES_MAIL_SEND.join(" "),
+  }),
+  refreshAccessToken: async () => "at",
+  apiGet: async () => ({}),
+  apiPost: async (url, _token, body) => {
+    if (!url.includes("gmail/v1/users/me/messages/send")) return {};
+    const text = Buffer.from((body as { raw: string }).raw, "base64url").toString("utf-8");
+    const [head, b64] = text.split("\r\n\r\n");
+    const subjectRaw = /Subject: (.+)/.exec(head ?? "")?.[1] ?? "";
+    sentMails.push({
+      to: /To: (.+)/.exec(head ?? "")?.[1] ?? "",
+      subject: subjectRaw.startsWith("=?UTF-8?B?")
+        ? Buffer.from(subjectRaw.slice(10, -2), "base64").toString("utf-8")
+        : subjectRaw,
+      body: Buffer.from(b64 ?? "", "base64").toString("utf-8"),
+    });
+    return { id: "gm-1" };
+  },
 };
+
+// オーナーの Gmail 送信許可 (gmail.send スコープつきの接続) を用意する
+async function grantSendPermission() {
+  await prisma.googleConnection.create({
+    data: { ownerUid: "owner", email: "me@example.com", refreshToken: "rt", scopes: GOOGLE_SCOPES_MAIL_SEND.join(" ") },
+  });
+}
 
 beforeAll(() => {
   prisma = createPrismaClient();
@@ -46,9 +79,10 @@ afterAll(async () => {
 beforeEach(async () => {
   sentMails.length = 0;
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "partner_messages", "partner_targets", "ai_usage_logs", "prompts" CASCADE',
+    'TRUNCATE "partner_messages", "partner_targets", "google_connections", "ai_usage_logs", "prompts" CASCADE',
   );
   await seedDdPrompts(prisma);
+  await grantSendPermission();
 });
 
 afterEach(() => {
@@ -76,7 +110,7 @@ async function createTarget(
 
 describe("targets CRUD と暗号化", () => {
   it("作成 → 一覧 → 更新 → ソフト削除。contact_email は DB 上で暗号文", async () => {
-    const app = createApp({ prisma, generate: partnerGenerate, mailer: okMailer });
+    const app = createApp({ prisma, generate: partnerGenerate, google: fakeGmail });
     const t = await createTarget(app);
     expect(t.status).toBe("candidate");
 
@@ -103,7 +137,7 @@ describe("targets CRUD と暗号化", () => {
   });
 
   it("管理系は認証必須、公開ディレクトリは未認証で PII 無し", async () => {
-    const app = createApp({ prisma, generate: partnerGenerate, mailer: okMailer });
+    const app = createApp({ prisma, generate: partnerGenerate, google: fakeGmail });
     const noAuth = await app.request("/api/admin/partners/targets");
     expect(noAuth.status).toBe(401);
 
@@ -127,7 +161,7 @@ describe("targets CRUD と暗号化", () => {
 
 describe("発見 (discover)", () => {
   it("テーマから候補を作成し、同名は重複させない", async () => {
-    const app = createApp({ prisma, generate: partnerGenerate, mailer: okMailer });
+    const app = createApp({ prisma, generate: partnerGenerate, google: fakeGmail });
     await createTarget(app); // 既存の「全国つながり協会」
     const res = await app.request("/api/admin/partners/discover", {
       method: "POST",
@@ -145,7 +179,7 @@ describe("発見 (discover)", () => {
 
 describe("下書き → 承認 → 送信 (既定は承認制)", () => {
   it("draft は自動送信されず、確認送信でフッタ付きメールが送られ target が contacted になる", async () => {
-    const app = createApp({ prisma, generate: partnerGenerate, mailer: okMailer });
+    const app = createApp({ prisma, generate: partnerGenerate, google: fakeGmail });
     const t = await createTarget(app);
 
     const draftRes = await app.request(`/api/admin/partners/targets/${t.id}/draft`, {
@@ -183,7 +217,7 @@ describe("下書き → 承認 → 送信 (既定は承認制)", () => {
   });
 
   it("suppressed の相手には送らない・メール未設定は送らない・二重送信は 409", async () => {
-    const app = createApp({ prisma, generate: partnerGenerate, mailer: okMailer });
+    const app = createApp({ prisma, generate: partnerGenerate, google: fakeGmail });
     const t = await createTarget(app);
     const draft = await (
       await app.request(`/api/admin/partners/targets/${t.id}/draft`, { method: "POST", headers: H, body: "{}" })
@@ -233,7 +267,7 @@ describe("下書き → 承認 → 送信 (既定は承認制)", () => {
 
   it("日次送信上限に達したら送らない (rate_limited)", async () => {
     process.env.PARTNER_DAILY_LIMIT = "1";
-    const app = createApp({ prisma, generate: partnerGenerate, mailer: okMailer });
+    const app = createApp({ prisma, generate: partnerGenerate, google: fakeGmail });
     const t1 = await createTarget(app, { name: "一件目", contactEmail: "a@example.com" });
     const t2 = await createTarget(app, { name: "二件目", contactEmail: "b@example.com" });
     const d1 = await (
@@ -254,7 +288,7 @@ describe("下書き → 承認 → 送信 (既定は承認制)", () => {
   });
 
   it("承認は本文の手直しを反映し、承認済みは process-queue が送る", async () => {
-    const app = createApp({ prisma, generate: partnerGenerate, mailer: okMailer });
+    const app = createApp({ prisma, generate: partnerGenerate, google: fakeGmail });
     const t = await createTarget(app);
     const d = await (
       await app.request(`/api/admin/partners/targets/${t.id}/draft`, { method: "POST", headers: H, body: "{}" })
@@ -281,7 +315,7 @@ describe("下書き → 承認 → 送信 (既定は承認制)", () => {
 describe("自動送信 (PARTNER_AUTO_SEND=1 の明示許可時のみ)", () => {
   it("許可時は下書き直後に送信まで進む。送信基盤が無ければ承認済み保留に縮退", async () => {
     process.env.PARTNER_AUTO_SEND = "1";
-    const app = createApp({ prisma, generate: partnerGenerate, mailer: okMailer });
+    const app = createApp({ prisma, generate: partnerGenerate, google: fakeGmail });
     const t = await createTarget(app);
     const res = await app.request(`/api/admin/partners/targets/${t.id}/draft`, {
       method: "POST",
@@ -293,8 +327,9 @@ describe("自動送信 (PARTNER_AUTO_SEND=1 の明示許可時のみ)", () => {
     expect(body.message.status).toBe("sent");
     expect(sentMails).toHaveLength(1);
 
-    // mailer 無し → 承認済みとして保留 (基盤が整えば process-queue が送る)
-    const appNoMail = createApp({ prisma, generate: partnerGenerate, mailer: null });
+    // Gmail の送信許可なし → 承認済みとして保留 (許可が整えば process-queue が送る)
+    await prisma.googleConnection.deleteMany();
+    const appNoMail = createApp({ prisma, generate: partnerGenerate, google: fakeGmail });
     const t2 = await createTarget(appNoMail, { name: "保留先", contactEmail: "c@example.com" });
     const r2 = await appNoMail.request(`/api/admin/partners/targets/${t2.id}/draft`, {
       method: "POST",
@@ -309,7 +344,7 @@ describe("自動送信 (PARTNER_AUTO_SEND=1 の明示許可時のみ)", () => {
 
 describe("返信の記録と返事の下書き", () => {
   it("inbound を記録すると replied になり、reply-draft がスレッド文脈で下書きを作る", async () => {
-    const app = createApp({ prisma, generate: partnerGenerate, mailer: okMailer });
+    const app = createApp({ prisma, generate: partnerGenerate, google: fakeGmail });
     const t = await createTarget(app);
 
     // 返信が無いうちは reply-draft できない
@@ -341,7 +376,7 @@ describe("返信の記録と返事の下書き", () => {
 
 describe("AI キー無し環境", () => {
   it("discover / draft は 503 に縮退 (フォールバックしない)", async () => {
-    const app = createApp({ prisma, generate: null, mailer: okMailer });
+    const app = createApp({ prisma, generate: null, google: fakeGmail });
     const t = await createTarget(app);
     const d = await app.request(`/api/admin/partners/targets/${t.id}/draft`, {
       method: "POST",
