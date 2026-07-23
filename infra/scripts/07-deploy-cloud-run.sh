@@ -36,6 +36,10 @@ if [ "$ONLY" != "web" ]; then
   else
     echo "注: Secret ${SECRET_ZENTRACK} が読めない (未作成/値が未投入) ため ZenTrack 連携は準備中で入ります"
   fi
+  # 汎用 SMTP (任意)。設定されると Resend/SendGrid より優先して SMTP で送る。
+  if secret_readable "$SECRET_SMTP_URL"; then
+    SECRETS="${SECRETS},SMTP_URL=${SECRET_SMTP_URL}:latest"
+  fi
   # Tavily (公開情報の実検索) も任意。無ければ人物DD/相手ノートは知識ベースモードに縮退。
   if secret_readable "$SECRET_TAVILY"; then
     SECRETS="${SECRETS},TAVILY_API_KEY=${SECRET_TAVILY}:latest"

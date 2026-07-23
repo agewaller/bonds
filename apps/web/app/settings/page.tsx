@@ -47,6 +47,7 @@ export default function SettingsPage() {
     available: boolean;
     connected: boolean;
     extended?: boolean;
+    mailSend?: boolean;
     email?: string | null;
   } | null>(null);
   const [audit, setAudit] = useState<{ total: number; sample: string[] } | null>(null);
@@ -116,9 +117,9 @@ export default function SettingsPage() {
     }
   };
 
-  const googleConnect = async (scope?: "extended") => {
+  const googleConnect = async (scope?: "extended" | "mailsend") => {
     setError("");
-    const res = await apiFetch(`google/auth-url${scope ? "?scope=extended" : ""}`);
+    const res = await apiFetch(`google/auth-url${scope ? `?scope=${scope}` : ""}`);
     const body = await res.json().catch(() => ({}));
     if (res.ok && body.url) window.location.href = body.url;
     else setError(body.detail ?? t("m_set_connect_fail"));
@@ -165,6 +166,22 @@ export default function SettingsPage() {
                 </p>
                 <button style={btnGhost} onClick={() => void googleConnect("extended")}>
                   {T("m_set_google_ext_btn")}
+                </button>
+              </div>
+            )}
+            {google.mailSend ? (
+              <p style={{ color: "#166534", fontSize: 13, margin: "8px 0 0" }}>
+                個別のメールは、あなたの Gmail から送られます (返信もあなたの Gmail に届きます)。
+              </p>
+            ) : (
+              <div style={{ marginTop: 8 }}>
+                <p style={desc}>
+                  個別のメールを、配信サービスではなく あなたの Gmail から送れるようにできます。
+                  相手には普段のあなたのメールとして届き、返信もあなたの Gmail に残ります。
+                  送るのは、あなたが承認した文面だけです。
+                </p>
+                <button style={btnGhost} onClick={() => void googleConnect("mailsend")}>
+                  メールを自分の Gmail から送れるようにする (Google の許可)
                 </button>
               </div>
             )}

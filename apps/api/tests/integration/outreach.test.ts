@@ -64,7 +64,7 @@ afterAll(async () => {
 beforeEach(async () => {
   sentMails.length = 0;
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "outreach_messages", "calendar_links", "contact_interactions", "contacts", "ai_usage_logs", "prompts" CASCADE',
+    'TRUNCATE "outreach_messages", "calendar_links", "contact_interactions", "contacts", "ai_usage_logs", "prompts", "google_connections" CASCADE',
   );
   await seedDdPrompts(prisma);
 });
@@ -271,6 +271,53 @@ describe("発信 (draft → approve → send)", () => {
     expect((await app3.request(`/api/outreach/${d3.id}/send`, { method: "POST", headers: H })).status).toBe(502);
     const row = await prisma.outreachMessage.findFirstOrThrow({ where: { id: d3.id } });
     expect(row.status).toBe("failed");
+  });
+
+  it("Gmail の送信許可があれば、配信サービス未設定でも本人の Gmail から送れる (個別メールは Gmail 優先)", async () => {
+    const refreshScopes: Array<string | undefined> = [];
+    const posted: Array<{ url: string; body: unknown }> = [];
+    const fakeGoogle = {
+      authUrl: () => "https://accounts.google.com/o/oauth2/v2/auth",
+      exchangeCode: async () => ({ refreshToken: "rt", accessToken: "at", email: "me@gmail.com", name: "me", grantedScopes: "" }),
+      refreshAccessToken: async (_rt: string, scopes?: string) => {
+        refreshScopes.push(scopes);
+        return "at";
+      },
+      apiGet: async () => ({}),
+      apiPost: async (url: string, _t: string, body: unknown) => {
+        posted.push({ url, body });
+        return { id: "gm-1" };
+      },
+    };
+    const app = makeApp({ mailer: null, google: fakeGoogle });
+    await prisma.googleConnection.create({
+      data: {
+        ownerUid: "owner",
+        email: "me@gmail.com",
+        refreshToken: "rt",
+        scopes: "openid email https://www.googleapis.com/auth/gmail.send",
+      },
+    });
+    const c = await createContact(app, { name: "Gmail 宛先", email: "aite@example.com" });
+    const d = await (
+      await app.request("/api/outreach/draft", {
+        method: "POST", headers: H, body: JSON.stringify({ contactId: c.id }),
+      })
+    ).json();
+    await app.request(`/api/outreach/${d.id}/approve`, {
+      method: "POST", headers: H, body: JSON.stringify({ subject: "ご無沙汰しております", body: "お元気ですか" }),
+    });
+    const sent = await app.request(`/api/outreach/${d.id}/send`, { method: "POST", headers: H });
+    expect(sent.status).toBe(200);
+    // Gmail API の messages.send に、gmail.send だけに絞ったトークンで送っている
+    expect(posted[0]!.url).toContain("gmail/v1/users/me/messages/send");
+    expect(refreshScopes.at(-1)).toBe("https://www.googleapis.com/auth/gmail.send");
+    const raw = (posted[0]!.body as { raw: string }).raw;
+    const decoded = Buffer.from(raw, "base64url").toString("utf-8");
+    expect(decoded).toContain("To: aite@example.com");
+    const row = await prisma.outreachMessage.findFirstOrThrow({ where: { id: d.id } });
+    expect(row.status).toBe("sent");
+    expect(row.providerMessageId).toBe("gm-1");
   });
 
   it("送信に失敗した文面は、もう一度承認して送り直せる (failed → approved → sent)", async () => {

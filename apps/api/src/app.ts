@@ -143,6 +143,7 @@ import { normalizeProduct, normalizeEmail as normalizeFromAddress, matchByEmail 
 import { parseIcsBusy, parseIcsEvents, looksLikeIcs, buildMeetingInviteIcs, type IsoEvent } from "./lib/ics.js";
 import {
   buildMailer,
+  buildGmailRaw,
   validateOutreachCandidates,
   OUTREACH_JSON_INSTRUCTION,
   type MailerFn,
@@ -187,9 +188,11 @@ import {
   GOOGLE_SCOPES_BASE,
   GOOGLE_SCOPES_EXTENDED,
   GOOGLE_SCOPES_MAIL_READ,
+  GOOGLE_SCOPES_MAIL_SEND,
   GOOGLE_SCOPES_GUEST,
   hasExtendedScopes,
   hasMailReadScope,
+  hasMailSendScope,
   GMAIL_MAX_MESSAGES,
   DRIVE_MAX_FILES,
   CONTACTS_MAX,
@@ -561,7 +564,18 @@ export function createApp(deps: AppDeps) {
   app.get("/api/admin/mailer-status", async (c) => {
     const key = process.env.SENDGRID_API_KEY ?? "";
     const from = process.env.OUTREACH_FROM_EMAIL ?? "";
-    const provider = key.startsWith("re_") ? "resend" : key && key !== "unset" ? "sendgrid" : "none";
+    const smtp = process.env.SMTP_URL ?? "";
+    const provider =
+      smtp && smtp !== "unset"
+        ? "smtp"
+        : key.startsWith("re_")
+          ? "resend"
+          : key && key !== "unset"
+            ? "sendgrid"
+            : "none";
+    // 本人の Gmail から送れる接続があるか (個別メールは Gmail を優先する)
+    const gmailConns = google ? await prisma.googleConnection.findMany({ select: { ownerUid: true, scopes: true } }) : [];
+    const gmailSendOwners = gmailConns.filter((x) => hasMailSendScope(x.scopes)).length;
     const recentFailures = await prisma.outreachMessage.findMany({
       where: { status: "failed" },
       orderBy: { updatedAt: "desc" },
@@ -585,6 +599,7 @@ export function createApp(deps: AppDeps) {
     return c.json({
       configured: !!mailer,
       provider,
+      gmailSendOwners,
       keyLooksSentinel: key === "" || key === "unset",
       keyLength: key.length,
       fromConfigured: !!from,
@@ -6479,11 +6494,11 @@ export function createApp(deps: AppDeps) {
         409,
       );
     }
-    if (!mailer) {
-      return c.json({ error: "unavailable", detail: "送信の設定がまだ済んでいません" }, 503);
-    }
     const r = await deliverApproved(m);
     if (!r.ok) {
+      if (r.detail === "mailer_not_configured") {
+        return c.json({ error: "unavailable", detail: "送信の設定がまだ済んでいません (Gmail の送信許可か、配信サービスの設定が必要です)" }, 503);
+      }
       if (r.detail === "no_email") {
         return c.json({ error: "no_email", detail: "この方のメールアドレスが登録されていません" }, 400);
       }
@@ -6576,6 +6591,33 @@ export function createApp(deps: AppDeps) {
   });
 
   // 承認済みメッセージ 1 通を送って還流する (単発 send とキューの共通処理)
+  // 本人の Gmail から送るための送信関数 (gmail.send の許可がある接続だけ)。
+  // 個別メールは「あなた本人からのメール」として届き、返信も本人の Gmail に残るため、
+  // 許可があれば配信サービスより優先する (一斉配信は従来どおり配信サービスのみ)。
+  const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+  const gmailMailerFor = async (ownerUid: string): Promise<MailerFn | null> => {
+    if (!google) return null;
+    const conn = await prisma.googleConnection.findUnique({ where: { ownerUid } });
+    if (!conn || !hasMailSendScope(conn.scopes) || !conn.email) return null;
+    const fromEmail = conn.email;
+    return async ({ to, subject, body }) => {
+      const accessToken = await google!.refreshAccessToken(conn.refreshToken, GMAIL_SEND_SCOPE);
+      const raw = buildGmailRaw({
+        from: fromEmail,
+        fromName: process.env.OUTREACH_SENDER_IDENTITY?.trim() || undefined,
+        to,
+        subject,
+        body,
+      });
+      const res = (await google!.apiPost(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        accessToken,
+        { raw },
+      )) as { id?: string };
+      return { messageId: res.id ?? null };
+    };
+  };
+
   const deliverApproved = async (m: {
     id: string;
     ownerUid: string;
@@ -6583,7 +6625,10 @@ export function createApp(deps: AppDeps) {
     subject: string | null;
     body: string | null;
   }): Promise<{ ok: boolean; detail?: string }> => {
-    if (!mailer) return { ok: false, detail: "mailer_not_configured" };
+    // 経路は決定的に 1 本: Gmail の許可があれば Gmail、無ければ配信サービス。
+    // 失敗時に別経路へ乗り換えるフォールバック連鎖はしない (原因を見えなくするため)。
+    const sender = (await gmailMailerFor(m.ownerUid)) ?? mailer;
+    if (!sender) return { ok: false, detail: "mailer_not_configured" };
     const contact = await prisma.contact.findFirst({
       where: { id: m.contactId, ownerUid: m.ownerUid },
     });
@@ -6595,7 +6640,7 @@ export function createApp(deps: AppDeps) {
       return { ok: false, detail: "no_email" };
     }
     try {
-      const sent = await mailer({ to: contact.email, subject: m.subject ?? "", body: m.body ?? "" });
+      const sent = await sender({ to: contact.email, subject: m.subject ?? "", body: m.body ?? "" });
       await prisma.outreachMessage.update({
         where: { id: m.id },
         data: { status: "sent", sentAt: new Date(), providerMessageId: sent.messageId },
@@ -7299,6 +7344,8 @@ export function createApp(deps: AppDeps) {
       extended: hasExtendedScopes(conn?.scopes),
       // 録音メモ (メール添付) まで読める許可が済んでいるか
       mailRead: hasMailReadScope(conn?.scopes),
+      // 本人の Gmail からメールを送れる許可が済んでいるか
+      mailSend: hasMailSendScope(conn?.scopes),
     });
   });
 
@@ -7316,9 +7363,11 @@ export function createApp(deps: AppDeps) {
     const scopes =
       scopeParam === "mailread"
         ? GOOGLE_SCOPES_MAIL_READ // 録音メモ (メール添付) の読み取りまで (制限付き区分。希望者だけ)
-        : scopeParam === "extended"
-          ? GOOGLE_SCOPES_EXTENDED
-          : GOOGLE_SCOPES_BASE;
+        : scopeParam === "mailsend"
+          ? GOOGLE_SCOPES_MAIL_SEND // 本人の Gmail からの送信 (制限付き区分。希望者だけ)
+          : scopeParam === "extended"
+            ? GOOGLE_SCOPES_EXTENDED
+            : GOOGLE_SCOPES_BASE;
     return c.json({ url: google.authUrl(state, googleRedirectUri(), scopes) });
   });
 

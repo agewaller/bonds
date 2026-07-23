@@ -14,8 +14,30 @@ export type MailResult = { messageId: string | null };
 export type MailerFn = (args: MailArgs) => Promise<MailResult>;
 
 export function buildMailer(): MailerFn | null {
-  const apiKey = process.env.SENDGRID_API_KEY;
   const from = process.env.OUTREACH_FROM_EMAIL;
+  // 汎用 SMTP (SMTP_URL 例: smtps://user:pass@mail.example.com:465)。明示設定が最優先。
+  // どのプロバイダ (さくら・Outlook・自社メール等) でも使える。到達性 (SPF/DKIM) は
+  // そのメールサーバの設定に従う。
+  const smtpUrl = process.env.SMTP_URL;
+  if (smtpUrl && smtpUrl !== "unset" && from) {
+    const fromName = process.env.OUTREACH_SENDER_IDENTITY?.trim() || "bonds";
+    let transportPromise: Promise<{ sendMail: (o: object) => Promise<{ messageId?: string }> }> | null = null;
+    const getTransport = () => {
+      transportPromise ??= import("nodemailer").then((m) => m.default.createTransport(smtpUrl));
+      return transportPromise;
+    };
+    return async ({ to, subject, body }) => {
+      const transport = await getTransport();
+      const info = await transport.sendMail({
+        from: `"${fromName}" <${from}>`,
+        to,
+        subject,
+        text: body,
+      });
+      return { messageId: info.messageId ?? null };
+    };
+  }
+  const apiKey = process.env.SENDGRID_API_KEY;
   if (!apiKey || !from) return null;
   const fromName = process.env.OUTREACH_SENDER_IDENTITY?.trim() || "bonds";
   const viaResend = apiKey.startsWith("re_");
@@ -51,6 +73,37 @@ export function buildMailer(): MailerFn | null {
 
 // 旧名の別名 (呼び出し側の互換。中身はプロバイダ自動判別)。
 export const buildSendGridMailer = buildMailer;
+
+// ------------------------------------------------------------
+// Gmail 送信 (本人の Gmail から個別メールを送る) の RFC822 組み立て — 純粋関数
+// ------------------------------------------------------------
+
+/** 非 ASCII のヘッダ値を RFC2047 (UTF-8 Base64) にエンコードする。 */
+function encodeHeaderWord(v: string): string {
+  return /^[\x20-\x7e]*$/.test(v) ? v : `=?UTF-8?B?${Buffer.from(v, "utf-8").toString("base64")}?=`;
+}
+
+/** Gmail API messages.send に渡す raw (base64url の RFC822 メッセージ) を組み立てる。 */
+export function buildGmailRaw(args: {
+  from: string;
+  fromName?: string;
+  to: string;
+  subject: string;
+  body: string;
+}): string {
+  const fromHeader = args.fromName ? `${encodeHeaderWord(args.fromName)} <${args.from}>` : args.from;
+  const message = [
+    `From: ${fromHeader}`,
+    `To: ${args.to}`,
+    `Subject: ${encodeHeaderWord(args.subject)}`,
+    "MIME-Version: 1.0",
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    Buffer.from(args.body, "utf-8").toString("base64"),
+  ].join("\r\n");
+  return Buffer.from(message, "utf-8").toString("base64url");
+}
 
 // ------------------------------------------------------------
 // 発信文面候補の検証 (AI 出力の DdResultSpec 流の型強制)

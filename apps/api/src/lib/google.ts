@@ -41,6 +41,13 @@ export const GOOGLE_SCOPES_MAIL_READ = [
   "https://www.googleapis.com/auth/gmail.readonly",
 ];
 
+// 個別メールを本人の Gmail から送るための追加の許可 (制限付き区分・希望者だけの明示オプトイン)。
+// 送るのは bonds の「下書き→承認→送信」を通った文面のみ (承認フローは不変)。
+export const GOOGLE_SCOPES_MAIL_SEND = [
+  ...GOOGLE_SCOPES_BASE,
+  "https://www.googleapis.com/auth/gmail.send",
+];
+
 export const GOOGLE_SCOPES_GUEST = [
   "openid",
   "email",
@@ -58,6 +65,11 @@ export function hasExtendedScopes(scopes: string | null | undefined): boolean {
 /** 保存済みの許可スコープで、メールの本文・添付 (録音メモ) まで読めるか。 */
 export function hasMailReadScope(scopes: string | null | undefined): boolean {
   return !!scopes && scopes.includes("gmail.readonly");
+}
+
+/** 保存済みの許可スコープで、本人の Gmail からメールを送れるか。 */
+export function hasMailSendScope(scopes: string | null | undefined): boolean {
+  return !!scopes && scopes.includes("gmail.send");
 }
 
 // People API から取り込む連絡先の上限 (1 同期あたり)。
