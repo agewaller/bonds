@@ -842,6 +842,20 @@ model EmailSuppression {
 
 // 実行待ち (受け入れた提案の在庫)。ホームの提案 (サービスの提供・時間調整・メール連絡・
 // 贈り物など) をユーザーが受け入れたら、ここに貯めて実行しやすい形で並べる。
+// 出力履歴 (something new の構造化・AI-LEVERAGE-DESIGN.md)。
+// 生成のたびに出した提案の要旨を残し、次の生成へ「既出リスト」として渡して重複を防ぐ。
+model OutputHistory {
+  id        String   @id @default(uuid())
+  ownerUid  String   @default("owner") @map("owner_uid")
+  contactId String?  @map("contact_id")
+  kind      String // 生成の種類 (playbook / gift_suggest など)
+  summary   String // 暗号化 (出した提案の要旨)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([ownerUid, contactId, kind, createdAt])
+  @@map("output_history")
+}
+
 model ActionItem {
   id         String    @id @default(uuid())
   ownerUid   String    @default("owner") @map("owner_uid")

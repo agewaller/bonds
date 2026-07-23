@@ -10,6 +10,7 @@ import type { ExtendedPrismaClient } from "@bonds/db";
 import type { GenerateFn } from "./lib/anthropic.js";
 import { buildAnthropicGenerate } from "./lib/anthropic.js";
 import { isDdType, DD_TYPES, type DdType } from "./lib/dd-spec.js";
+import { summarizeForHistory, buildPriorBlock } from "./lib/novelty.js";
 import {
   clampName,
   slugify,
@@ -5529,13 +5530,20 @@ export function createApp(deps: AppDeps) {
       .catch(() => ({}) as { occasion?: string; budget?: string; locale?: string });
     const occasion = typeof b.occasion === "string" ? b.occasion.trim().slice(0, 40) : "";
     const budget = typeof b.budget === "string" ? b.budget.trim().slice(0, 40) : "";
+    // 既出リスト (something new の構造化): 過去に出した提案の要旨を渡し、繰り返しを禁止する
+    const priors = await prisma.outputHistory.findMany({
+      where: { ownerUid: c.get("ownerUid"), contactId: ctx.contact.id, kind: "gift_suggest" },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+    });
     const userMessage = [
       "相手の情報:",
       ctx.context,
       occasion ? `贈る場面: ${occasion}` : "贈る場面: 特に指定なし (関係を温める贈り物を)",
       budget ? `予算の目安: ${budget}` : "予算の目安: 指定なし (関係の距離感に見合う範囲で)",
+      buildPriorBlock(priors),
       `今日の日付: ${new Date().toISOString().slice(0, 10)}`,
-    ].join("\n");
+    ].filter(Boolean).join("\n");
     const r = await runRelationshipAi(
       "gift_suggest",
       '出力は JSON オブジェクト 1 個だけ: {"suggestions": [{"idea": "", "why": "", "priceRange": "", "howToFind": ""}], "note": ""}',
@@ -5560,6 +5568,15 @@ export function createApp(deps: AppDeps) {
     if (suggestions.length === 0) {
       return c.json({ error: "invalid_output", detail: "うまく提案を作れませんでした。もう一度お試しください" }, 502);
     }
+    // 出した提案の要旨を履歴へ (次回の既出リストになる)
+    await prisma.outputHistory.create({
+      data: {
+        ownerUid: c.get("ownerUid"),
+        contactId: ctx.contact.id,
+        kind: "gift_suggest",
+        summary: summarizeForHistory(suggestions.map((s) => s.idea)),
+      },
+    });
     return c.json({ suggestions, note: clean(parsed?.note) });
   });
 
@@ -5598,11 +5615,18 @@ export function createApp(deps: AppDeps) {
     } catch {
       // facets が壊れていても対応提案は出す
     }
+    // 既出リスト (something new の構造化): 過去に出した打ち手の要旨を渡し、繰り返しを禁止する
+    const priors = await prisma.outputHistory.findMany({
+      where: { ownerUid: c.get("ownerUid"), contactId: ctx.contact.id, kind: "playbook" },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+    });
     const userMessage = [
       "相手の情報:",
       ctx.context,
       facetLines.length ? `整理された論点:\n${facetLines.join("\n")}` : "",
       `二人の関係の見立て: 距離感 ${score.distance}(1=毎日会う親しさ〜5=年に一度) / これまでの深さ ${score.depth}点(100点満点・${score.depthBand}) / これから伸ばせる余地 ${score.potential}点(100点満点・${score.potentialBand})`,
+      buildPriorBlock(priors),
       `今日の日付: ${new Date().toISOString().slice(0, 10)}`,
     ].filter(Boolean).join("\n");
     const r = await runRelationshipAi(
@@ -5629,6 +5653,18 @@ export function createApp(deps: AppDeps) {
     if (actions.length === 0 && !clean(parsed?.relationship)) {
       return c.json({ error: "invalid_output", detail: "うまく提案を作れませんでした。もう一度お試しください" }, 502);
     }
+    // 出した打ち手の要旨を履歴へ (次回の既出リストになる)
+    await prisma.outputHistory.create({
+      data: {
+        ownerUid: c.get("ownerUid"),
+        contactId: ctx.contact.id,
+        kind: "playbook",
+        summary: summarizeForHistory([
+          ...actions.map((x) => x.title || x.detail),
+          clean(parsed?.somethingNew, 80),
+        ]),
+      },
+    });
     return c.json({
       relationship: clean(parsed?.relationship),
       intersections,
